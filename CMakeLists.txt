@@ -42,5 +42,5 @@ if(BK_BUILD_TESTS)
 endif()
 
 if(BK_BUILD_SAMPLES)
-    # add_subdirectory(samples)
+    add_subdirectory(samples)
 endif()

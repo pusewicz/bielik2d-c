@@ -183,3 +183,33 @@ spaces throughout `BK_FrameInfo`, `BK_WindowDesc`, `BK_TimeDesc`,
 field, or signature changed anywhere; ran `clang-format -i` and kept its
 output rather than fighting the tool, consistent with established
 precedent.
+
+## samples/01_clear/main.c needs an explicit bk_gfx.h include (task-P1-10-brief.md)
+
+The task brief's normative `main.c` listing includes only `<bielik/bk_main.h>`
+plus a handful of libc headers, then uses `BK_Color` and
+`bk_gfx_set_clear_color` in `app_render` without including
+`<bielik/bk_gfx.h>` anywhere. Neither `bk_main.h` nor the `bk_app.h` it pulls
+in re-exports `bk_gfx.h` (confirmed: `grep -rn "bk_gfx.h" include/ src/`
+shows it's only included by `bk_gfx.c` itself and the gfx-specific test
+files) — this is a real, not hypothetical, compile failure
+(`error: use of undeclared identifier 'BK_Color'` /
+`'bk_gfx_set_clear_color'`) building `01_clear` as specified. Added
+`#include <bielik/bk_gfx.h>` above `<bielik/bk_main.h>` in `main.c`;
+everything else in the listing is unchanged. Chose to fix the sample rather
+than have `bk_app.h`/`bk_main.h` transitively include `bk_gfx.h`, since gfx
+is its own module or a user could reasonably use `bk_run` without ever
+touching gfx state.
+
+## BK_APP(...) macro invocation collapses to one line (task-P1-10-brief.md)
+
+Same category as the four prior clang-format-collapse entries above: the
+brief's `main.c` listing hand-formats the `BK_APP(...)` call at the bottom
+of the file across six lines (one designated initializer per line, trailing
+comma, closing paren on its own line). The full call fits within the
+100-column limit on one line, so `clang-format --dry-run --Werror` (the same
+brief's own verification step) rejects the multi-line form and collapses it
+to `BK_APP(.init = app_init, .update = app_update, .render = app_render,
+.event = app_event, )`. No behavior change — same established precedent of
+letting clang-format win rather than fighting the tool or introducing a
+`// clang-format off/on` convention with no prior precedent in this repo.
