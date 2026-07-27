@@ -43,3 +43,18 @@ The task brief's header listing has `#include <stdint.h>` before
 `#include <stdbool.h>`; `clang-format --dry-run --Werror` (mandated by the
 same brief) sorts them alphabetically, so `stdbool.h` now comes first. No
 type, field, or signature changed — API is otherwise byte-identical.
+
+## bk_task.h / bk_app.h / bk_task.c formatting (task-P1-5-brief.md)
+
+Two clang-format-forced deviations from the P1-5 brief's literal listings,
+neither changing any type, field, or signature: (1) `BK_TaskSystemDesc.finish`
+is written `void (*finish)(void *task, void *ctx);` (single space) instead of
+the brief's `void  (*finish)(...)` (double space, presumably hand-aligned
+with the `void *(*enqueue)` line above it) — clang-format collapses the extra
+space. (2) `src/bk_task.c`'s `#include` block ends up
+`"internal/bk_task_internal.h"` before `<bielik/bk_task.h>` before
+`<stddef.h>` — clang-format's default include sorting orders the quoted
+non-matching-stem include ahead of the angle-bracket group, the same
+behavior already visible in `tests/test_time.c` (`"bk_test.h"` before
+`<bielik/bk_time.h>`), so this follows established project precedent rather
+than the brief's "own header first" prose convention.
