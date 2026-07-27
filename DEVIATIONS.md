@@ -82,6 +82,17 @@ logical offset-0 slot), and reading through it proves the bytes written
 before growth survived the `realloc`, without ever reading through
 potentially-freed memory.
 
+## bk_gfx.h formatting (task-P1-7-brief.md)
+
+The task brief's normative header listing writes `BK_Color` as a one-line
+struct: `typedef struct BK_Color { float r, g, b, a; } BK_Color;`.
+`clang-format --dry-run --Werror` (mandated by the same brief's verification
+step) rejects that layout and forces the attached-brace multiline form
+(`typedef struct BK_Color {\n    float r, g, b, a;\n} BK_Color;`) instead. No
+type, field, or signature changed — same precedent as the P1-5 entry below
+(clang-format collapsing brief-specified spacing) and the P1-6 report's
+formatting fix.
+
 ## bk_task.h / bk_app.h / bk_task.c formatting (task-P1-5-brief.md)
 
 Two clang-format-forced deviations from the P1-5 brief's literal listings,
