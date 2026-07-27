@@ -85,7 +85,9 @@ typedef struct BK_AppDesc {
 } BK_AppDesc;
 
 /// Runs the app. Blessed path is the BK_APP macro (bk_main.h). Calling this
-/// directly is supported on native only in v1 (tools/tests).
+/// directly is supported on native only in v1 (tools/tests). Returns a
+/// process exit code (0 on clean termination, 1 on failure), not a
+/// BK_Result.
 int bk_run(const BK_AppDesc *desc, int argc, char **argv);
 
 /// Valid between init and quit.
