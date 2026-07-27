@@ -54,9 +54,9 @@ static void test_growth_preserves_contents_and_stays_aligned(void) {
 
 static void test_growth_with_large_align(void) {
     bk__arena_reset();
-    void *big = bk_frame_alloc(9u * 1024 * 1024, 4096);
+    void *big = bk_frame_alloc(9u * 1024 * 1024, 1024 * 1024);
     REQUIRE(big != NULL);
-    REQUIRE(((uintptr_t)big % 4096) == 0);
+    REQUIRE(((uintptr_t)big % (1024 * 1024)) == 0);
 }
 
 static void test_interleaved_allocations_do_not_overlap(void) {
