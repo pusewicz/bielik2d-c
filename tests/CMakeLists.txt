@@ -25,3 +25,18 @@ add_executable(test_app_lifecycle test_app_lifecycle.c)
 target_link_libraries(test_app_lifecycle PRIVATE bielik bk_warnings)
 add_test(NAME test_app_lifecycle COMMAND test_app_lifecycle)
 set_tests_properties(test_app_lifecycle PROPERTIES TIMEOUT 30)
+
+add_library(test_header_bk_app OBJECT test_header_bk_app.c)
+target_link_libraries(test_header_bk_app PRIVATE bielik bk_warnings)
+
+add_library(test_header_bk_main OBJECT test_header_bk_main.c)
+target_link_libraries(test_header_bk_main PRIVATE bielik bk_warnings)
+
+add_library(test_header_bk_time OBJECT test_header_bk_time.c)
+target_link_libraries(test_header_bk_time PRIVATE bielik bk_warnings)
+
+add_library(test_header_bk_task OBJECT test_header_bk_task.c)
+target_link_libraries(test_header_bk_task PRIVATE bielik bk_warnings)
+
+add_library(test_header_bk_gfx OBJECT test_header_bk_gfx.c)
+target_link_libraries(test_header_bk_gfx PRIVATE bielik bk_warnings)
