@@ -1,10 +1,20 @@
+#define SDL_MAIN_HANDLED 1
+
 #include "internal/bk_app_internal.h"
+#include "internal/bk_gfx_internal.h"
+#include "internal/bk_task_internal.h"
 #include <SDL3/SDL.h>
+#include <SDL3/SDL_main.h>
 #include <bielik/bk_app.h>
+#include <bielik/bk_time.h>
 #include <stddef.h>
 
 #define BK_STR_(x) #x
 #define BK_STR(x) BK_STR_(x)
+
+static_assert(BK_CONTINUE == (BK_Result)SDL_APP_CONTINUE, "BK_Result must mirror SDL_AppResult");
+static_assert(BK_DONE == (BK_Result)SDL_APP_SUCCESS, "BK_Result must mirror SDL_AppResult");
+static_assert(BK_FAIL == (BK_Result)SDL_APP_FAILURE, "BK_Result must mirror SDL_AppResult");
 
 const char *bk_version_string(void) {
     return BK_STR(BK_VERSION_MAJOR) "." BK_STR(BK_VERSION_MINOR) "." BK_STR(BK_VERSION_PATCH);
@@ -67,4 +77,219 @@ void *bk_frame_alloc(size_t size, size_t align) {
 
     s_frame_arena.used = aligned_offset + size;
     return s_frame_arena.base + aligned_offset;
+}
+
+#ifndef NDEBUG
+static constexpr bool s_gpu_debug_mode = true;
+#else
+static constexpr bool s_gpu_debug_mode = false;
+#endif
+
+typedef struct BK_AppState {
+    BK_AppDesc desc;
+    BK_Clock clock;
+    SDL_Window *window;
+    SDL_GPUDevice *gpu;
+    uint64_t boot_now_ns;
+} BK_AppState;
+
+static BK_AppState s_app;
+
+static SDL_AppResult s_boot_fail(const char *msg) {
+    SDL_Log("BK: %s", msg);
+#ifdef NDEBUG
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Bielik2D", msg, s_app.window);
+#endif
+    return SDL_APP_FAILURE;
+}
+
+SDL_AppResult bk__boot(BK_AppDesc (*get_desc)(void), void **appstate, int argc, char **argv) {
+    s_app.desc = get_desc();
+
+    if (s_app.desc.window.title == NULL) {
+        s_app.desc.window.title = "Bielik2D";
+    }
+    if (s_app.desc.window.w == 0) {
+        s_app.desc.window.w = 1280;
+    }
+    if (s_app.desc.window.h == 0) {
+        s_app.desc.window.h = 720;
+    }
+    if (s_app.desc.time.max_ticks_per_frame == 0) {
+        s_app.desc.time.max_ticks_per_frame = 8;
+    }
+    if (s_app.desc.time.max_frame_dt == 0.0) {
+        s_app.desc.time.max_frame_dt = 0.25;
+    }
+
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_GAMEPAD)) {
+        char msg[256];
+        SDL_snprintf(msg, sizeof msg, "SDL_Init failed: %s", SDL_GetError());
+        return s_boot_fail(msg);
+    }
+
+    SDL_WindowFlags window_flags = SDL_WINDOW_HIDDEN;
+    if (s_app.desc.window.resizable) {
+        window_flags |= SDL_WINDOW_RESIZABLE;
+    }
+    if (s_app.desc.window.fullscreen) {
+        window_flags |= SDL_WINDOW_FULLSCREEN;
+    }
+    s_app.window = SDL_CreateWindow(s_app.desc.window.title, s_app.desc.window.w,
+                                    s_app.desc.window.h, window_flags);
+    if (!s_app.window) {
+        char msg[256];
+        SDL_snprintf(msg, sizeof msg, "SDL_CreateWindow failed: %s", SDL_GetError());
+        return s_boot_fail(msg);
+    }
+
+    s_app.gpu = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL |
+                                        SDL_GPU_SHADERFORMAT_MSL,
+                                    s_gpu_debug_mode, NULL);
+    if (!s_app.gpu) {
+        char msg[256];
+        SDL_snprintf(msg, sizeof msg, "SDL_CreateGPUDevice failed: %s", SDL_GetError());
+        return s_boot_fail(msg);
+    }
+
+    if (!SDL_ClaimWindowForGPUDevice(s_app.gpu, s_app.window)) {
+        char msg[256];
+        SDL_snprintf(msg, sizeof msg, "SDL_ClaimWindowForGPUDevice failed: %s", SDL_GetError());
+        return s_boot_fail(msg);
+    }
+
+    SDL_GPUPresentMode present_mode = SDL_GPU_PRESENTMODE_VSYNC;
+    if (!s_app.desc.window.vsync &&
+        SDL_WindowSupportsGPUPresentMode(s_app.gpu, s_app.window, SDL_GPU_PRESENTMODE_IMMEDIATE)) {
+        present_mode = SDL_GPU_PRESENTMODE_IMMEDIATE;
+    }
+    if (!SDL_SetGPUSwapchainParameters(s_app.gpu, s_app.window, SDL_GPU_SWAPCHAINCOMPOSITION_SDR,
+                                       present_mode)) {
+        char msg[256];
+        SDL_snprintf(msg, sizeof msg, "SDL_SetGPUSwapchainParameters failed: %s", SDL_GetError());
+        return s_boot_fail(msg);
+    }
+
+    SDL_ShowWindow(s_app.window);
+
+    s_app.boot_now_ns = SDL_GetTicksNS();
+    bk_clock_init(&s_app.clock, s_app.desc.time.tick_hz, s_app.desc.time.max_ticks_per_frame,
+                  s_app.desc.time.max_frame_dt, s_app.boot_now_ns);
+
+    bk__task_set_desc(&s_app.desc.tasks);
+
+    *appstate = s_app.desc.userdata;
+    BK_Result r = BK_CONTINUE;
+    if (s_app.desc.init) {
+        r = s_app.desc.init(appstate, argc, argv);
+    }
+    if (r == BK_DONE) {
+        return (SDL_AppResult)BK_DONE;
+    }
+    if (r != BK_CONTINUE) {
+        return s_boot_fail("app init callback failed");
+    }
+
+    return SDL_APP_CONTINUE;
+}
+
+SDL_AppResult bk__iterate(void *appstate) {
+    uint64_t now = SDL_GetTicksNS();
+    BK_ClockFrame cf = bk_clock_advance(&s_app.clock, now);
+
+    BK_FrameInfo info = {0};
+    for (int i = 0; i < cf.ticks; i++) {
+        uint64_t tick_i = s_app.clock.tick - (uint64_t)cf.ticks + (uint64_t)i + 1;
+        info = (BK_FrameInfo){
+            .tick = tick_i,
+            .sim_time = (double)tick_i * bk_clock_fixed_dt(&s_app.clock),
+            .real_time = (double)(now - s_app.boot_now_ns) / 1e9,
+            .dt = s_app.desc.time.tick_hz != 0 ? bk_clock_fixed_dt(&s_app.clock) : cf.frame_dt,
+            .alpha = 0.0,
+        };
+
+        if (s_app.desc.update) {
+            BK_Result r = s_app.desc.update(appstate, &info);
+            if (r != BK_CONTINUE) {
+                return (SDL_AppResult)r;
+            }
+        }
+        if (s_app.desc.post_update) {
+            BK_Result r = s_app.desc.post_update(appstate, &info);
+            if (r != BK_CONTINUE) {
+                return (SDL_AppResult)r;
+            }
+        }
+    }
+
+    info.tick = s_app.clock.tick;
+    info.sim_time = bk_clock_sim_time(&s_app.clock);
+    info.real_time = (double)(now - s_app.boot_now_ns) / 1e9;
+    info.dt = cf.frame_dt;
+    info.alpha = cf.alpha;
+
+    if (s_app.desc.render) {
+        s_app.desc.render(appstate, &info);
+    }
+    bk_gfx__flush();
+    bk__arena_reset();
+
+    return SDL_APP_CONTINUE;
+}
+
+SDL_AppResult bk__event(void *appstate, SDL_Event *event) {
+    if (s_app.desc.event) {
+        BK_Result r = s_app.desc.event(appstate, event);
+        return (SDL_AppResult)r;
+    }
+    if (event->type == SDL_EVENT_QUIT) {
+        return SDL_APP_SUCCESS;
+    }
+    return SDL_APP_CONTINUE;
+}
+
+void bk__shutdown(void *appstate, SDL_AppResult result) {
+    if (s_app.desc.quit) {
+        s_app.desc.quit(appstate, (BK_Result)result);
+    }
+    if (s_app.gpu && s_app.window) {
+        SDL_ReleaseWindowFromGPUDevice(s_app.gpu, s_app.window);
+    }
+    if (s_app.gpu) {
+        SDL_DestroyGPUDevice(s_app.gpu);
+    }
+    if (s_app.window) {
+        SDL_DestroyWindow(s_app.window);
+    }
+}
+
+SDL_Window *bk_window(void) { return s_app.window; }
+
+SDL_GPUDevice *bk_gpu(void) { return s_app.gpu; }
+
+void bk_quit(void) {
+    SDL_Event e = {.type = SDL_EVENT_QUIT};
+    SDL_PushEvent(&e);
+}
+
+static BK_AppDesc s_run_desc;
+
+static BK_AppDesc s_run_get_desc(void) { return s_run_desc; }
+
+static SDL_AppResult s_run_init(void **appstate, int argc, char **argv) {
+    return bk__boot(s_run_get_desc, appstate, argc, argv);
+}
+
+static SDL_AppResult s_run_iterate(void *appstate) { return bk__iterate(appstate); }
+
+static SDL_AppResult s_run_event(void *appstate, SDL_Event *event) {
+    return bk__event(appstate, event);
+}
+
+static void s_run_quit(void *appstate, SDL_AppResult result) { bk__shutdown(appstate, result); }
+
+int bk_run(const BK_AppDesc *desc, int argc, char **argv) {
+    s_run_desc = *desc;
+    return SDL_EnterAppMainCallbacks(argc, argv, s_run_init, s_run_iterate, s_run_event,
+                                     s_run_quit);
 }

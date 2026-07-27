@@ -93,7 +93,7 @@ type, field, or signature changed — same precedent as the P1-5 entry below
 (clang-format collapsing brief-specified spacing) and the P1-6 report's
 formatting fix.
 
-## bk_task.h / bk_app.h / bk_task.c formatting (task-P1-5-brief.md)
+## bk_app.h / bk_task.c formatting (task-P1-5-brief.md)
 
 Two clang-format-forced deviations from the P1-5 brief's literal listings,
 neither changing any type, field, or signature: (1) `BK_TaskSystemDesc.finish`
@@ -107,3 +107,79 @@ non-matching-stem include ahead of the angle-bracket group, the same
 behavior already visible in `tests/test_time.c` (`"bk_test.h"` before
 `<bielik/bk_time.h>`), so this follows established project precedent rather
 than the brief's "own header first" prose convention.
+
+## bk_run's return value is a process exit code, not a raw SDL_AppResult/BK_Result (PLAN.md §6.3, task-P1-8-brief.md)
+
+`bk_run` is specified (both in `PLAN.md` §6.3 — "store desc in a static, then
+`SDL_EnterAppMainCallbacks`... Return its result" — and in the P1-8 brief's
+literal `bk_run` body) to return `SDL_EnterAppMainCallbacks`'s value
+unmodified. The brief's own `test_app_lifecycle.c` listing then asserts
+`REQUIRE(result == BK_DONE)` (i.e. expects `1`). Checked the real SDL3
+implementation (`build/_deps/sdl3-src/src/main/generic/SDL_sysmain_callbacks.c`,
+and confirmed by `SDL_main.h`'s own doc comment "\returns standard Unix main
+return value"): `SDL_EnterAppMainCallbacks` ends with
+`return (rc == SDL_APP_FAILURE) ? 1 : 0;` — a Unix exit code, not the
+`SDL_AppResult` value. A clean `BK_DONE` termination therefore makes
+`bk_run` return `0`, not `1`. Per `bk_run`'s own explicit body (which this
+task's brief also specifies verbatim and which correctly matches "return its
+result" from the plan), translating the value would be the actual deviation;
+fixed `tests/test_app_lifecycle.c` to assert `REQUIRE(result == 0)` instead
+of the brief's literal `REQUIRE(result == BK_DONE)`, preserving the test's
+evident intent (prove `bk_run` reports the terminating callback's outcome
+faithfully) without asserting a false statement about what
+`SDL_EnterAppMainCallbacks` actually returns.
+
+## bk_main.h needs a forward declaration of bk__app_desc (task-P1-8-brief.md Part 6)
+
+The brief's (and `PLAN.md`'s) `bk_main.h` listing defines `SDL_AppInit`'s
+body as `return bk__boot(bk__app_desc, appstate, argc, argv);` with no prior
+declaration of `bk__app_desc` in the header — its only definition comes from
+the `BK_APP(...)` macro invocation the *user's* translation unit writes,
+textually *after* the `#include <bielik/bk_main.h>` line. Verified this is a
+real, not hypothetical, compile failure: built a throwaway
+`BK_APP(...)`-based scratch program per the brief's own suggestion (task
+Part 7's closing note) and got
+`error: use of undeclared identifier 'bk__app_desc'` under this project's
+C23/clang-everywhere toolchain, which (unlike C11/C17) treats implicit
+function declarations as a hard error rather than a warning. Added
+`BK_AppDesc bk__app_desc(void);` as a forward declaration in `bk_main.h`,
+right after the `BK_APP` macro definition and before `SDL_AppInit` — this
+doesn't change the decision log's "the library never references
+`bk__app_desc` directly" invariant (the *library*, i.e. `bk_app.c`/`libbielik.a`,
+still never references it; only `bk_main.h`, included into the *user's* TU,
+does), so `bk_run` users still incur no link-time dependency on the symbol.
+
+## bk_app.c needs two includes beyond Part 5's explicit list (task-P1-8-brief.md)
+
+Part 5's "Includes" section names only `<bielik/bk_time.h>` and
+`"internal/bk_gfx_internal.h"` as additions, but two more turned out to be
+required for the file to compile/link at all, given the rest of Part 5's own
+step-by-step instructions: (1) `"internal/bk_task_internal.h"`, for
+`bk__task_set_desc`, which step 9 of `bk__boot` explicitly calls; (2)
+`<SDL3/SDL_main.h>`, for `SDL_EnterAppMainCallbacks`, which `SDL3/SDL.h`
+deliberately does not pull in (its own doc comment: "SDL_main.h is special
+and not included here"). The second one has a sharp edge worth recording on
+its own: naively including `<SDL3/SDL_main.h>` without first defining
+`SDL_MAIN_HANDLED` would, on platforms where `SDL_MAIN_AVAILABLE` gets
+defined unconditionally (confirmed by reading the header: Windows, GDK, iOS/
+tvOS, Android, Emscripten, PSP, PS2, 3DS — notably *not* macOS/Linux, which
+is why this didn't surface as a build failure on this sandbox), both
+`#define main SDL_main` and an `#include <SDL3/SDL_main_impl.h>` that
+generates a real platform entry point — injecting a second, conflicting
+`main`/`WinMain` implementation into the static library's own translation
+unit, which would collide at link time with the one every `bk_main.h`-using
+app already generates in its own TU. Added
+`#define SDL_MAIN_HANDLED 1` before `bk_app.c`'s include block to get only
+the `SDL_EnterAppMainCallbacks` declaration and the `SDL_AppInit_func`-family
+typedefs, none of the platform-entry-point side effects.
+
+## bk_app.h / bk_app.c hand-aligned struct-field spacing (task-P1-8-brief.md)
+
+Same category as the two P1-5/P1-7 entries above: `clang-format --dry-run
+--Werror` collapses the brief's hand-aligned double/triple-space field
+columns (e.g. `BK_Result   sim_time;`, `BK_AppDesc     desc;`) to single
+spaces throughout `BK_FrameInfo`, `BK_WindowDesc`, `BK_TimeDesc`,
+`BK_AppDesc`, and the new file-static `BK_AppState` in `bk_app.c`. No type,
+field, or signature changed anywhere; ran `clang-format -i` and kept its
+output rather than fighting the tool, consistent with established
+precedent.

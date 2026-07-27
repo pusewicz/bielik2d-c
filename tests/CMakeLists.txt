@@ -20,3 +20,7 @@ add_executable(test_gfx test_gfx.c)
 target_link_libraries(test_gfx PRIVATE bielik bk_warnings)
 target_include_directories(test_gfx PRIVATE ${PROJECT_SOURCE_DIR}/src)
 add_test(NAME test_gfx COMMAND test_gfx)
+
+add_executable(test_app_lifecycle test_app_lifecycle.c)
+target_link_libraries(test_app_lifecycle PRIVATE bielik bk_warnings)
+add_test(NAME test_app_lifecycle COMMAND test_app_lifecycle)
