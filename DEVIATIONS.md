@@ -44,6 +44,44 @@ The task brief's header listing has `#include <stdint.h>` before
 same brief) sorts them alphabetically, so `stdbool.h` now comes first. No
 type, field, or signature changed — API is otherwise byte-identical.
 
+## Frame arena growth: recompute alignment from the post-grow base (PLAN.md §6.6, task-P1-6-brief.md)
+
+The task brief's step-by-step algorithm computes `aligned_offset` once from
+the pre-grow base, then (if growth is needed) reallocs and returns
+`(new) base + aligned_offset` unchanged. That's only correct if the grown
+block lands at an address congruent to the old base modulo `align` — true
+for small aligns (malloc/realloc only guarantee `alignof(max_align_t)`,
+typically 16 bytes) but not guaranteed for the larger aligns this task's own
+test suite exercises (up to 4096). Implemented `bk_frame_alloc` to size the
+grow target against a base-address-independent worst case
+(`used + (align - 1) + size`) and compute the aligned offset once, after any
+grow has already happened, from whatever base `bk__realloc` actually
+returned — this keeps every returned pointer correctly aligned regardless of
+where the backing buffer ends up, with no behavior change when growth
+doesn't move the block (the overwhelming common case) or when `align` is
+small enough that the distinction is moot.
+
+## test_arena.c growth-content-preservation check avoids dereferencing a stale pointer (task-P1-6-brief.md)
+
+The brief's growth test (requirement 3) describes holding a pointer from
+before a growth-triggering allocation and dereferencing it afterward to
+prove `bk__realloc`-based growth preserved contents — this is exactly the
+"raw pointers become invalid if the block moves" caveat the same brief
+calls out two paragraphs earlier as an inherent, out-of-scope limitation.
+Tried the literal version first: on this machine (macOS, ASan-instrumented
+allocator), the 4 MiB → 8 MiB grow *does* relocate the block, and
+dereferencing the stale pre-grow pointer is a confirmed
+AddressSanitizer heap-use-after-free, not a hypothetical one. Fixed by
+exploiting the C standard's own malloc/realloc alignment guarantee instead:
+write the marker at offset 0 of a freshly-reset arena (guaranteed, since
+malloc/realloc always return `max_align_t`-suitably-aligned memory, so an
+`align=0` request at `used == 0` always lands at `base + 0`), trigger
+growth, then reset and re-request `bk_frame_alloc(256, 0)` again — this
+returns a **fresh, valid** pointer to the arena's current base (same
+logical offset-0 slot), and reading through it proves the bytes written
+before growth survived the `realloc`, without ever reading through
+potentially-freed memory.
+
 ## bk_task.h / bk_app.h / bk_task.c formatting (task-P1-5-brief.md)
 
 Two clang-format-forced deviations from the P1-5 brief's literal listings,

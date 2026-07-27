@@ -8,5 +8,10 @@ add_test(NAME test_time COMMAND test_time)
 
 add_executable(test_task test_task.c)
 target_link_libraries(test_task PRIVATE bielik bk_warnings)
-target_include_directories(test_task PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(test_task PRIVATE ${PROJECT_SOURCE_DIR}/src)
 add_test(NAME test_task COMMAND test_task)
+
+add_executable(test_arena test_arena.c)
+target_link_libraries(test_arena PRIVATE bielik bk_warnings)
+target_include_directories(test_arena PRIVATE ${PROJECT_SOURCE_DIR}/src)
+add_test(NAME test_arena COMMAND test_arena)

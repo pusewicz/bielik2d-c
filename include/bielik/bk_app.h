@@ -1,4 +1,6 @@
 #pragma once
+#include <SDL3/SDL.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #define BK_VERSION_MAJOR 0
@@ -19,3 +21,13 @@ typedef struct BK_TaskSystemDesc {
     void *(*enqueue)(BK_TaskFn fn, int32_t count, int32_t min_range, void *arg, void *ctx);
     void (*finish)(void *task, void *ctx);
 } BK_TaskSystemDesc;
+
+/// Debug-build assertion; compiles to nothing meaningful in Release beyond
+/// what SDL_assert itself does. Wraps SDL_assert so all framework asserts
+/// share one breakpoint/logging behavior.
+#define BK_ASSERT(cond) SDL_assert(cond)
+
+/// Per-frame linear allocator; reset after render/flush each frame. Never
+/// free individual allocations — the whole arena rewinds at frame end.
+/// align must be a power of two, or 0 to use the platform's max alignment.
+void *bk_frame_alloc(size_t size, size_t align);
