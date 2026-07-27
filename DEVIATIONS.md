@@ -213,3 +213,38 @@ to `BK_APP(.init = app_init, .update = app_update, .render = app_render,
 .event = app_event, )`. No behavior change — same established precedent of
 letting clang-format win rather than fighting the tool or introducing a
 `// clang-format off/on` convention with no prior precedent in this repo.
+
+## samples/02_ticks/main.c: BK_APP(...) macro invocation collapses (task-P1-11-brief.md)
+
+Same category as the 01_clear entry directly above: the brief's `main.c`
+listing hand-formats the closing `BK_APP(...)` call across eight lines (one
+designated initializer per line, including the added `.time = {...}` field,
+trailing comma, closing paren on its own line). `clang-format --dry-run
+--Werror` (this brief's own verification step) rejects that layout and
+reflows it to two lines within the 100-column limit:
+`BK_APP(.time = {.tick_hz = 60, .max_ticks_per_frame = 8}, .init = app_init,
+.update = app_update,\n       .render = app_render, .event = app_event, )`.
+No behavior change — ran `clang-format -i` and kept its output rather than
+fighting the tool, consistent with established precedent.
+
+## samples/02_ticks/main.c: hitch-demo comments describe the wrong catch-up shape (task-P1-11-brief.md)
+
+The brief's normative listing (both the file header comment and the
+in-function comment inside `app_update`'s hitch branch) describes the
+post-hitch behavior as "ticks/sec briefly climbs toward the 8-tick-per-frame
+cap to catch up, then settles back to ~60" — implying a multi-frame ramp-up
+in the *reported* ticks/sec metric. Checked against the actual
+`bk_clock_advance` implementation (`src/bk_time.c`): on a cap hit, the
+accumulator is reset via `accumulator_ns %= fixed_dt_ns` (see the first
+`DEVIATIONS.md` entry above), which *discards* the backlog beyond
+`max_ticks_per_frame` in that same single `bk_clock_advance` call rather than
+carrying it forward for later frames to chase down — there is no multi-frame
+"climb." Confirmed empirically during the manual hitch check: pressing SPACE
+twice produced two isolated dips in the printed `ticks/sec` (one line showing
+~50 instead of ~60, immediately followed by lines back at 60/61) and two
+matching ~0.17s permanent steps in `drift` (-0.04s → -0.21s → -0.37s,
+~167ms per hitch, consistent with 300ms hitch minus 8 ticks × 16.667ms
+already run that frame) — never a value trending upward across several
+consecutive lines. Rewrote both comments to describe the single-frame
+cap-then-discard behavior and the resulting one-second dip instead of the
+brief's climb-then-settle framing; no code or `.time = {...}` values changed.
