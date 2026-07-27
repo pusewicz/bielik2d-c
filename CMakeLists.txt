@@ -28,7 +28,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(SDL3)
 
-add_library(bielik STATIC src/bk_app.c)
+add_library(bielik STATIC src/bk_app.c src/bk_time.c)
 add_library(Bielik2D::bielik ALIAS bielik)
 
 target_include_directories(bielik PUBLIC include)
