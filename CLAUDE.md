@@ -5,11 +5,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project
 
 Bielik2D is a 2D game framework written in C23, designed to be lightweight, fast, and
-easy to use. The repository is currently in the planning stage: `src/`, `include/`, and
-`vendor/` are empty, and `CMakeLists.txt` is a stub. There is no build, lint, or test
-tooling yet — check the actual directory contents before assuming a command exists, and
-update this file with real commands (build, single-test invocation, etc.) as soon as the
-build system lands.
+easy to use. The repository is still early-stage: most of `src/` and `include/` are still
+empty. The CMake build system has landed — check the actual directory contents before
+assuming a command exists beyond what's listed here.
+
+Build: `cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBK_WERROR=ON && cmake --build build`.
+Test: `ctest --test-dir build --output-on-failure` (or run a single test
+binary directly, e.g. `./build/tests/test_version`).
 
 `THOUGHTS.md` is the working design log for the project and is the primary source of
 architectural intent until real code and headers exist. Treat it as a mix of locked
@@ -97,3 +99,37 @@ infrastructure into a bounded, checkable deliverable.
   documentation.
 - CI should run on Linux + Windows-clang (+ Emscripten, only if web option (a) above is
   chosen) from day one.
+
+## Conventions
+
+Naming:
+- Public functions: `bk_` + snake_case (`bk_run`, `bk_frame_alloc`).
+- Public types: `BK_` + PascalCase (`BK_AppDesc`, `BK_FrameInfo`).
+- Enum values: `BK_` + UPPER_SNAKE (`BK_CONTINUE`).
+- Internal linker-visible symbols: `bk__` prefix. File-static functions: `s_` prefix.
+- One module = `include/bielik/bk_<name>.h` + `src/bk_<name>.c` (+ optional
+  `src/internal/bk_<name>_internal.h`).
+
+C23 usage:
+- Use: `bool`/`true`/`false`, `nullptr`, designated initializers, compound
+  literals, `constexpr` for constants, `static_assert`, `[[nodiscard]]` on
+  functions returning `BK_Result`, `[[maybe_unused]]`, `typeof` where it
+  removes duplication.
+- Avoid: VLAs (`-Wvla` enforces), `alloca`, `_Generic` unless clearly better,
+  `auto` outside obvious initializers, bit-precise ints in public API.
+- `#embed` is reserved for later phases (needs Clang 19+/GCC 15); do not use yet.
+
+Style:
+- `.clang-format`: LLVM base, 4-space indent, 100 columns,
+  `PointerAlignment: Right` (`char *p`), K&R attached braces. Run on everything.
+- Every public symbol gets a doc comment: one-sentence summary, param notes,
+  thread/lifetime notes where relevant. Terse; no boilerplate prose.
+- Public headers must each compile standalone (enforced by test).
+- Errors: no silent failure. Boot-path failures log via `SDL_Log` with a
+  `"BK: "` prefix and return `BK_FAIL`. Assertions: `BK_ASSERT` wraps
+  `SDL_assert`.
+- Includes ordered: own header, then `<bielik/...>`, then SDL, then libc.
+
+Process:
+- Never reorganize the file layout beyond section 4 of `PLAN.md`.
+- Keep functions small; no premature abstraction; no speculative options.
