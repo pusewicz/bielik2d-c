@@ -63,18 +63,20 @@ is worth reading as a template for conventions here.
 - **SIMD**: write SoA scalar code first and check clang's autovectorization before
   hand-writing SSE/NEON/WASM128 — only where a profiler shows it's needed. Box2D and the
   audio library bring their own SIMD already.
+- **Web/graphics backend strategy**: SDL_GPU stays the native backend (already built in
+  Phase 1); web gets a second backend built directly against `webgpu.h` via Emscripten's
+  `emdawnwebgpu` port (mature and actively maintained as of mid-2026, integrated since
+  Emscripten 4.0.10). SDL_GPU's own native WebGPU backend is still experimental (started
+  May 2026, no macOS/browser target yet) — not viable today, but the bet is that it
+  eventually matures enough to let the two backends converge into one without a rewrite.
+  Rejected: replacing SDL_GPU with Dawn-as-the-one-graphics-API everywhere (architecturally
+  cleaner, kills the two-backend tax permanently, but means reworking Phase 1's already-
+  shipped GPU bring-up and vendoring Dawn as a new heavy native build dependency — too much
+  cost for what SDL_GPU already gets natively today). CI gets an Emscripten leg once this
+  backend lands.
 
 ## Open decisions — do not treat these as settled
 
-- **Web/graphics backend strategy.** This gates a lot of downstream work (Emscripten CI,
-  whether a GLES3 backend gets built at all) and needs to be decided before committing to
-  it, not inferred by an agent:
-  (a) CF's approach — SDL_GPU + a second GLES3 backend for web, plus a shader permutation
-  matrix and a permanent two-backend testing tax;
-  (b) native-first — SDL_GPU only, structured so a second backend could be added, web
-  deferred until SDL ships WebGPU support (no ETA);
-  (c) sokol_gfx instead of SDL_GPU — the only single-API route to web today, but it drops
-  the SDL_GPU requirement.
 - **Audio library.** miniaudio (battle-hardened, zero deps, proven wasm support) vs.
   SDL3_mixer (all-SDL stack coherence, but only months old as a stable release, needs SDL
   3.4.0+). Leaning miniaudio, not decided. MojoAL is ruled out either way (unneeded OpenAL
@@ -103,8 +105,8 @@ infrastructure into a bounded, checkable deliverable.
 - Every module gets a test (pico_unit-style for math/VFS/strings; golden-image tests for
   the renderer — render to texture, hash, compare) and an example app as living
   documentation.
-- CI should run on Linux + Windows-clang (+ Emscripten, only if web option (a) above is
-  chosen) from day one.
+- CI should run on Linux + Windows-clang from day one; add an Emscripten leg once the
+  webgpu.h web backend (see the locked-in web/graphics backend decision above) lands.
 
 ## Conventions
 
