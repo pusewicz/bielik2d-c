@@ -2,6 +2,21 @@
 
 void bk_clock_init(BK_Clock *c, int tick_hz, int max_ticks_per_frame, double max_frame_dt,
                    uint64_t now_ns) {
+    if (max_frame_dt <= 0.0) {
+        // Casting a negative double to uint64_t is undefined behavior, and
+        // 0.0 itself would clamp every frame's dt to zero forever (raw_ns <
+        // 0 is never true for an unsigned raw_ns) — both are nonsensical
+        // for a hitch clamp, so treat them as "unset" and fall back to the
+        // same 0.25s default BK_TimeDesc documents and bk__boot substitutes
+        // for the exactly-zero case.
+        max_frame_dt = 0.25;
+    }
+    if (max_ticks_per_frame < 1) {
+        // A negative cap wraps to ~1.8e19 when cast to uint64_t below,
+        // silently disabling the spiral-of-death cap entirely.
+        max_ticks_per_frame = 1;
+    }
+
     c->fixed_dt_ns = tick_hz > 0 ? 1000000000ULL / (uint64_t)tick_hz : 0;
     c->max_frame_ns = (uint64_t)(max_frame_dt * 1e9);
     c->max_ticks_per_frame = max_ticks_per_frame;

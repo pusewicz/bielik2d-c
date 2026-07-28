@@ -82,6 +82,36 @@ logical offset-0 slot), and reading through it proves the bytes written
 before growth survived the `realloc`, without ever reading through
 potentially-freed memory.
 
+## bk_clock_init negative BK_TimeDesc field clamps (final-review-fix-brief.md §2)
+
+A whole-branch review found that `bk_clock_init` passed negative
+`max_frame_dt`/`max_ticks_per_frame` straight through unvalidated: negative
+`max_frame_dt` hits UB casting to `uint64_t` and in practice yields
+`max_frame_ns == 0`; negative `max_ticks_per_frame` wraps to ~1.8e19 casting
+to `uint64_t`, silently disabling the spiral-of-death cap. The fix brief's
+own illustrative clamp code was `if (max_frame_dt < 0.0) { max_frame_dt =
+0.0; }`. Implemented that literally first and ran it against the brief's own
+required regression test ("confirm `bk_clock_advance` still produces sane,
+non-zero `frame_dt` for a normal input delta"): it fails
+(`tests/test_time.c:156: REQUIRE failed: f.frame_dt > 0.0`), because
+`max_frame_ns == 0` clamps *every* frame's dt to zero forever regardless of
+the sign of the original input — `raw_ns < 0` is never true for an unsigned
+`raw_ns`, so the `else` branch (`frame_dt_ns = max_frame_ns = 0`) always
+wins. Clamping to `0.0` removes the UB but reproduces the exact "clock never
+advances" symptom the brief itself describes as the bug. Implemented `if
+(max_frame_dt <= 0.0) { max_frame_dt = 0.25; }` instead — falling back to
+the same 0.25s default `BK_TimeDesc.max_frame_dt`'s doc comment documents
+and `bk__boot` already substitutes for the exactly-zero case — which passes
+the brief's required test and makes `bk_clock_init` self-sufficient for any
+direct caller, not just the `bk__boot` path. Also folds the `== 0.0` case
+into the same clamp (previously only negative was targeted): nothing today
+relies on `0.0` reaching `bk_clock_init` directly (every test and `bk__boot`
+itself substitute `0.25` first), and `0.0` hits the identical "frozen clock"
+bug for a hypothetical direct caller, so there's no reason to leave that
+edge unhandled while fixing the negative one. `max_ticks_per_frame < 1 ->
+1` is unchanged from the brief's own snippet — that one holds up under the
+test (`f2.ticks == 1`, not thousands).
+
 ## bk_gfx.h formatting (task-P1-7-brief.md)
 
 The task brief's normative header listing writes `BK_Color` as a one-line

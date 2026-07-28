@@ -141,6 +141,34 @@ static void test_non_monotonic_input(void) {
     REQUIRE(vf.alpha == 1.0);
 }
 
+static void test_negative_timedesc_fields_clamped(void) {
+    // max_frame_dt < 0: without clamping, (uint64_t)(negative * 1e9) is UB
+    // and in practice yields max_frame_ns == 0, which then clamps every
+    // frame's dt to zero forever (raw_ns < 0 is never true for an unsigned
+    // raw_ns). Confirm a normal input delta still produces a sane, non-zero
+    // frame_dt instead of getting stuck at zero.
+    BK_Clock c;
+    bk_clock_init(&c, 60, 8, -1.0, 0);
+    bk_clock_advance(&c, 0);
+
+    const uint64_t normal_frame_ns = 16666667ULL;
+    BK_ClockFrame f = bk_clock_advance(&c, normal_frame_ns);
+    REQUIRE(f.frame_dt > 0.0);
+    REQUIRE_NEAR(f.frame_dt, (double)normal_frame_ns / 1e9, 1e-9);
+
+    // max_ticks_per_frame < 0: without clamping, (uint64_t)max_ticks_per_frame
+    // wraps to ~1.8e19, so the spiral-of-death cap check (uncapped_ticks >
+    // cap) is never true and the cap silently stops capping. Confirm a huge
+    // synthetic gap still caps at a small positive tick count, not thousands.
+    BK_Clock c2;
+    bk_clock_init(&c2, 60, -5, 0.25, 0);
+    bk_clock_advance(&c2, 0);
+
+    BK_ClockFrame f2 = bk_clock_advance(&c2, 10000000000ULL); // 10 real seconds
+    REQUIRE(f2.ticks == 1);                                   // max_ticks_per_frame clamps up to 1
+    REQUIRE(f2.alpha >= 0.0 && f2.alpha < 1.0);
+}
+
 int main(void) {
     test_fixed_60hz_steady_steps();
     test_hitch_clamp();
@@ -148,6 +176,7 @@ int main(void) {
     test_variable_mode();
     test_first_frame_dt_zero();
     test_non_monotonic_input();
+    test_negative_timedesc_fields_clamped();
     printf("test_time: OK\n");
     return 0;
 }
