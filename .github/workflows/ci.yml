@@ -54,3 +54,34 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         continue-on-error: true
         run: xvfb-run build/samples/01_clear/01_clear --frames 120
+
+  debug-sanitizers:
+    name: debug-sanitizers (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers xvfb
+
+      - name: Configure (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          CC: clang
+          CXX: clang++
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBK_WERROR=ON
+
+      - name: Configure (macOS)
+        if: matrix.os == 'macos-latest'
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBK_WERROR=ON
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure -E test_app_lifecycle
