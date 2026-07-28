@@ -114,15 +114,24 @@ bielik2d/
     bk_task.c
     bk_gfx.c
     internal/bk_app_internal.h
+    internal/bk_gfx_internal.h
+    internal/bk_task_internal.h
   samples/
+    CMakeLists.txt
     01_clear/main.c
+    01_clear/CMakeLists.txt
     02_ticks/main.c
+    02_ticks/CMakeLists.txt
   tests/
+    CMakeLists.txt
     bk_test.h        (tiny assertion macros; one executable per test file)
     test_header_*.c  (five generated stubs, standalone-compilation check, see 6.9)
+    test_version.c
     test_time.c
     test_task.c
     test_arena.c
+    test_gfx.c
+    test_app_lifecycle.c
 ```
 
 ## 5. Phase 0 — Scaffold

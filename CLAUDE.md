@@ -5,9 +5,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project
 
 Bielik2D is a 2D game framework written in C23, designed to be lightweight, fast, and
-easy to use. The repository is still early-stage: most of `src/` and `include/` are still
-empty. The CMake build system has landed — check the actual directory contents before
-assuming a command exists beyond what's listed here.
+easy to use. `PLAN.md` is the normative spec for the public API and module design
+(section 6.1 in particular) — read it before changing library headers or adding a
+module. `DEVIATIONS.md` records every place implementation deviated from `PLAN.md` or
+a task brief, with rationale; check it, and add to it, whenever you knowingly diverge.
+
+Phase 0 (scaffold) and Phase 1 (app core) are implemented: the CMake build system,
+`bielik` static library, samples, and test suite described in `PLAN.md` sections 5 and
+6 all exist. Check the actual directory contents (`PLAN.md` section 4 has the current
+layout) before assuming a command exists beyond what's listed here.
 
 Build: `cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBK_WERROR=ON && cmake --build build`.
 Test: `ctest --test-dir build --output-on-failure` (or run a single test
