@@ -26,7 +26,7 @@ void *bk__realloc(void *ptr, size_t size) { return SDL_realloc(ptr, size); }
 
 void bk__free(void *ptr) { SDL_free(ptr); }
 
-static constexpr size_t BK_ARENA_DEFAULT_CAPACITY = 4 * 1024 * 1024;
+static constexpr size_t s_arena_default_capacity = 4 * 1024 * 1024;
 
 static struct {
     unsigned char *base;
@@ -36,15 +36,24 @@ static struct {
 
 void bk__arena_reset(void) { s_frame_arena.used = 0; }
 
+void bk__arena_free(void) {
+    if (s_frame_arena.base != nullptr) {
+        bk__free(s_frame_arena.base);
+        s_frame_arena.base = nullptr;
+        s_frame_arena.capacity = 0;
+        s_frame_arena.used = 0;
+    }
+}
+
 void *bk_frame_alloc(size_t size, size_t align) {
-    if (s_frame_arena.base == NULL) {
-        unsigned char *base = bk__alloc(BK_ARENA_DEFAULT_CAPACITY);
-        BK_ASSERT(base != NULL);
-        if (base == NULL) {
-            return NULL;
+    if (s_frame_arena.base == nullptr) {
+        unsigned char *base = bk__alloc(s_arena_default_capacity);
+        BK_ASSERT(base != nullptr);
+        if (base == nullptr) {
+            return nullptr;
         }
         s_frame_arena.base = base;
-        s_frame_arena.capacity = BK_ARENA_DEFAULT_CAPACITY;
+        s_frame_arena.capacity = s_arena_default_capacity;
         s_frame_arena.used = 0;
     }
 
@@ -61,9 +70,9 @@ void *bk_frame_alloc(size_t size, size_t align) {
             new_capacity *= 2;
         }
         unsigned char *new_base = bk__realloc(s_frame_arena.base, new_capacity);
-        if (new_base == NULL) {
+        if (new_base == nullptr) {
             BK_ASSERT(false);
-            return NULL;
+            return nullptr;
         }
         s_frame_arena.base = new_base;
         s_frame_arena.capacity = new_capacity;
@@ -106,7 +115,7 @@ static SDL_AppResult s_boot_fail(const char *msg) {
 SDL_AppResult bk__boot(BK_AppDesc (*get_desc)(void), void **appstate, int argc, char **argv) {
     s_app.desc = get_desc();
 
-    if (s_app.desc.window.title == NULL) {
+    if (s_app.desc.window.title == nullptr) {
         s_app.desc.window.title = "Bielik2D";
     }
     if (s_app.desc.window.w == 0) {
@@ -145,7 +154,7 @@ SDL_AppResult bk__boot(BK_AppDesc (*get_desc)(void), void **appstate, int argc, 
 
     s_app.gpu = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL |
                                         SDL_GPU_SHADERFORMAT_MSL,
-                                    s_gpu_debug_mode, NULL);
+                                    s_gpu_debug_mode, nullptr);
     if (!s_app.gpu) {
         char msg[256];
         SDL_snprintf(msg, sizeof msg, "SDL_CreateGPUDevice failed: %s", SDL_GetError());
@@ -199,6 +208,7 @@ SDL_AppResult bk__iterate(void *appstate) {
 
     BK_FrameInfo info = {0};
     for (int i = 0; i < cf.ticks; i++) {
+        // TODO(phase4): input snapshot slot — bk_input__begin_tick() runs here
         uint64_t tick_i = s_app.clock.tick - (uint64_t)cf.ticks + (uint64_t)i + 1;
         info = (BK_FrameInfo){
             .tick = tick_i,
@@ -214,6 +224,7 @@ SDL_AppResult bk__iterate(void *appstate) {
                 return (SDL_AppResult)r;
             }
         }
+        // TODO(phase8): physics slot — bk_physics__step() runs here iff bk_physics_init was called
         if (s_app.desc.post_update) {
             BK_Result r = s_app.desc.post_update(appstate, &info);
             if (r != BK_CONTINUE) {
@@ -231,7 +242,7 @@ SDL_AppResult bk__iterate(void *appstate) {
     if (s_app.desc.render) {
         s_app.desc.render(appstate, &info);
     }
-    bk_gfx__flush();
+    bk__gfx_flush();
     bk__arena_reset();
 
     return SDL_APP_CONTINUE;
@@ -252,6 +263,7 @@ void bk__shutdown(void *appstate, SDL_AppResult result) {
     if (s_app.desc.quit) {
         s_app.desc.quit(appstate, (BK_Result)result);
     }
+    bk__arena_free();
     if (s_app.gpu && s_app.window) {
         SDL_ReleaseWindowFromGPUDevice(s_app.gpu, s_app.window);
     }

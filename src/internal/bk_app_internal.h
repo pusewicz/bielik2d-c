@@ -17,3 +17,6 @@ void bk__free(void *ptr);
 /// frame pipeline (a later task) — exposed here so this task's test can
 /// exercise the reset/rewind behavior without a running app.
 void bk__arena_reset(void);
+
+/// Frees the frame arena's backing allocation. Called once by bk__shutdown.
+void bk__arena_free(void);
