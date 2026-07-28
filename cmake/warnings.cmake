@@ -10,6 +10,9 @@ endif()
 
 option(BK_SANITIZE "Enable ASan/UBSan in Debug builds" ON)
 if(BK_SANITIZE AND (CMAKE_SYSTEM_NAME STREQUAL "Linux" OR CMAKE_SYSTEM_NAME STREQUAL "Darwin"))
-    target_compile_options(bk_warnings INTERFACE $<$<CONFIG:Debug>:-fsanitize=address,undefined>)
+    target_compile_options(bk_warnings INTERFACE
+        $<$<CONFIG:Debug>:-fsanitize=address,undefined>
+        $<$<CONFIG:Debug>:-fno-sanitize-recover=all>
+    )
     target_link_options(bk_warnings INTERFACE $<$<CONFIG:Debug>:-fsanitize=address,undefined>)
 endif()
