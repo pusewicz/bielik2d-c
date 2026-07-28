@@ -22,6 +22,9 @@ typedef struct BK_ClockFrame {
 } BK_ClockFrame;
 
 /// Initializes a clock for either fixed-tick (tick_hz > 0) or variable-dt (tick_hz == 0) mode.
+/// max_frame_dt <= 0.0 is treated as unset and substituted with 0.25; max_ticks_per_frame < 1
+/// is substituted with 1 — both would otherwise be nonsensical (a frozen clock or a silently
+/// disabled spiral-of-death cap).
 void bk_clock_init(BK_Clock *c, int tick_hz, int max_ticks_per_frame, double max_frame_dt,
                    uint64_t now_ns);
 /// Advances the clock to now_ns, returning the fixed ticks to run and interpolation alpha.
