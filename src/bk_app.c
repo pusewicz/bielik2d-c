@@ -301,6 +301,8 @@ static SDL_AppResult s_run_event(void *appstate, SDL_Event *event) {
 static void s_run_quit(void *appstate, SDL_AppResult result) { bk__shutdown(appstate, result); }
 
 int bk_run(const BK_AppDesc *desc, int argc, char **argv) {
+    BK_ASSERT(desc != nullptr);
+
     s_run_desc = *desc;
     return SDL_EnterAppMainCallbacks(argc, argv, s_run_init, s_run_iterate, s_run_event,
                                      s_run_quit);
