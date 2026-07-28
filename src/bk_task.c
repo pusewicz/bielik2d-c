@@ -9,6 +9,8 @@ void bk__task_set_desc(const BK_TaskSystemDesc *desc) {
 }
 
 void bk_task_run(BK_TaskFn fn, int32_t count, int32_t min_range, void *arg) {
+    BK_ASSERT(fn != nullptr);
+
     if (count <= 0) {
         return;
     }
