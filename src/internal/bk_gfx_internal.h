@@ -9,4 +9,4 @@ BK_Color bk__gfx_get_clear_color(void);
 /// bk_gfx_set_clear_color, and presents. Called once per frame by the
 /// frame pipeline. No-op (submits an empty command buffer) if the
 /// swapchain texture isn't available (minimized/occluded window).
-void bk_gfx__flush(void);
+void bk__gfx_flush(void);

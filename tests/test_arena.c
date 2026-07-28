@@ -9,7 +9,7 @@ static void test_alignment_across_powers_of_two(void) {
     for (size_t i = 0; i < sizeof(aligns) / sizeof(aligns[0]); i++) {
         bk__arena_reset();
         void *ptr = bk_frame_alloc(37, aligns[i]);
-        REQUIRE(ptr != NULL);
+        REQUIRE(ptr != nullptr);
         REQUIRE(((uintptr_t)ptr % aligns[i]) == 0);
     }
 }
@@ -26,20 +26,20 @@ static void test_growth_preserves_contents_and_stays_aligned(void) {
     bk__arena_reset();
 
     unsigned char *marker_before_growth = (unsigned char *)bk_frame_alloc(256, 0);
-    REQUIRE(marker_before_growth != NULL);
+    REQUIRE(marker_before_growth != nullptr);
     memset(marker_before_growth, 0xAB, 256);
 
     const size_t chunk_size = 64 * 1024;
     const int chunk_count = 90;
     for (int i = 0; i < chunk_count; i++) {
         void *ptr = bk_frame_alloc(chunk_size, 0);
-        REQUIRE(ptr != NULL);
+        REQUIRE(ptr != nullptr);
         REQUIRE(((uintptr_t)ptr % alignof(max_align_t)) == 0);
     }
 
     bk__arena_reset();
     unsigned char *marker_after_growth = (unsigned char *)bk_frame_alloc(256, 0);
-    REQUIRE(marker_after_growth != NULL);
+    REQUIRE(marker_after_growth != nullptr);
     for (size_t i = 0; i < 256; i++) {
         REQUIRE(marker_after_growth[i] == 0xAB);
     }
@@ -47,7 +47,7 @@ static void test_growth_preserves_contents_and_stays_aligned(void) {
     const size_t aligns[] = {8, 16, 32, 64, 128, 256};
     for (size_t i = 0; i < sizeof(aligns) / sizeof(aligns[0]); i++) {
         void *ptr = bk_frame_alloc(97, aligns[i]);
-        REQUIRE(ptr != NULL);
+        REQUIRE(ptr != nullptr);
         REQUIRE(((uintptr_t)ptr % aligns[i]) == 0);
     }
 }
@@ -55,7 +55,7 @@ static void test_growth_preserves_contents_and_stays_aligned(void) {
 static void test_growth_with_large_align(void) {
     bk__arena_reset();
     void *big = bk_frame_alloc(9u * 1024 * 1024, 1024 * 1024);
-    REQUIRE(big != NULL);
+    REQUIRE(big != nullptr);
     REQUIRE(((uintptr_t)big % (1024 * 1024)) == 0);
 }
 
@@ -74,7 +74,7 @@ static void test_interleaved_allocations_do_not_overlap(void) {
         size_t size = sizes[i % (sizeof(sizes) / sizeof(sizes[0]))];
         size_t align = aligns[i % (sizeof(aligns) / sizeof(aligns[0]))];
         unsigned char *ptr = (unsigned char *)bk_frame_alloc(size, align);
-        REQUIRE(ptr != NULL);
+        REQUIRE(ptr != nullptr);
         REQUIRE(((uintptr_t)ptr % align) == 0);
 
         uint8_t pattern = (uint8_t)(i + 1);

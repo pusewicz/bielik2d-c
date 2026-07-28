@@ -8,8 +8,8 @@ static BK_Result test_init(void **state, int argc, char **argv) {
     (void)state;
     (void)argc;
     (void)argv;
-    REQUIRE(bk_window() != NULL);
-    REQUIRE(bk_gpu() != NULL);
+    REQUIRE(bk_window() != nullptr);
+    REQUIRE(bk_gpu() != nullptr);
     return BK_CONTINUE;
 }
 

@@ -112,6 +112,24 @@ edge unhandled while fixing the negative one. `max_ticks_per_frame < 1 ->
 1` is unchanged from the brief's own snippet — that one holds up under the
 test (`f2.ticks == 1`, not thousands).
 
+## bk_quit()'s doc comment overstated equivalence to BK_DONE (PLAN.md:228, final-review-fix-brief.md §14)
+
+`include/bielik/bk_app.h`'s `bk_quit()` doc comment said "equivalent to
+returning `BK_DONE`" unconditionally — true only when the app has no custom
+`.event` handler (the framework's *built-in* `SDL_EVENT_QUIT` handling
+returns `BK_DONE`). When `.event` is set, `bk__event` forwards everything
+and the app owns quit handling entirely (per `PLAN.md` §6.3's quit rules,
+correctly implemented), so a game could freely ignore the pushed
+`SDL_EVENT_QUIT` — not equivalent in that case. `PLAN.md` §6.1 makes the
+identical over-broad claim in its own doc comment for this function
+("Convenience: pushes `SDL_EVENT_QUIT` (equivalent to returning
+`BK_DONE`)."), so this is a genuine plan defect predating any task, not
+something a task introduced. Fixed the doc comment in `bk_app.h` to state
+the conditional accurately; `PLAN.md` itself is left as-is (per this task's
+scope — only `CLAUDE.md`'s stale Project section and `PLAN.md` §4's
+directory tree were in scope for edits) with this entry serving as the
+record of the same defect there.
+
 ## bk_gfx.h formatting (task-P1-7-brief.md)
 
 The task brief's normative header listing writes `BK_Color` as a one-line

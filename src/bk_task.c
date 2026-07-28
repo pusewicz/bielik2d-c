@@ -13,13 +13,13 @@ void bk_task_run(BK_TaskFn fn, int32_t count, int32_t min_range, void *arg) {
         return;
     }
 
-    if (s_desc.enqueue == NULL) {
+    if (s_desc.enqueue == nullptr) {
         fn(0, count, 0, arg);
         return;
     }
 
     void *task = s_desc.enqueue(fn, count, min_range, arg, s_desc.ctx);
-    if (s_desc.finish != NULL) {
+    if (s_desc.finish != nullptr) {
         s_desc.finish(task, s_desc.ctx);
     }
 }

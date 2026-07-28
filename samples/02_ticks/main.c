@@ -22,12 +22,12 @@
 #include <bielik/bk_gfx.h>
 #include <bielik/bk_main.h>
 
-#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-// App state, allocated by init and handed back to every other callback.
+// App state — a file static works fine for a single-app-at-a-time sample; a
+// real game with more complex lifetime needs might allocate this instead.
 //
 // Tick/render counters are split because they're driven by different
 // callbacks that don't run 1:1 in fixed-timestep mode: update() runs once
@@ -43,7 +43,7 @@ typedef struct AppState {
     bool hitch_requested;        // set by event() on SPACE, consumed by update()
 } AppState;
 
-static AppState s_state; // a static works fine for a single-app-at-a-time sample
+static AppState s_state;
 
 // init: SDL isn't touched here directly — the framework has already created
 // the window and GPU device by the time init runs. This is where you parse

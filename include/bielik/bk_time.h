@@ -2,6 +2,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+/// Fixed/variable timestep accumulator state; owns no resources.
 typedef struct BK_Clock {
     uint64_t fixed_dt_ns;    // 0 => variable mode
     uint64_t max_frame_ns;   // hitch clamp
@@ -12,6 +13,8 @@ typedef struct BK_Clock {
     bool started;
 } BK_Clock;
 
+/// Result of one bk_clock_advance call: ticks to run this frame and the
+/// render-interpolation alpha.
 typedef struct BK_ClockFrame {
     int ticks;       // fixed updates to run this frame (always 1 in variable mode)
     double frame_dt; // clamped wall delta, seconds

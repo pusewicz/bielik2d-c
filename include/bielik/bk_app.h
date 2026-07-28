@@ -96,7 +96,9 @@ SDL_Window *bk_window(void);
 /// Valid between init and quit.
 SDL_GPUDevice *bk_gpu(void);
 
-/// Convenience: pushes SDL_EVENT_QUIT (equivalent to returning BK_DONE).
+/// Convenience: pushes SDL_EVENT_QUIT. With no custom .event handler, this
+/// is equivalent to returning BK_DONE; with a custom handler, the app
+/// decides how (or whether) to respond to the queued event.
 void bk_quit(void);
 
 // Internal entry points; called by bk_main.h's trampolines. Not for direct use.

@@ -21,7 +21,7 @@ static void range_fn(int32_t start, int32_t end, uint32_t worker_index, void *ar
 }
 
 static void test_serial_executor_covers_full_range_once(void) {
-    bk__task_set_desc(NULL);
+    bk__task_set_desc(nullptr);
 
     RangeSpy spy = {0};
     const int32_t count = 32;
@@ -47,7 +47,7 @@ static void counting_fn(int32_t start, int32_t end, uint32_t worker_index, void 
 }
 
 static void test_zero_and_negative_count_call_nothing(void) {
-    bk__task_set_desc(NULL);
+    bk__task_set_desc(nullptr);
 
     int call_count = 0;
     bk_task_run(counting_fn, 0, 1, &call_count);
@@ -125,7 +125,7 @@ static void test_custom_desc_pass_through(void) {
     REQUIRE(spy.finish.task == &s_task_token);
     REQUIRE(spy.finish.ctx == &spy);
 
-    bk__task_set_desc(NULL);
+    bk__task_set_desc(nullptr);
 }
 
 static void test_custom_desc_without_finish_and_zero_count(void) {
@@ -143,7 +143,7 @@ static void test_custom_desc_without_finish_and_zero_count(void) {
     REQUIRE(spy.enqueue.calls == 1);
     REQUIRE(spy.finish.calls == 0);
 
-    bk__task_set_desc(NULL);
+    bk__task_set_desc(nullptr);
 }
 
 int main(void) {

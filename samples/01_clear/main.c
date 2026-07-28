@@ -11,18 +11,18 @@
 #include <bielik/bk_main.h>
 
 #include <math.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-// App state, allocated by init and handed back to every other callback.
+// App state — a file static works fine for a single-app-at-a-time sample; a
+// real game with more complex lifetime needs might allocate this instead.
 // This sample only needs a frame counter and an optional frame limit.
 typedef struct AppState {
     int frame_count;
     int frame_limit; // 0 => no limit (the default; run until closed/ESC)
 } AppState;
 
-static AppState s_state; // a static works fine for a single-app-at-a-time sample
+static AppState s_state;
 
 // init: SDL isn't touched here directly — the framework has already created
 // the window and GPU device by the time init runs. This is where you parse
@@ -57,7 +57,7 @@ static BK_Result app_update(void *state, const BK_FrameInfo *f) {
 // render: the whole point of this sample — cycle the swapchain clear color
 // through a slow rainbow using sinf(real_time), phase-shifted per channel.
 // bk_gfx_set_clear_color just records the color; the framework's frame
-// pipeline calls bk_gfx__flush (clear + present) right after render returns.
+// pipeline calls bk__gfx_flush (clear + present) right after render returns.
 static void app_render(void *state, const BK_FrameInfo *f) {
     (void)state;
     float t = (float)f->real_time;
