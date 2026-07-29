@@ -318,3 +318,37 @@ tooling generates the DXIL variant; CI's GPU-dependent tests are already
 `continue-on-error: true` on every platform, so this doesn't block required
 CI. Migrating to the shadercross/HLSL toolchain is future work once that
 tooling is genuinely available, not a reversal of the locked decision.
+
+## test_gfx_pipeline.c missing SDL_Init before SDL_CreateGPUDevice (task-2-brief.md)
+
+The task-2 brief's verbatim `test_create_and_destroy_pipeline_succeeds` calls
+`SDL_CreateGPUDevice` with no prior `SDL_Init`. Run as written, this fails:
+`SDL_CreateGPUDevice` returns `nullptr` with error "Video subsystem not
+initialized". Confirmed in SDL's own source
+(`SDL_GPUSelectBackend`, `src/gpu/SDL_gpu.c`): it calls `SDL_GetVideoDevice()`
+and errors out immediately if the video subsystem hasn't been initialized --
+this is a hard precondition of `SDL_CreateGPUDevice`, not environment
+flakiness. `test_app_lifecycle` (Phase 1) never hits this because it drives
+`bk_run()`, which already calls `SDL_Init(SDL_INIT_VIDEO)` before creating its
+GPU device; this test creates a device directly, with no app/window, so
+nothing else in the call path initializes the video subsystem for it. Added a
+single `SDL_Init(SDL_INIT_VIDEO);` as the first line of the test function,
+before the `SDL_CreateGPUDevice` call. No corresponding `SDL_Quit` was added
+-- the test has no other teardown and the process exits immediately after --
+so this keeps the deviation to the minimum needed to make the verbatim
+scenario (create a pipeline against a real device, no window) actually
+runnable. `bk_gfx_pipeline_create` itself is unchanged from the brief: it
+still takes `device` as an explicit, caller-supplied parameter and does not
+call `SDL_Init` itself, consistent with the module's stated design (pipelines
+creatable/testable without a running app or window).
+
+## src/bk_gfx_pipeline.c include order (task-2-brief.md)
+
+Same category as the `bk_time.h` include-order entry above. The brief's
+verbatim `src/bk_gfx_pipeline.c` lists
+`#include "internal/bk_gfx_pipeline_internal.h"` before
+`#include "internal/bk_app_internal.h"`; `clang-format --dry-run --Werror`
+(mandated by the same brief) sorts same-block quoted includes alphabetically,
+putting `bk_app_internal.h` first, and also reflows a few multi-line function
+signatures' continuation-line indentation. Ran `clang-format -i` on the file;
+no type, field, or function body changed.

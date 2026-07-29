@@ -40,3 +40,12 @@ target_link_libraries(test_header_bk_task PRIVATE bielik bk_warnings)
 
 add_library(test_header_bk_gfx OBJECT test_header_bk_gfx.c)
 target_link_libraries(test_header_bk_gfx PRIVATE bielik bk_warnings)
+
+add_executable(test_gfx_pipeline test_gfx_pipeline.c)
+target_link_libraries(test_gfx_pipeline PRIVATE bielik bk_warnings)
+target_include_directories(test_gfx_pipeline PRIVATE ${PROJECT_SOURCE_DIR}/src)
+add_test(NAME test_gfx_pipeline COMMAND test_gfx_pipeline)
+bk_stage_shaders(test_gfx_pipeline)
+
+add_library(test_header_bk_gfx_pipeline OBJECT test_header_bk_gfx_pipeline.c)
+target_link_libraries(test_header_bk_gfx_pipeline PRIVATE bielik bk_warnings)
