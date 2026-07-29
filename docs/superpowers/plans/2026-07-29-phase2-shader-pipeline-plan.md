@@ -441,6 +441,11 @@ static void s_free_shader(BK_GfxShaderDesc *desc) {
 }
 
 static void test_create_and_destroy_pipeline_succeeds(void) {
+    // SDL_CreateGPUDevice requires the video subsystem initialized even though no
+    // window is ever created here (SDL_GPUSelectBackend calls SDL_GetVideoDevice()
+    // internally and errors "Video subsystem not initialized" otherwise).
+    SDL_Init(SDL_INIT_VIDEO);
+
     SDL_GPUDevice *device = SDL_CreateGPUDevice(
         SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_MSL, false,
         nullptr);
@@ -958,6 +963,10 @@ static void s_check_pixel(const uint8_t *pixels, int width, int x, int y, uint8_
 static void test_draw_produces_expected_pixels(void) {
     constexpr int size = 64;
     constexpr int tolerance = 5;
+
+    // Defensive, independent of test-function call order: see the identical call
+    // in test_create_and_destroy_pipeline_succeeds above for why this is required.
+    SDL_Init(SDL_INIT_VIDEO);
 
     SDL_GPUDevice *device = SDL_CreateGPUDevice(
         SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_MSL, false,
