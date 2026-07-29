@@ -99,6 +99,27 @@ and populate a `BK_GfxShaderDesc`'s three variant fields directly.
 the project's asset-pack loading not existing until P6, and `#embed` being reserved
 for later phases.
 
+**Bootstrap note.** The above is the intended long-term toolchain — `shadercross`,
+authoring in HLSL — matching `CLAUDE.md`'s locked shader decision. Neither
+`shadercross` nor DXC is installed anywhere this sub-project is actually being
+implemented, and building DXC from source is the large LLVM-fork build described
+above. This sub-project's actual implementation therefore substitutes a toolchain
+that's genuinely usable today: `glslc` (from Google's `shaderc`, a plain Homebrew
+bottle, no DXC) compiles **GLSL** sources to SPIR-V, and `spirv-cross` (already
+available) cross-compiles SPIR-V to MSL. **DXIL is not produced** — no tool available
+without DXC can produce it — so the two triangle shaders ship with SPIR-V and MSL
+variants only, and their `BK_GfxShaderDesc.dxil` fields stay zeroed. This is a real,
+scoped deviation from the locked decision (GLSL instead of HLSL as the authored
+source, `shadercross.cmake` replaced by a `glslc`/`spirv-cross`-based
+`cmake/shaders.cmake`, DXIL missing), recorded in `DEVIATIONS.md`. On any platform
+requesting a DXIL-only device (Windows/D3D12), `bk_gfx_pipeline_create` fails
+gracefully (log + `nullptr`) per §7 until someone with real DXC tooling generates the
+DXIL variant — CI's GPU-dependent tests are already `continue-on-error: true` on
+every platform (see `.github/workflows/ci.yml`), so this doesn't block required CI.
+Migrating to the shadercross/HLSL toolchain is future work once the tooling is
+actually available in a session working on this project, not scope for this
+sub-project.
+
 ## 3. Public API — `bk_gfx_pipeline.h`
 
 ```c
@@ -189,11 +210,23 @@ typedef struct BK_GfxPipelineDesc {
 /// on any SDL_GPU failure (bad bytecode, unsupported format/resource combination) —
 /// this is a runtime-data-dependent operation, not a programmer-error precondition,
 /// so failure is a recoverable return, not an assert.
-BK_GfxPipeline *bk_gfx_pipeline_create(const BK_GfxPipelineDesc *desc);
+BK_GfxPipeline *bk_gfx_pipeline_create(SDL_GPUDevice *device, const BK_GfxPipelineDesc *desc);
 
 /// Destroys a pipeline. No-op if pipeline is nullptr.
 void bk_gfx_pipeline_destroy(BK_GfxPipeline *pipeline);
 ```
+
+`bk_gfx_pipeline_create` takes an explicit `SDL_GPUDevice *`, not the implicit
+`bk_gpu()` singleton `bk__gfx_flush` uses internally. `bk_gpu()` is only ever
+populated by a full `bk_run()` app boot, which also creates a window — an
+implicit-device signature would make the headless golden-image test in §6
+impossible, since that test needs a device with no window at all. This is the one
+place this spec's API diverges from the app-singleton pattern the rest of `bk_gfx`
+uses, and it's driven directly by testability, not a stylistic preference.
+`bk_gfx_pipeline_destroy` doesn't need the same treatment: `BK_GfxPipeline` stores
+the device pointer it was created with, so destroy callers don't repeat it. Sample
+call sites (which do run through a real app) just pass `bk_gpu()` explicitly — one
+extra argument, no real cost.
 
 ## 4. Frame integration — binding and drawing
 
@@ -305,6 +338,15 @@ no-op, matching `bk__free`'s style elsewhere in the codebase.
   conflicts with "lightweight, fast, easy to use." Only someone authoring/changing a
   shader needs `shadercross` installed; everyone else builds against committed
   bytecode.
+- This sub-project's actual shipped toolchain is `glslc`+`spirv-cross` compiling
+  **GLSL** sources, not `shadercross` compiling HLSL, and ships SPIR-V+MSL only (no
+  DXIL): neither `shadercross` nor DXC is installed anywhere this is being
+  implemented, and building DXC from source is the LLVM-fork build above — genuinely
+  not feasible to do as part of implementing this sub-project. `glslc`/`spirv-cross`
+  are real, working, Homebrew-installable tools with no DXC dependency, verified
+  end-to-end before committing to this plan. This is a scoped, documented deviation
+  from `CLAUDE.md`'s locked HLSL/`shadercross` decision (see `DEVIATIONS.md`), not a
+  reversal of it — migrating to the real toolchain once it's usable is future work.
 - The golden-image test checks a handful of known pixels within a tolerance, not a
   whole-buffer hash: the same HLSL source compiles to different bytecode per backend
   (SPIR-V/DXIL/MSL), and Metal/Vulkan(lavapipe)/D3D12 aren't guaranteed to rasterize
