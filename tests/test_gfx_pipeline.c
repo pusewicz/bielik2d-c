@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 #include <bielik/bk_gfx_pipeline.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 static void *s_load_shader_file(const char *relative_path, size_t *out_size) {
     char path[512];
@@ -64,8 +65,114 @@ static void test_create_and_destroy_pipeline_succeeds(void) {
 
 static void test_destroy_null_is_noop(void) { bk_gfx_pipeline_destroy(nullptr); }
 
+static void s_check_pixel(const uint8_t *pixels, int width, int x, int y, uint8_t r, uint8_t g,
+                          uint8_t b, uint8_t a, int tolerance) {
+    size_t i = ((size_t)y * (size_t)width + (size_t)x) * 4;
+    REQUIRE(abs((int)pixels[i + 0] - (int)r) <= tolerance);
+    REQUIRE(abs((int)pixels[i + 1] - (int)g) <= tolerance);
+    REQUIRE(abs((int)pixels[i + 2] - (int)b) <= tolerance);
+    REQUIRE(abs((int)pixels[i + 3] - (int)a) <= tolerance);
+}
+
+static void test_draw_produces_expected_pixels(void) {
+    constexpr int size = 64;
+    constexpr int tolerance = 5;
+
+    // Defensive, independent of test-function call order: see the identical call
+    // in test_create_and_destroy_pipeline_succeeds above for why this is required.
+    SDL_Init(SDL_INIT_VIDEO);
+
+    SDL_GPUDevice *device = SDL_CreateGPUDevice(
+        SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_MSL, false,
+        nullptr);
+    REQUIRE(device != nullptr);
+
+    BK_GfxShaderDesc vertex = s_load_triangle_shader("vertex");
+    BK_GfxShaderDesc fragment = s_load_triangle_shader("fragment");
+
+    BK_GfxPipelineDesc pipeline_desc = {
+        .vertex_shader = vertex,
+        .fragment_shader = fragment,
+        .primitive_type = BK_GFX_PRIMITIVE_TRIANGLE_LIST,
+        .color_target_format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
+        .blend_mode = BK_GFX_BLEND_NONE,
+    };
+    BK_GfxPipeline *pipeline = bk_gfx_pipeline_create(device, &pipeline_desc);
+    REQUIRE(pipeline != nullptr);
+
+    SDL_GPUTextureCreateInfo texture_info = {
+        .type = SDL_GPU_TEXTURETYPE_2D,
+        .format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
+        .usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET,
+        .width = size,
+        .height = size,
+        .layer_count_or_depth = 1,
+        .num_levels = 1,
+        .sample_count = SDL_GPU_SAMPLECOUNT_1,
+    };
+    SDL_GPUTexture *offscreen = SDL_CreateGPUTexture(device, &texture_info);
+    REQUIRE(offscreen != nullptr);
+
+    SDL_GPUTransferBufferCreateInfo transfer_info = {
+        .usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD,
+        .size = (Uint32)(size * size * 4),
+    };
+    SDL_GPUTransferBuffer *transfer = SDL_CreateGPUTransferBuffer(device, &transfer_info);
+    REQUIRE(transfer != nullptr);
+
+    SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(device);
+    REQUIRE(cmd != nullptr);
+
+    SDL_GPUColorTargetInfo color_target = {
+        .texture = offscreen,
+        .clear_color = {0.0f, 0.0f, 0.0f, 1.0f},
+        .load_op = SDL_GPU_LOADOP_CLEAR,
+        .store_op = SDL_GPU_STOREOP_STORE,
+    };
+    SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(cmd, &color_target, 1, nullptr);
+    SDL_BindGPUGraphicsPipeline(pass, bk__gfx_pipeline_handle(pipeline));
+    SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+    SDL_EndGPURenderPass(pass);
+
+    SDL_GPUCopyPass *copy_pass = SDL_BeginGPUCopyPass(cmd);
+    SDL_GPUTextureRegion src = {
+        .texture = offscreen, .x = 0, .y = 0, .z = 0, .w = size, .h = size, .d = 1};
+    SDL_GPUTextureTransferInfo dst = {
+        .transfer_buffer = transfer, .offset = 0, .pixels_per_row = size, .rows_per_layer = size};
+    SDL_DownloadFromGPUTexture(copy_pass, &src, &dst);
+    SDL_EndGPUCopyPass(copy_pass);
+
+    SDL_GPUFence *fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
+    REQUIRE(fence != nullptr);
+    REQUIRE(SDL_WaitForGPUFences(device, true, &fence, 1));
+    SDL_ReleaseGPUFence(device, fence);
+
+    const uint8_t *pixels = SDL_MapGPUTransferBuffer(device, transfer, false);
+    REQUIRE(pixels != nullptr);
+
+    // Center: well inside the triangle (NDC bbox [-0.5,0.5] on both axes covers the
+    // middle half of the viewport) -> solid red.
+    s_check_pixel(pixels, size, size / 2, size / 2, 255, 0, 0, 255, tolerance);
+    // Corners, inset by 1px: outside the triangle's bounding box under any backend's
+    // NDC-to-pixel axis convention -> clear color (black).
+    s_check_pixel(pixels, size, 1, 1, 0, 0, 0, 255, tolerance);
+    s_check_pixel(pixels, size, size - 2, 1, 0, 0, 0, 255, tolerance);
+    s_check_pixel(pixels, size, 1, size - 2, 0, 0, 0, 255, tolerance);
+    s_check_pixel(pixels, size, size - 2, size - 2, 0, 0, 0, 255, tolerance);
+
+    SDL_UnmapGPUTransferBuffer(device, transfer);
+
+    bk_gfx_pipeline_destroy(pipeline);
+    s_free_shader(&vertex);
+    s_free_shader(&fragment);
+    SDL_ReleaseGPUTransferBuffer(device, transfer);
+    SDL_ReleaseGPUTexture(device, offscreen);
+    SDL_DestroyGPUDevice(device);
+}
+
 int main(void) {
     test_create_and_destroy_pipeline_succeeds();
+    test_draw_produces_expected_pixels();
     test_destroy_null_is_noop();
     printf("test_gfx_pipeline: OK\n");
     return 0;
