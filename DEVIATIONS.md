@@ -296,3 +296,25 @@ already run that frame) — never a value trending upward across several
 consecutive lines. Rewrote both comments to describe the single-frame
 cap-then-discard behavior and the resulting one-second dip instead of the
 brief's climb-then-settle framing; no code or `.time = {...}` values changed.
+
+## Shader toolchain substitutes glslc+spirv-cross/GLSL for shadercross+HLSL (docs/superpowers/specs/2026-07-29-phase2-shader-pipeline-design.md §2)
+
+`CLAUDE.md`'s locked shader decision names SDL_shadercross (HLSL/SPIR-V ->
+SPIR-V/DXIL/MSL) as the offline shader toolchain. Neither `shadercross` nor
+DirectXShaderCompiler (DXC) is installed anywhere this sub-project was
+implemented, and DXC has no prebuilt macOS binary anywhere in
+SDL_shadercross's own tooling -- the only supported macOS path builds a
+vendored LLVM/Clang fork from source, which is impractical to do as part of
+implementing one shader pair. `glslc` (from Google's `shaderc`) and
+`spirv-cross` are real, Homebrew-installable tools with no DXC dependency,
+verified end to end (GLSL -> SPIR-V via `glslc`, SPIR-V -> MSL via
+`spirv-cross`) before committing to this plan. `shaders/triangle.vert` and
+`shaders/triangle.frag` are therefore authored in GLSL, not HLSL, and their
+committed bytecode covers SPIR-V and MSL only -- no DXIL variant exists,
+since no available tool can produce it without DXC.
+`bk_gfx_pipeline_create` fails gracefully (logs, returns `nullptr`) on any
+device that only supports DXIL (Windows/D3D12) until someone with real DXC
+tooling generates the DXIL variant; CI's GPU-dependent tests are already
+`continue-on-error: true` on every platform, so this doesn't block required
+CI. Migrating to the shadercross/HLSL toolchain is future work once that
+tooling is genuinely available, not a reversal of the locked decision.

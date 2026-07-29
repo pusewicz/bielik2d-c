@@ -13,6 +13,7 @@ option(BK_BUILD_SAMPLES "Build sample applications" ON)
 option(BK_BUILD_TESTS "Build tests" ON)
 
 include(cmake/warnings.cmake)
+include(cmake/shaders.cmake)
 
 include(FetchContent)
 
@@ -35,6 +36,9 @@ target_include_directories(bielik PUBLIC include)
 target_link_libraries(bielik PUBLIC SDL3::SDL3)
 target_compile_features(bielik PUBLIC c_std_23)
 target_link_libraries(bielik PRIVATE bk_warnings)
+
+bk_compile_shader(NAME triangle STAGE vertex)
+bk_compile_shader(NAME triangle STAGE fragment)
 
 if(BK_BUILD_TESTS)
     enable_testing()
