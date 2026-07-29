@@ -55,27 +55,42 @@ this framework re-references a shader once its pipeline exists, so a persistent
 
 ## 2. Shader compile toolchain
 
-`cmake/shadercross.cmake` defines a CMake function:
+Shader compilation is an **occasional authoring step, not a build-time requirement**.
+SDL_shadercross has no tagged release, and on macOS its only supported path is
+building its vendored DirectXShaderCompiler fork (a Clang/LLVM fork) from source —
+there is no prebuilt DXC binary for macOS in its own tooling. Requiring that build on
+every `cmake -S . -B build` on the primary dev platform conflicts with "lightweight,
+fast, easy to use" (`CLAUDE.md`, line 1). So:
+
+`cmake/shadercross.cmake` does `find_program(BK_SHADERCROSS_EXE shadercross)`. If
+found, it defines a CMake function:
 
 ```cmake
 bk_compile_shader(TARGET <target> SOURCE <path.hlsl> STAGE vertex|fragment)
 ```
 
-It invokes the `shadercross` CLI (from SDL_shadercross, `FetchContent`'d alongside
-SDL3) three times per source, once per output format, producing:
+which invokes the `shadercross` CLI three times per source, once per output format,
+regenerating:
 
 ```
-$<TARGET_FILE_DIR:target>/shaders/<name>.<stage>.spv
-$<TARGET_FILE_DIR:target>/shaders/<name>.<stage>.dxil
-$<TARGET_FILE_DIR:target>/shaders/<name>.<stage>.msl
+shaders/<name>.<stage>.spv
+shaders/<name>.<stage>.dxil
+shaders/<name>.<stage>.msl
 ```
 
-i.e. right next to the built executable — no install step needed for samples/tests to
-load them with a relative path at runtime.
+**These compiled files are committed to the repository**, like any other checked-in
+asset — not generated fresh by every build. If `shadercross` isn't found,
+`bk_compile_shader` logs `shadercross not found — using committed shader bytecode`
+and does nothing further; the committed files are used as-is. A post-build step
+copies `shaders/` next to the built executable so samples/tests can load them with a
+relative path at runtime.
 
-This is a **build-time** dependency (the `shadercross` binary must be available to
-CMake), not a runtime one. CI needs it on `PATH` or fetched/built alongside SDL3 —
-exact CI wiring is an implementation detail for the plan, not this spec.
+Only someone actively authoring or changing a shader needs `shadercross` installed —
+everyone else (most contributors, most CI legs) builds against the committed
+bytecode with zero shader tooling. Linux/Windows CI can still build `shadercross`
+from source cheaply if a leg wants to verify regeneration (a prebuilt DXC exists for
+both, unlike macOS) — exact CI wiring is an implementation-plan detail, not this
+spec.
 
 Runtime loading is caller-owned, not a `bk_gfx_pipeline` responsibility: samples and
 tests read the three files for a given shader stage with plain `SDL_LoadFile` calls
@@ -208,9 +223,11 @@ pipeline object works end to end.
 Creates a pipeline from `shaders/triangle.vertex.hlsl` /
 `shaders/triangle.fragment.hlsl` — a minimal pair where the vertex shader emits a
 triangle from `SV_VertexID` (no vertex buffer, `num_vertex_buffers = 0`) and the
-fragment shader outputs a solid or simple gradient color. Calls
-`bk_gfx_bind_pipeline` and `bk_gfx_draw(3)` from its `render` callback. Same
-`--frames N` convention as `01_clear`/`02_ticks` for CI smoke-testing.
+fragment shader outputs a flat solid color (not a gradient — interpolation precision
+is backend-dependent, and this same shader pair is reused by the golden-image test in
+§6, which needs backend-stable output). Calls `bk_gfx_bind_pipeline` and
+`bk_gfx_draw(3)` from its `render` callback. Same `--frames N` convention as
+`01_clear`/`02_ticks` for CI smoke-testing.
 
 ## 6. Testing — `tests/test_gfx_pipeline.c`
 
@@ -225,7 +242,18 @@ is enough to run a full render pass headlessly. The test:
 4. Runs one render pass rendering the triangle into the offscreen texture.
 5. Downloads the pixels (`SDL_DownloadFromGPUTexture` via a transfer buffer + fence
    wait).
-6. Hashes the raw bytes (FNV-1a) and compares against a checked-in expected constant.
+6. Checks a handful of known pixel coordinates against the shader's solid output
+   color, within a small tolerance (not a whole-buffer hash — see rationale below).
+
+A whole-buffer hash (e.g. FNV-1a) is not backend-stable: the same shader source
+compiles to different bytecode per backend (SPIR-V/DXIL/MSL) and Metal, Vulkan
+(lavapipe in CI), and D3D12 drivers are not guaranteed to rasterize/round identical
+bit patterns. A tolerance-based check of known pixels (e.g. a point well inside the
+triangle reads the solid fragment color ± epsilon; a point well outside reads the
+clear color) is robust to that variance while still proving the pipeline actually
+drew something. This is also the reason §5 pins the fragment shader to a flat color
+instead of a gradient — gradient interpolation is exactly the kind of output where
+backend rounding differences would show up.
 
 This sidesteps the `xvfb-run`/lavapipe fragility Phase 1's on-screen sample testing
 already carries in CI (see `PLAN.md` 6.10) — pipeline correctness is verifiable in CI
@@ -251,6 +279,12 @@ no-op, matching `bk__free`'s style elsewhere in the codebase.
 - **VFS/asset-pack shader loading** — loose files only, read directly by samples/tests
   via `SDL_LoadFile`; no `bk_` wrapper, no dependency on PhysFS/P6.
 - **Full SDL_GPU blend-factor/op matrix** — `BK_GfxBlendMode` covers none/alpha only.
+- **Shader resource reflection** — `shadercross`'s `-d JSON` output (sampler/
+  uniform-buffer/storage-resource counts and I/O metadata) is not consumed.
+  `num_samplers`/`num_uniform_buffers` on `BK_GfxShaderDesc` are hand-written
+  constants for this sub-project's one shader pair (both `0`); deriving them from
+  reflection output is deferred until a module with real resource-bound shaders
+  (sub-project 2+) makes hand-writing them error-prone.
 
 ## 9. Decisions and rationale (do not relitigate in implementation sessions)
 
@@ -263,6 +297,21 @@ no-op, matching `bk__free`'s style elsewhere in the codebase.
   + `bk_gfx_draw`), not exposing the render pass to `render()` and not a draw list:
   PLAN.md explicitly reserves general draw-list recording for P3, and this slot
   requires no change to `bk_app.h`'s already-shipped `BK_AppDesc.render` signature.
+- Shader compilation is find_program-gated and its output is committed to the repo,
+  not a FetchContent'd build-time dependency: SDL_shadercross has no tagged release,
+  and on macOS its only supported path builds a vendored DirectXShaderCompiler
+  (LLVM/Clang fork) from source — no prebuilt DXC binary exists for macOS anywhere in
+  its own tooling. Forcing that build on every configure on the primary dev platform
+  conflicts with "lightweight, fast, easy to use." Only someone authoring/changing a
+  shader needs `shadercross` installed; everyone else builds against committed
+  bytecode.
+- The golden-image test checks a handful of known pixels within a tolerance, not a
+  whole-buffer hash: the same HLSL source compiles to different bytecode per backend
+  (SPIR-V/DXIL/MSL), and Metal/Vulkan(lavapipe)/D3D12 aren't guaranteed to rasterize
+  bit-identical output. A hash would be green only on whichever backend produced the
+  checked-in constant. For the same reason, §5's sample shader is a flat color, not a
+  gradient — gradient interpolation is exactly where backend rounding differences
+  would surface.
 - Shader bytecode reaches the pipeline as loose files loaded by the caller, not
   through a VFS stub or `#embed`: the asset-pack pipeline is P6 scope and `#embed` is
   explicitly reserved for later phases per `CLAUDE.md`.
