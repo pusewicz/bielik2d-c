@@ -31,10 +31,22 @@ static void test_last_set_wins(void) {
     REQUIRE_NEAR(c.a, 0.6f, 1e-6);
 }
 
+static void test_bind_pipeline_and_draw_sets_pending_state(void) {
+    int dummy;
+    BK_GfxPipeline *fake_pipeline = (BK_GfxPipeline *)&dummy;
+
+    bk_gfx_bind_pipeline(fake_pipeline);
+    bk_gfx_draw(3);
+
+    REQUIRE(bk__gfx_get_pending_pipeline() == fake_pipeline);
+    REQUIRE(bk__gfx_get_pending_vertex_count() == 3);
+}
+
 int main(void) {
     test_default_clear_color();
     test_set_then_get_round_trips();
     test_last_set_wins();
+    test_bind_pipeline_and_draw_sets_pending_state();
     printf("test_gfx: OK\n");
     return 0;
 }
