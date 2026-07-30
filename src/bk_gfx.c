@@ -1,6 +1,8 @@
 #include "internal/bk_app_internal.h"
+#include "internal/bk_gfx_buffer_internal.h"
 #include "internal/bk_gfx_internal.h"
 #include "internal/bk_gfx_pipeline_internal.h"
+#include "internal/bk_gfx_texture_internal.h"
 #include <SDL3/SDL.h>
 #include <bielik/bk_app.h>
 #include <bielik/bk_gfx.h>
@@ -28,6 +30,44 @@ BK_GfxPipeline *bk__gfx_get_pending_pipeline(void) { return s_pending_pipeline; 
 
 int bk__gfx_get_pending_vertex_count(void) { return s_pending_vertex_count; }
 
+static BK_GfxBuffer *s_pending_vertex_buffer = nullptr;
+static BK_GfxBuffer *s_pending_index_buffer = nullptr;
+static BK_GfxTexture *s_pending_texture = nullptr;
+static BK_GfxSampler *s_pending_sampler = nullptr;
+static int s_pending_index_count = 0;
+
+void bk_gfx_bind_vertex_buffer(BK_GfxBuffer *buffer) {
+    BK_ASSERT(buffer != nullptr);
+    s_pending_vertex_buffer = buffer;
+}
+
+void bk_gfx_bind_index_buffer(BK_GfxBuffer *buffer) {
+    BK_ASSERT(buffer != nullptr);
+    s_pending_index_buffer = buffer;
+}
+
+void bk_gfx_bind_texture(BK_GfxTexture *texture, BK_GfxSampler *sampler) {
+    BK_ASSERT(texture != nullptr);
+    BK_ASSERT(sampler != nullptr);
+    s_pending_texture = texture;
+    s_pending_sampler = sampler;
+}
+
+void bk_gfx_draw_indexed(int index_count) {
+    BK_ASSERT(index_count > 0);
+    s_pending_index_count = index_count;
+}
+
+BK_GfxBuffer *bk__gfx_get_pending_vertex_buffer(void) { return s_pending_vertex_buffer; }
+
+BK_GfxBuffer *bk__gfx_get_pending_index_buffer(void) { return s_pending_index_buffer; }
+
+BK_GfxTexture *bk__gfx_get_pending_texture(void) { return s_pending_texture; }
+
+BK_GfxSampler *bk__gfx_get_pending_sampler(void) { return s_pending_sampler; }
+
+int bk__gfx_get_pending_index_count(void) { return s_pending_index_count; }
+
 static char s_pending_capture_path[512];
 
 void bk_gfx_request_capture(const char *path) {
@@ -53,10 +93,20 @@ void bk__gfx_flush(void) {
 
     BK_GfxPipeline *pending_pipeline = s_pending_pipeline;
     int pending_vertex_count = s_pending_vertex_count;
+    BK_GfxBuffer *pending_vertex_buffer = s_pending_vertex_buffer;
+    BK_GfxBuffer *pending_index_buffer = s_pending_index_buffer;
+    BK_GfxTexture *pending_texture = s_pending_texture;
+    BK_GfxSampler *pending_sampler = s_pending_sampler;
+    int pending_index_count = s_pending_index_count;
     char pending_capture_path[sizeof s_pending_capture_path];
     SDL_memcpy(pending_capture_path, s_pending_capture_path, sizeof pending_capture_path);
     s_pending_pipeline = nullptr;
     s_pending_vertex_count = 0;
+    s_pending_vertex_buffer = nullptr;
+    s_pending_index_buffer = nullptr;
+    s_pending_texture = nullptr;
+    s_pending_sampler = nullptr;
+    s_pending_index_count = 0;
     s_pending_capture_path[0] = '\0';
 
     SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(bk_gpu());
@@ -91,7 +141,28 @@ void bk__gfx_flush(void) {
     SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(cmd, &target, 1, nullptr);
     if (pending_pipeline != nullptr) {
         SDL_BindGPUGraphicsPipeline(pass, bk__gfx_pipeline_handle(pending_pipeline));
-        SDL_DrawGPUPrimitives(pass, (Uint32)pending_vertex_count, 1, 0, 0);
+        if (pending_vertex_buffer != nullptr) {
+            SDL_GPUBufferBinding vertex_binding = {
+                .buffer = bk__gfx_buffer_handle(pending_vertex_buffer)};
+            SDL_BindGPUVertexBuffers(pass, 0, &vertex_binding, 1);
+        }
+        if (pending_index_buffer != nullptr) {
+            SDL_GPUBufferBinding index_binding = {.buffer =
+                                                      bk__gfx_buffer_handle(pending_index_buffer)};
+            SDL_BindGPUIndexBuffer(pass, &index_binding, SDL_GPU_INDEXELEMENTSIZE_16BIT);
+        }
+        if (pending_texture != nullptr && pending_sampler != nullptr) {
+            SDL_GPUTextureSamplerBinding sampler_binding = {
+                .texture = bk__gfx_texture_handle(pending_texture),
+                .sampler = bk__gfx_sampler_handle(pending_sampler)};
+            SDL_BindGPUFragmentSamplers(pass, 0, &sampler_binding, 1);
+        }
+        if (pending_vertex_count > 0) {
+            SDL_DrawGPUPrimitives(pass, (Uint32)pending_vertex_count, 1, 0, 0);
+        }
+        if (pending_index_count > 0) {
+            SDL_DrawGPUIndexedPrimitives(pass, (Uint32)pending_index_count, 1, 0, 0, 0);
+        }
     }
     SDL_EndGPURenderPass(pass);
 
