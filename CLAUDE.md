@@ -5,11 +5,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project
 
 Bielik2D is a 2D game framework written in C23, designed to be lightweight, fast, and
-easy to use. The repository is currently in the planning stage: `src/`, `include/`, and
-`vendor/` are empty, and `CMakeLists.txt` is a stub. There is no build, lint, or test
-tooling yet — check the actual directory contents before assuming a command exists, and
-update this file with real commands (build, single-test invocation, etc.) as soon as the
-build system lands.
+easy to use. `PLAN.md` is the normative spec for the public API and module design
+(section 6.1 in particular) — read it before changing library headers or adding a
+module. `DEVIATIONS.md` records every place implementation deviated from `PLAN.md` or
+a task brief, with rationale; check it, and add to it, whenever you knowingly diverge.
+
+Phase 0 (scaffold) and Phase 1 (app core) are implemented: the CMake build system,
+`bielik` static library, samples, and test suite described in `PLAN.md` sections 5 and
+6 all exist. Check the actual directory contents (`PLAN.md` section 4 has the current
+layout) before assuming a command exists beyond what's listed here.
+
+Phase 2 (gfx core) is underway as sub-projects, each with its own spec
+(`docs/superpowers/specs/`) and implementation plan (`docs/superpowers/plans/`) —
+`PLAN.md` only covers Phase 0/1.
+
+Build: `cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBK_WERROR=ON && cmake --build build`.
+Test: `ctest --test-dir build --output-on-failure` (or run a single test
+binary directly, e.g. `./build/tests/test_version`).
 
 `THOUGHTS.md` is the working design log for the project and is the primary source of
 architectural intent until real code and headers exist. Treat it as a mix of locked
@@ -38,6 +50,8 @@ is worth reading as a template for conventions here.
   instead of vendoring a generated font header.
 - **Shaders**: precompile offline with SDL_shadercross (HLSL/SPIR-V → SPIR-V/DXIL/MSL) and
   ship compiled bytecode in asset packs — do not write a runtime transpiler like CF did.
+  Current interim toolchain is `glslc`+`spirv-cross` compiling GLSL, not shadercross+HLSL —
+  shadercross has no tagged release and no macOS prebuilt DXC; see `DEVIATIONS.md`.
 - **Physics/collision**: Box2D v3 (C, SIMD, multithreaded), used via sensors/queries even
   for simple overlap tests. Box3D (same data model/API, released June 2026) is the story
   for optional 3D later, so don't reach for a separate 3D collision lib.
@@ -55,18 +69,20 @@ is worth reading as a template for conventions here.
 - **SIMD**: write SoA scalar code first and check clang's autovectorization before
   hand-writing SSE/NEON/WASM128 — only where a profiler shows it's needed. Box2D and the
   audio library bring their own SIMD already.
+- **Web/graphics backend strategy**: SDL_GPU stays the native backend (already built in
+  Phase 1); web gets a second backend built directly against `webgpu.h` via Emscripten's
+  `emdawnwebgpu` port (mature and actively maintained as of mid-2026, integrated since
+  Emscripten 4.0.10). SDL_GPU's own native WebGPU backend is still experimental (started
+  May 2026, no macOS/browser target yet) — not viable today, but the bet is that it
+  eventually matures enough to let the two backends converge into one without a rewrite.
+  Rejected: replacing SDL_GPU with Dawn-as-the-one-graphics-API everywhere (architecturally
+  cleaner, kills the two-backend tax permanently, but means reworking Phase 1's already-
+  shipped GPU bring-up and vendoring Dawn as a new heavy native build dependency — too much
+  cost for what SDL_GPU already gets natively today). CI gets an Emscripten leg once this
+  backend lands.
 
 ## Open decisions — do not treat these as settled
 
-- **Web/graphics backend strategy.** This gates a lot of downstream work (Emscripten CI,
-  whether a GLES3 backend gets built at all) and needs to be decided before committing to
-  it, not inferred by an agent:
-  (a) CF's approach — SDL_GPU + a second GLES3 backend for web, plus a shader permutation
-  matrix and a permanent two-backend testing tax;
-  (b) native-first — SDL_GPU only, structured so a second backend could be added, web
-  deferred until SDL ships WebGPU support (no ETA);
-  (c) sokol_gfx instead of SDL_GPU — the only single-API route to web today, but it drops
-  the SDL_GPU requirement.
 - **Audio library.** miniaudio (battle-hardened, zero deps, proven wasm support) vs.
   SDL3_mixer (all-SDL stack coherence, but only months old as a stable release, needs SDL
   3.4.0+). Leaning miniaudio, not decided. MojoAL is ruled out either way (unneeded OpenAL
@@ -95,5 +111,56 @@ infrastructure into a bounded, checkable deliverable.
 - Every module gets a test (pico_unit-style for math/VFS/strings; golden-image tests for
   the renderer — render to texture, hash, compare) and an example app as living
   documentation.
-- CI should run on Linux + Windows-clang (+ Emscripten, only if web option (a) above is
-  chosen) from day one.
+- CI should run on Linux + Windows-clang from day one; add an Emscripten leg once the
+  webgpu.h web backend (see the locked-in web/graphics backend decision above) lands.
+
+## SDL_GPU gotchas
+
+- `SDL_CreateGPUDevice` requires `SDL_Init(SDL_INIT_VIDEO)` first, even for a headless
+  device with no window (`SDL_GPUSelectBackend` calls `SDL_GetVideoDevice()` internally
+  and errors otherwise).
+- The swapchain texture is write-only for sampling, but `SDL_DownloadFromGPUTexture`
+  works on it directly via a copy pass — no intermediate blit needed for
+  screenshot/capture use cases.
+- When wrapping GPU-downloaded pixel bytes as an `SDL_Surface`, use SDL's `_32` aliases
+  (`SDL_PIXELFORMAT_RGBA32`/`BGRA32`), not the packed `_8888` names — the packed names
+  are bit-packed order, not byte-array order, and flip on little-endian.
+
+## Conventions
+
+Naming:
+- Public functions: `bk_` + snake_case (`bk_run`, `bk_frame_alloc`).
+- Public types: `BK_` + PascalCase (`BK_AppDesc`, `BK_FrameInfo`).
+- Enum values: `BK_` + UPPER_SNAKE (`BK_CONTINUE`).
+- Internal linker-visible symbols: `bk__` prefix. File-static functions: `s_` prefix.
+- One module = `include/bielik/bk_<name>.h` + `src/bk_<name>.c` (+ optional
+  `src/internal/bk_<name>_internal.h`).
+
+C23 usage:
+- Use: `bool`/`true`/`false`, `nullptr`, designated initializers, compound
+  literals, `constexpr` for constants, `static_assert`, `[[nodiscard]]` on
+  functions returning `BK_Result`, `[[maybe_unused]]`, `typeof` where it
+  removes duplication.
+- Avoid: VLAs (`-Wvla` enforces), `alloca`, `_Generic` unless clearly better,
+  `auto` outside obvious initializers, bit-precise ints in public API.
+- `#embed` is reserved for later phases (needs Clang 19+/GCC 15); do not use yet.
+
+Style:
+- `.clang-format`: LLVM base, 4-space indent, 100 columns,
+  `PointerAlignment: Right` (`char *p`), K&R attached braces. Run on everything.
+- Every public symbol gets a doc comment: one-sentence summary, param notes,
+  thread/lifetime notes where relevant. Terse; no boilerplate prose.
+- Public headers must each compile standalone (enforced by test).
+- Errors: no silent failure. Boot-path failures log via `SDL_Log` with a
+  `"BK: "` prefix and return `BK_FAIL`. Assertions: `BK_ASSERT` wraps
+  `SDL_assert`.
+- Includes ordered: own header, then `<bielik/...>`, then SDL, then libc.
+
+Process:
+- Never reorganize the file layout beyond section 4 of `PLAN.md`.
+- Keep functions small; no premature abstraction; no speculative options.
+- Regenerating shader bytecode alone doesn't restage it next to already-built
+  binaries unless something forces a relink of the consuming target (tracked in
+  bielik2d-c#2) — touch a source file of the sample/test to force it meanwhile.
+- Deferred/non-blocking findings (bugs, follow-ups, feature ideas) get filed as
+  GitHub issues on `pusewicz/bielik2d-c`, not left as code comments or session notes.

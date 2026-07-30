@@ -1,0 +1,374 @@
+# Bielik2D — Phase 2, Sub-project 1: Shader Toolchain + Graphics Pipelines
+
+## 0. Context and scope
+
+`PLAN.md` section 7 scopes Phase 2 ("P2 gfx core") as: pipelines, buffers, textures,
+offline shader compile (SDL_shadercross toolchain), canvases/render targets. That is
+too much for one module-per-session unit of work, so P2 is decomposed into three
+sub-projects, each getting its own spec → plan → implementation cycle:
+
+1. **This spec**: shader compile toolchain + graphics pipeline objects.
+2. Buffers + textures + compute pipelines.
+3. Canvases/render targets + resize handling + depth-stencil.
+
+Compute pipelines were considered for sub-project 1 but deferred to sub-project 2:
+a compute pipeline has no working example until storage buffers/textures exist to
+dispatch against, and shipping it as inert create/destroy plumbing with no test isn't
+worth the added surface area this session.
+
+Phase 1 already provides: SDL_GPU device creation (`bk_gpu()`), window claim
+(`bk_window()`), swapchain present with a clear-only render pass (`bk__gfx_flush` in
+`src/bk_gfx.c`). This sub-project adds the first real content between "acquire
+swapchain texture" and "submit command buffer": a bound pipeline drawing something.
+
+## 1. Module boundaries and file layout
+
+One new module, following the existing one-module-per-`bk_<name>` convention:
+
+```
+bielik2d/
+  cmake/
+    shadercross.cmake        (new)
+  shaders/                   (new)
+    triangle.vertex.hlsl
+    triangle.fragment.hlsl
+  include/bielik/
+    bk_gfx_pipeline.h        (new)
+  src/
+    bk_gfx_pipeline.c        (new)
+    internal/
+      bk_gfx_pipeline_internal.h  (new, if the sample/test need internal accessors)
+  samples/
+    03_triangle/main.c       (new)
+    03_triangle/CMakeLists.txt (new)
+  tests/
+    test_gfx_pipeline.c      (new)
+```
+
+`bk_gfx.h`/`bk_gfx.c` (device/window accessors, clear color) are untouched. There is
+no separate shader module or public shader handle — `BK_GfxShaderDesc` is a plain
+input struct declared in `bk_gfx_pipeline.h` and consumed by
+`bk_gfx_pipeline_create()`. This mirrors SDL_GPU's own object model: a shader is
+created, referenced by pipeline creation, and released immediately after — nothing in
+this framework re-references a shader once its pipeline exists, so a persistent
+`BK_GfxShader` handle would be ceremony with no reuse case.
+
+## 2. Shader compile toolchain
+
+Shader compilation is an **occasional authoring step, not a build-time requirement**.
+SDL_shadercross has no tagged release, and on macOS its only supported path is
+building its vendored DirectXShaderCompiler fork (a Clang/LLVM fork) from source —
+there is no prebuilt DXC binary for macOS in its own tooling. Requiring that build on
+every `cmake -S . -B build` on the primary dev platform conflicts with "lightweight,
+fast, easy to use" (`CLAUDE.md`, line 1). So:
+
+`cmake/shadercross.cmake` does `find_program(BK_SHADERCROSS_EXE shadercross)`. If
+found, it defines a CMake function:
+
+```cmake
+bk_compile_shader(TARGET <target> SOURCE <path.hlsl> STAGE vertex|fragment)
+```
+
+which invokes the `shadercross` CLI three times per source, once per output format,
+regenerating:
+
+```
+shaders/<name>.<stage>.spv
+shaders/<name>.<stage>.dxil
+shaders/<name>.<stage>.msl
+```
+
+**These compiled files are committed to the repository**, like any other checked-in
+asset — not generated fresh by every build. If `shadercross` isn't found,
+`bk_compile_shader` logs `shadercross not found — using committed shader bytecode`
+and does nothing further; the committed files are used as-is. A post-build step
+copies `shaders/` next to the built executable so samples/tests can load them with a
+relative path at runtime.
+
+Only someone actively authoring or changing a shader needs `shadercross` installed —
+everyone else (most contributors, most CI legs) builds against the committed
+bytecode with zero shader tooling. Linux/Windows CI can still build `shadercross`
+from source cheaply if a leg wants to verify regeneration (a prebuilt DXC exists for
+both, unlike macOS) — exact CI wiring is an implementation-plan detail, not this
+spec.
+
+Runtime loading is caller-owned, not a `bk_gfx_pipeline` responsibility: samples and
+tests read the three files for a given shader stage with plain `SDL_LoadFile` calls
+and populate a `BK_GfxShaderDesc`'s three variant fields directly.
+`bk_gfx_pipeline.h` has no opinion on filesystem paths or the VFS — consistent with
+the project's asset-pack loading not existing until P6, and `#embed` being reserved
+for later phases.
+
+**Bootstrap note.** The above is the intended long-term toolchain — `shadercross`,
+authoring in HLSL — matching `CLAUDE.md`'s locked shader decision. Neither
+`shadercross` nor DXC is installed anywhere this sub-project is actually being
+implemented, and building DXC from source is the large LLVM-fork build described
+above. This sub-project's actual implementation therefore substitutes a toolchain
+that's genuinely usable today: `glslc` (from Google's `shaderc`, a plain Homebrew
+bottle, no DXC) compiles **GLSL** sources to SPIR-V, and `spirv-cross` (already
+available) cross-compiles SPIR-V to MSL. **DXIL is not produced** — no tool available
+without DXC can produce it — so the two triangle shaders ship with SPIR-V and MSL
+variants only, and their `BK_GfxShaderDesc.dxil` fields stay zeroed. This is a real,
+scoped deviation from the locked decision (GLSL instead of HLSL as the authored
+source, `shadercross.cmake` replaced by a `glslc`/`spirv-cross`-based
+`cmake/shaders.cmake`, DXIL missing), recorded in `DEVIATIONS.md`. On any platform
+requesting a DXIL-only device (Windows/D3D12), `bk_gfx_pipeline_create` fails
+gracefully (log + `nullptr`) per §7 until someone with real DXC tooling generates the
+DXIL variant — CI's GPU-dependent tests are already `continue-on-error: true` on
+every platform (see `.github/workflows/ci.yml`), so this doesn't block required CI.
+Migrating to the shadercross/HLSL toolchain is future work once the tooling is
+actually available in a session working on this project, not scope for this
+sub-project.
+
+## 3. Public API — `bk_gfx_pipeline.h`
+
+```c
+#pragma once
+#include <SDL3/SDL_gpu.h>
+#include <stddef.h>
+#include <stdint.h>
+
+/// One precompiled shader bytecode blob for a single backend format.
+typedef struct BK_GfxShaderVariant {
+    const void *code;
+    size_t code_size;
+    const char *entry_point;
+} BK_GfxShaderVariant;
+
+/// One shader stage, precompiled to all three backend formats; bk_gfx_pipeline_create
+/// selects the variant matching the device's supported shader formats
+/// (SDL_GetGPUShaderFormats). Resource counts must match what the shader binary
+/// declares (SDL_GPU validates this at creation).
+typedef struct BK_GfxShaderDesc {
+    BK_GfxShaderVariant spirv;
+    BK_GfxShaderVariant dxil;
+    BK_GfxShaderVariant msl;
+    int num_samplers;
+    int num_uniform_buffers;
+} BK_GfxShaderDesc;
+
+/// Per-vertex attribute formats supported by pipeline vertex input state.
+typedef enum BK_GfxVertexFormat {
+    BK_GFX_VERTEX_FORMAT_FLOAT2,
+    BK_GFX_VERTEX_FORMAT_FLOAT3,
+    BK_GFX_VERTEX_FORMAT_FLOAT4,
+    BK_GFX_VERTEX_FORMAT_UBYTE4_NORM, // packed color
+} BK_GfxVertexFormat;
+
+/// One vertex attribute: which shader input location it feeds, which vertex buffer
+/// slot it reads from, its format, and its byte offset within that slot's stride.
+typedef struct BK_GfxVertexAttribute {
+    uint32_t location;
+    uint32_t buffer_slot;
+    BK_GfxVertexFormat format;
+    uint32_t offset;
+} BK_GfxVertexAttribute;
+
+/// One vertex buffer slot's stride, in bytes.
+typedef struct BK_GfxVertexBufferLayout {
+    uint32_t slot;
+    uint32_t pitch;
+} BK_GfxVertexBufferLayout;
+
+typedef enum BK_GfxPrimitiveType {
+    BK_GFX_PRIMITIVE_TRIANGLE_LIST,
+    BK_GFX_PRIMITIVE_TRIANGLE_STRIP,
+    BK_GFX_PRIMITIVE_LINE_LIST,
+} BK_GfxPrimitiveType;
+
+/// Fixed-function blend state. Two modes cover 2D's needs; more get added when a
+/// real use case needs SDL_GPU's full blend-factor/op matrix.
+typedef enum BK_GfxBlendMode {
+    BK_GFX_BLEND_NONE,
+    BK_GFX_BLEND_ALPHA,
+} BK_GfxBlendMode;
+
+/// Opaque graphics pipeline: compiled shaders + fixed-function state, bound in a
+/// render pass before a draw call. Owns no per-frame resources.
+typedef struct BK_GfxPipeline BK_GfxPipeline;
+
+typedef struct BK_GfxPipelineDesc {
+    BK_GfxShaderDesc vertex_shader;
+    BK_GfxShaderDesc fragment_shader;
+
+    // nullptr/0 => no vertex input (e.g. a fullscreen/procedural triangle driven by
+    // SV_VertexID with no bound vertex buffer).
+    const BK_GfxVertexBufferLayout *vertex_buffers;
+    int num_vertex_buffers;
+    const BK_GfxVertexAttribute *vertex_attributes;
+    int num_vertex_attributes;
+
+    BK_GfxPrimitiveType primitive_type;
+
+    // Caller supplies the target format explicitly — SDL_GetGPUSwapchainTextureFormat
+    // today; a canvas's own format once sub-project 3 lands. No bk_ wrapper needed.
+    SDL_GPUTextureFormat color_target_format;
+    BK_GfxBlendMode blend_mode;
+} BK_GfxPipelineDesc;
+
+/// Creates a graphics pipeline. Logs via SDL_Log ("BK: " prefix) and returns nullptr
+/// on any SDL_GPU failure (bad bytecode, unsupported format/resource combination) —
+/// this is a runtime-data-dependent operation, not a programmer-error precondition,
+/// so failure is a recoverable return, not an assert.
+BK_GfxPipeline *bk_gfx_pipeline_create(SDL_GPUDevice *device, const BK_GfxPipelineDesc *desc);
+
+/// Destroys a pipeline. No-op if pipeline is nullptr.
+void bk_gfx_pipeline_destroy(BK_GfxPipeline *pipeline);
+```
+
+`bk_gfx_pipeline_create` takes an explicit `SDL_GPUDevice *`, not the implicit
+`bk_gpu()` singleton `bk__gfx_flush` uses internally. `bk_gpu()` is only ever
+populated by a full `bk_run()` app boot, which also creates a window — an
+implicit-device signature would make the headless golden-image test in §6
+impossible, since that test needs a device with no window at all. This is the one
+place this spec's API diverges from the app-singleton pattern the rest of `bk_gfx`
+uses, and it's driven directly by testability, not a stylistic preference.
+`bk_gfx_pipeline_destroy` doesn't need the same treatment: `BK_GfxPipeline` stores
+the device pointer it was created with, so destroy callers don't repeat it. Sample
+call sites (which do run through a real app) just pass `bk_gpu()` explicitly — one
+extra argument, no real cost.
+
+## 4. Frame integration — binding and drawing
+
+PLAN.md 6.7 is explicit that the general record/flush draw-list architecture is P3
+scope ("do not scaffold it"), so this sub-project does not introduce draw-list
+recording. Instead it extends `bk_gfx` with a single pending bind+draw slot, the same
+shape `bk_gfx_set_clear_color` already uses: the render callback sets state, and
+`bk__gfx_flush` (already the sole owner of the render pass) consults it:
+
+```c
+// added to bk_gfx.h
+void bk_gfx_bind_pipeline(BK_GfxPipeline *pipeline);
+void bk_gfx_draw(int vertex_count);
+```
+
+`bk__gfx_flush` binds the pending pipeline and issues the draw between the existing
+clear (`SDL_BeginGPURenderPass` with `LOADOP_CLEAR`) and `SDL_EndGPURenderPass`, then
+clears the pending state for the next frame. `BK_AppDesc`'s `render` callback
+signature in `bk_app.h` (already shipped in Phase 1) is unchanged — no command
+buffer or render pass is exposed to user code. This is deliberately a single slot,
+not a list: P3 replaces it with real multi-draw recording when the draw2d module
+lands; sub-project 1 only needs one pipeline bound and one draw issued to prove the
+pipeline object works end to end.
+
+## 5. Sample — `samples/03_triangle`
+
+Creates a pipeline from `shaders/triangle.vertex.hlsl` /
+`shaders/triangle.fragment.hlsl` — a minimal pair where the vertex shader emits a
+triangle from `SV_VertexID` (no vertex buffer, `num_vertex_buffers = 0`) and the
+fragment shader outputs a flat solid color (not a gradient — interpolation precision
+is backend-dependent, and this same shader pair is reused by the golden-image test in
+§6, which needs backend-stable output). Calls `bk_gfx_bind_pipeline` and
+`bk_gfx_draw(3)` from its `render` callback. Same `--frames N` convention as
+`01_clear`/`02_ticks` for CI smoke-testing.
+
+## 6. Testing — `tests/test_gfx_pipeline.c`
+
+A **golden-image test**, and it needs neither a window nor a swapchain: an
+`SDL_GPUDevice` plus an offscreen `SDL_GPUTexture` created directly as a color target
+is enough to run a full render pass headlessly. The test:
+
+1. Creates a GPU device (no window).
+2. Creates an offscreen color-target texture.
+3. Creates the pipeline (same triangle shaders as the sample) with
+   `color_target_format` matching the offscreen texture's format.
+4. Runs one render pass rendering the triangle into the offscreen texture.
+5. Downloads the pixels (`SDL_DownloadFromGPUTexture` via a transfer buffer + fence
+   wait).
+6. Checks a handful of known pixel coordinates against the shader's solid output
+   color, within a small tolerance (not a whole-buffer hash — see rationale below).
+
+A whole-buffer hash (e.g. FNV-1a) is not backend-stable: the same shader source
+compiles to different bytecode per backend (SPIR-V/DXIL/MSL) and Metal, Vulkan
+(lavapipe in CI), and D3D12 drivers are not guaranteed to rasterize/round identical
+bit patterns. A tolerance-based check of known pixels (e.g. a point well inside the
+triangle reads the solid fragment color ± epsilon; a point well outside reads the
+clear color) is robust to that variance while still proving the pipeline actually
+drew something. This is also the reason §5 pins the fragment shader to a flat color
+instead of a gradient — gradient interpolation is exactly the kind of output where
+backend rounding differences would show up.
+
+This sidesteps the `xvfb-run`/lavapipe fragility Phase 1's on-screen sample testing
+already carries in CI (see `PLAN.md` 6.10) — pipeline correctness is verifiable in CI
+without a display server at all.
+
+## 7. Error handling
+
+Follows the existing `bk_app.c` boot-path convention: SDL_GPU call failures during
+shader/pipeline creation log via `SDL_Log` with a `"BK: "` prefix and
+`bk_gfx_pipeline_create` returns `nullptr`. `bk_gfx_pipeline_destroy(nullptr)` is a
+no-op, matching `bk__free`'s style elsewhere in the codebase.
+
+## 8. Explicitly out of scope for this sub-project
+
+- **Compute pipelines, buffers, textures** — sub-project 2. A compute pipeline has
+  nothing to dispatch against until storage buffers/textures exist.
+- **Canvases/render targets, depth-stencil state** — sub-project 3. Nothing in this
+  sub-project produces a depth target.
+- **Resize handling** — nothing here owns a fixed-size target; the swapchain already
+  adapts for free via SDL_GPU's default full-target viewport when no explicit
+  `SDL_SetGPUViewport` is called. Revisit once canvases (fixed-size, window-relative
+  targets) exist.
+- **VFS/asset-pack shader loading** — loose files only, read directly by samples/tests
+  via `SDL_LoadFile`; no `bk_` wrapper, no dependency on PhysFS/P6.
+- **Full SDL_GPU blend-factor/op matrix** — `BK_GfxBlendMode` covers none/alpha only.
+- **Shader resource reflection** — `shadercross`'s `-d JSON` output (sampler/
+  uniform-buffer/storage-resource counts and I/O metadata) is not consumed.
+  `num_samplers`/`num_uniform_buffers` on `BK_GfxShaderDesc` are hand-written
+  constants for this sub-project's one shader pair (both `0`); deriving them from
+  reflection output is deferred until a module with real resource-bound shaders
+  (sub-project 2+) makes hand-writing them error-prone.
+
+## 9. Decisions and rationale (do not relitigate in implementation sessions)
+
+- Sub-project decomposition (shader+pipeline / buffers+textures+compute / canvases)
+  over one large P2 spec: matches the "one module per session" discipline: three
+  independently reviewable, independently implementable units.
+- Graphics pipelines only this sub-project, compute deferred: no working sample is
+  possible for compute until storage resources exist next sub-project.
+- Binding/drawing is a single pending bind+draw slot on `bk_gfx` (`bk_gfx_bind_pipeline`
+  + `bk_gfx_draw`), not exposing the render pass to `render()` and not a draw list:
+  PLAN.md explicitly reserves general draw-list recording for P3, and this slot
+  requires no change to `bk_app.h`'s already-shipped `BK_AppDesc.render` signature.
+- Shader compilation is find_program-gated and its output is committed to the repo,
+  not a FetchContent'd build-time dependency: SDL_shadercross has no tagged release,
+  and on macOS its only supported path builds a vendored DirectXShaderCompiler
+  (LLVM/Clang fork) from source — no prebuilt DXC binary exists for macOS anywhere in
+  its own tooling. Forcing that build on every configure on the primary dev platform
+  conflicts with "lightweight, fast, easy to use." Only someone authoring/changing a
+  shader needs `shadercross` installed; everyone else builds against committed
+  bytecode.
+- This sub-project's actual shipped toolchain is `glslc`+`spirv-cross` compiling
+  **GLSL** sources, not `shadercross` compiling HLSL, and ships SPIR-V+MSL only (no
+  DXIL): neither `shadercross` nor DXC is installed anywhere this is being
+  implemented, and building DXC from source is the LLVM-fork build above — genuinely
+  not feasible to do as part of implementing this sub-project. `glslc`/`spirv-cross`
+  are real, working, Homebrew-installable tools with no DXC dependency, verified
+  end-to-end before committing to this plan. This is a scoped, documented deviation
+  from `CLAUDE.md`'s locked HLSL/`shadercross` decision (see `DEVIATIONS.md`), not a
+  reversal of it — migrating to the real toolchain once it's usable is future work.
+- The golden-image test checks a handful of known pixels within a tolerance, not a
+  whole-buffer hash: the same HLSL source compiles to different bytecode per backend
+  (SPIR-V/DXIL/MSL), and Metal/Vulkan(lavapipe)/D3D12 aren't guaranteed to rasterize
+  bit-identical output. A hash would be green only on whichever backend produced the
+  checked-in constant. For the same reason, §5's sample shader is a flat color, not a
+  gradient — gradient interpolation is exactly where backend rounding differences
+  would surface.
+- Shader bytecode reaches the pipeline as loose files loaded by the caller, not
+  through a VFS stub or `#embed`: the asset-pack pipeline is P6 scope and `#embed` is
+  explicitly reserved for later phases per `CLAUDE.md`.
+- Shader descriptors carry all three precompiled variants (spv/dxil/msl) and
+  `bk_gfx_pipeline_create` picks the one matching the device's supported formats,
+  rather than pushing format selection to every call site: this logic will otherwise
+  be duplicated by every future pipeline-creating module (P3 draw2d, P5 text, P10
+  ImGui backend). Matches the shape CF uses for its own shader tables.
+- No persistent `BK_GfxShader` handle: SDL_GPU's own object model creates, uses in
+  pipeline creation, and releases a shader immediately — nothing re-references it
+  afterward, so a persistent handle has no reuse case to justify it.
+- `color_target_format` is an explicit caller-supplied `SDL_GPUTextureFormat`, not a
+  `bk_` wrapper around `SDL_GetGPUSwapchainTextureFormat`: avoids wrapping an SDL call
+  that already does the job, and needs no change when canvases add a second kind of
+  target in sub-project 3.
+- `BK_GfxBlendMode` is a two-value enum, not SDL_GPU's full blend-factor/op struct:
+  2D work needs alpha blending or nothing; more modes are added when a real use case
+  demands them, not speculatively.
