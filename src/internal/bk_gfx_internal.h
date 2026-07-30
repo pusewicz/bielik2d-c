@@ -21,6 +21,10 @@ BK_GfxPipeline *bk__gfx_get_pending_pipeline(void);
 /// 0 if bk_gfx_draw hasn't been called since the last flush.
 int bk__gfx_get_pending_vertex_count(void);
 
+/// Test-only accessor: returns the path set via bk_gfx_request_capture this frame, or
+/// an empty string if none has been requested since the last flush.
+const char *bk__gfx_get_pending_capture_path(void);
+
 /// Downloads width*height pixels (4 bytes/pixel) from texture via a copy pass added
 /// to cmd, then submits cmd and waits for the GPU fence. cmd must not have been
 /// submitted yet, and must not be used for anything else afterward -- this call

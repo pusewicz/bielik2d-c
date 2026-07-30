@@ -28,13 +28,36 @@ BK_GfxPipeline *bk__gfx_get_pending_pipeline(void) { return s_pending_pipeline; 
 
 int bk__gfx_get_pending_vertex_count(void) { return s_pending_vertex_count; }
 
+static char s_pending_capture_path[512];
+
+void bk_gfx_request_capture(const char *path) {
+    BK_ASSERT(path != nullptr);
+    SDL_snprintf(s_pending_capture_path, sizeof s_pending_capture_path, "%s", path);
+}
+
+const char *bk__gfx_get_pending_capture_path(void) { return s_pending_capture_path; }
+
+static SDL_PixelFormat s_pixel_format_for_gpu_format(SDL_GPUTextureFormat format) {
+    switch (format) {
+    case SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM:
+        return SDL_PIXELFORMAT_RGBA32;
+    case SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM:
+        return SDL_PIXELFORMAT_BGRA32;
+    default:
+        return SDL_PIXELFORMAT_UNKNOWN;
+    }
+}
+
 void bk__gfx_flush(void) {
     static bool s_logged_acquire_failure = false;
 
     BK_GfxPipeline *pending_pipeline = s_pending_pipeline;
     int pending_vertex_count = s_pending_vertex_count;
+    char pending_capture_path[sizeof s_pending_capture_path];
+    SDL_memcpy(pending_capture_path, s_pending_capture_path, sizeof pending_capture_path);
     s_pending_pipeline = nullptr;
     s_pending_vertex_count = 0;
+    s_pending_capture_path[0] = '\0';
 
     SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(bk_gpu());
     if (!cmd) {
@@ -45,8 +68,9 @@ void bk__gfx_flush(void) {
         return;
     }
 
+    Uint32 swap_w = 0, swap_h = 0;
     SDL_GPUTexture *tex = nullptr;
-    if (!SDL_WaitAndAcquireGPUSwapchainTexture(cmd, bk_window(), &tex, nullptr, nullptr)) {
+    if (!SDL_WaitAndAcquireGPUSwapchainTexture(cmd, bk_window(), &tex, &swap_w, &swap_h)) {
         SDL_Log("BK: SDL_WaitAndAcquireGPUSwapchainTexture failed: %s", SDL_GetError());
         SDL_SubmitGPUCommandBuffer(cmd);
         return;
@@ -71,7 +95,31 @@ void bk__gfx_flush(void) {
     }
     SDL_EndGPURenderPass(pass);
 
-    SDL_SubmitGPUCommandBuffer(cmd);
+    if (pending_capture_path[0] != '\0') {
+        SDL_GPUTextureFormat format = SDL_GetGPUSwapchainTextureFormat(bk_gpu(), bk_window());
+        SDL_PixelFormat sdl_format = s_pixel_format_for_gpu_format(format);
+        if (sdl_format == SDL_PIXELFORMAT_UNKNOWN) {
+            SDL_Log("BK: bk_gfx_request_capture: unsupported swapchain format");
+            SDL_SubmitGPUCommandBuffer(cmd);
+        } else {
+            void *pixels = bk__gfx_download_texture(bk_gpu(), cmd, tex, swap_w, swap_h, format);
+            if (pixels != nullptr) {
+                SDL_Surface *surface = SDL_CreateSurfaceFrom((int)swap_w, (int)swap_h, sdl_format,
+                                                             pixels, (int)swap_w * 4);
+                if (surface != nullptr) {
+                    if (!SDL_SaveBMP(surface, pending_capture_path)) {
+                        SDL_Log("BK: SDL_SaveBMP failed: %s", SDL_GetError());
+                    }
+                    SDL_DestroySurface(surface);
+                } else {
+                    SDL_Log("BK: SDL_CreateSurfaceFrom failed: %s", SDL_GetError());
+                }
+                bk__free(pixels);
+            }
+        }
+    } else {
+        SDL_SubmitGPUCommandBuffer(cmd);
+    }
 }
 
 void *bk__gfx_download_texture(SDL_GPUDevice *device, SDL_GPUCommandBuffer *cmd,
