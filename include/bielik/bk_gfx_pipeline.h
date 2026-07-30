@@ -94,3 +94,54 @@ BK_GfxPipeline *bk_gfx_pipeline_create(SDL_GPUDevice *device, const BK_GfxPipeli
 
 /// Destroys a pipeline. No-op if pipeline is nullptr.
 void bk_gfx_pipeline_destroy(BK_GfxPipeline *pipeline);
+
+typedef struct BK_GfxBuffer BK_GfxBuffer;
+typedef struct BK_GfxTexture BK_GfxTexture;
+
+/// One compute shader, precompiled to all three backend formats, plus the resource
+/// counts and threadgroup size the shader binary declares. threadcount_x/y/z must
+/// match the shader source's local_size_{x,y,z} -- SDL_GPU validates this at creation.
+typedef struct BK_GfxComputePipelineDesc {
+    BK_GfxShaderVariant spirv;
+    BK_GfxShaderVariant dxil;
+    BK_GfxShaderVariant msl;
+    int num_readonly_storage_buffers;
+    int num_readwrite_storage_textures;
+    uint32_t threadcount_x;
+    uint32_t threadcount_y;
+    uint32_t threadcount_z;
+} BK_GfxComputePipelineDesc;
+
+/// Opaque compute pipeline: a compiled compute shader, bound and dispatched via
+/// bk_gfx_compute_dispatch. Owns no per-dispatch resources.
+typedef struct BK_GfxComputePipeline BK_GfxComputePipeline;
+
+/// Creates a compute pipeline against the given device. Logs via SDL_Log ("BK: "
+/// prefix) and returns nullptr on any SDL_GPU failure. device is explicit, same
+/// rationale as bk_gfx_pipeline_create.
+BK_GfxComputePipeline *bk_gfx_compute_pipeline_create(SDL_GPUDevice *device,
+                                                      const BK_GfxComputePipelineDesc *desc);
+
+/// Destroys a compute pipeline. No-op if pipeline is nullptr.
+void bk_gfx_compute_pipeline_destroy(BK_GfxComputePipeline *pipeline);
+
+/// Describes one dispatch: which pipeline, which resources are bound to it (array
+/// order matches binding slot order), and the workgroup counts.
+typedef struct BK_GfxComputeDispatchDesc {
+    BK_GfxComputePipeline *pipeline;
+    BK_GfxTexture *const *readwrite_textures;
+    int num_readwrite_textures;
+    BK_GfxBuffer *const *readonly_buffers;
+    int num_readonly_buffers;
+    uint32_t groups_x;
+    uint32_t groups_y;
+    uint32_t groups_z;
+} BK_GfxComputeDispatchDesc;
+
+/// Dispatches a compute pipeline synchronously: acquires its own command buffer,
+/// records the dispatch, submits, and blocks on a GPU fence until it completes.
+/// Intended for setup-time work (e.g. procedurally filling a texture once at init),
+/// not a per-frame call -- unlike bk_gfx_draw, there is no pending-slot/flush
+/// integration, since compute work has no natural once-per-frame cadence the way the
+/// render pass does. Returns false and logs via SDL_Log on SDL_GPU failure.
+bool bk_gfx_compute_dispatch(const BK_GfxComputeDispatchDesc *desc);

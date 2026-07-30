@@ -1,5 +1,7 @@
 #include "internal/bk_app_internal.h"
+#include "internal/bk_gfx_buffer_internal.h"
 #include "internal/bk_gfx_pipeline_internal.h"
+#include "internal/bk_gfx_texture_internal.h"
 #include <SDL3/SDL.h>
 #include <bielik/bk_app.h>
 #include <bielik/bk_gfx_pipeline.h>
@@ -9,51 +11,45 @@ struct BK_GfxPipeline {
     SDL_GPUGraphicsPipeline *handle;
 };
 
-static bool s_pick_shader_variant(SDL_GPUShaderFormat supported, const BK_GfxShaderDesc *desc,
-                                  const void **out_code, size_t *out_code_size,
-                                  const char **out_entry_point, SDL_GPUShaderFormat *out_format) {
-    if ((supported & SDL_GPU_SHADERFORMAT_SPIRV) && desc->spirv.code != nullptr) {
-        *out_code = desc->spirv.code;
-        *out_code_size = desc->spirv.code_size;
-        *out_entry_point = desc->spirv.entry_point;
+// Picks the variant matching the device's supported shader formats, trying
+// SPIR-V/DXIL/MSL in that order. Shared by graphics shader creation (BK_GfxShaderDesc's
+// three variants) and compute pipeline creation (BK_GfxComputePipelineDesc's three
+// variants) so format-selection logic exists in exactly one place.
+static const BK_GfxShaderVariant *s_pick_shader_variant(SDL_GPUShaderFormat supported,
+                                                        const BK_GfxShaderVariant *spirv,
+                                                        const BK_GfxShaderVariant *dxil,
+                                                        const BK_GfxShaderVariant *msl,
+                                                        SDL_GPUShaderFormat *out_format) {
+    if ((supported & SDL_GPU_SHADERFORMAT_SPIRV) && spirv->code != nullptr) {
         *out_format = SDL_GPU_SHADERFORMAT_SPIRV;
-        return true;
+        return spirv;
     }
-    if ((supported & SDL_GPU_SHADERFORMAT_DXIL) && desc->dxil.code != nullptr) {
-        *out_code = desc->dxil.code;
-        *out_code_size = desc->dxil.code_size;
-        *out_entry_point = desc->dxil.entry_point;
+    if ((supported & SDL_GPU_SHADERFORMAT_DXIL) && dxil->code != nullptr) {
         *out_format = SDL_GPU_SHADERFORMAT_DXIL;
-        return true;
+        return dxil;
     }
-    if ((supported & SDL_GPU_SHADERFORMAT_MSL) && desc->msl.code != nullptr) {
-        *out_code = desc->msl.code;
-        *out_code_size = desc->msl.code_size;
-        *out_entry_point = desc->msl.entry_point;
+    if ((supported & SDL_GPU_SHADERFORMAT_MSL) && msl->code != nullptr) {
         *out_format = SDL_GPU_SHADERFORMAT_MSL;
-        return true;
+        return msl;
     }
-    return false;
+    return nullptr;
 }
 
 static SDL_GPUShader *s_create_shader(SDL_GPUDevice *device, const BK_GfxShaderDesc *desc,
                                       SDL_GPUShaderStage stage) {
-    const void *code = nullptr;
-    size_t code_size = 0;
-    const char *entry_point = nullptr;
     SDL_GPUShaderFormat format = SDL_GPU_SHADERFORMAT_INVALID;
-
-    if (!s_pick_shader_variant(SDL_GetGPUShaderFormats(device), desc, &code, &code_size,
-                               &entry_point, &format)) {
+    const BK_GfxShaderVariant *variant = s_pick_shader_variant(
+        SDL_GetGPUShaderFormats(device), &desc->spirv, &desc->dxil, &desc->msl, &format);
+    if (variant == nullptr) {
         SDL_Log("BK: bk_gfx_pipeline_create: no shader variant matches the device's supported "
                 "formats");
         return nullptr;
     }
 
     SDL_GPUShaderCreateInfo info = {
-        .code_size = code_size,
-        .code = code,
-        .entrypoint = entry_point,
+        .code_size = variant->code_size,
+        .code = variant->code,
+        .entrypoint = variant->entry_point,
         .format = format,
         .stage = stage,
         .num_samplers = (Uint32)desc->num_samplers,
@@ -207,4 +203,111 @@ void bk_gfx_pipeline_destroy(BK_GfxPipeline *pipeline) {
 SDL_GPUGraphicsPipeline *bk__gfx_pipeline_handle(const BK_GfxPipeline *pipeline) {
     BK_ASSERT(pipeline != nullptr);
     return pipeline->handle;
+}
+
+struct BK_GfxComputePipeline {
+    SDL_GPUDevice *device;
+    SDL_GPUComputePipeline *handle;
+};
+
+BK_GfxComputePipeline *bk_gfx_compute_pipeline_create(SDL_GPUDevice *device,
+                                                      const BK_GfxComputePipelineDesc *desc) {
+    BK_ASSERT(device != nullptr);
+    BK_ASSERT(desc != nullptr);
+
+    SDL_GPUShaderFormat format = SDL_GPU_SHADERFORMAT_INVALID;
+    const BK_GfxShaderVariant *variant = s_pick_shader_variant(
+        SDL_GetGPUShaderFormats(device), &desc->spirv, &desc->dxil, &desc->msl, &format);
+    if (variant == nullptr) {
+        SDL_Log("BK: bk_gfx_compute_pipeline_create: no shader variant matches the device's "
+                "supported formats");
+        return nullptr;
+    }
+
+    SDL_GPUComputePipelineCreateInfo info = {
+        .code_size = variant->code_size,
+        .code = variant->code,
+        .entrypoint = variant->entry_point,
+        .format = format,
+        .num_readonly_storage_buffers = (Uint32)desc->num_readonly_storage_buffers,
+        .num_readwrite_storage_textures = (Uint32)desc->num_readwrite_storage_textures,
+        .threadcount_x = desc->threadcount_x,
+        .threadcount_y = desc->threadcount_y,
+        .threadcount_z = desc->threadcount_z,
+    };
+    SDL_GPUComputePipeline *handle = SDL_CreateGPUComputePipeline(device, &info);
+    if (handle == nullptr) {
+        SDL_Log("BK: SDL_CreateGPUComputePipeline failed: %s", SDL_GetError());
+        return nullptr;
+    }
+
+    BK_GfxComputePipeline *pipeline = bk__alloc(sizeof(BK_GfxComputePipeline));
+    if (pipeline == nullptr) {
+        SDL_ReleaseGPUComputePipeline(device, handle);
+        return nullptr;
+    }
+    pipeline->device = device;
+    pipeline->handle = handle;
+    return pipeline;
+}
+
+void bk_gfx_compute_pipeline_destroy(BK_GfxComputePipeline *pipeline) {
+    if (pipeline == nullptr) {
+        return;
+    }
+    SDL_ReleaseGPUComputePipeline(pipeline->device, pipeline->handle);
+    bk__free(pipeline);
+}
+
+bool bk_gfx_compute_dispatch(const BK_GfxComputeDispatchDesc *desc) {
+    BK_ASSERT(desc != nullptr);
+    BK_ASSERT(desc->pipeline != nullptr);
+
+    SDL_GPUDevice *device = desc->pipeline->device;
+
+    SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(device);
+    if (cmd == nullptr) {
+        SDL_Log("BK: bk_gfx_compute_dispatch: SDL_AcquireGPUCommandBuffer failed: %s",
+                SDL_GetError());
+        return false;
+    }
+
+    SDL_GPUStorageTextureReadWriteBinding texture_bindings[8] = {0};
+    BK_ASSERT(desc->num_readwrite_textures <= 8);
+    for (int i = 0; i < desc->num_readwrite_textures; i++) {
+        texture_bindings[i] = (SDL_GPUStorageTextureReadWriteBinding){
+            .texture = bk__gfx_texture_handle(desc->readwrite_textures[i]),
+        };
+    }
+
+    SDL_GPUComputePass *pass = SDL_BeginGPUComputePass(
+        cmd, texture_bindings, (Uint32)desc->num_readwrite_textures, nullptr, 0);
+    SDL_BindGPUComputePipeline(pass, desc->pipeline->handle);
+
+    if (desc->num_readonly_buffers > 0) {
+        SDL_GPUBuffer *storage_buffers[8];
+        BK_ASSERT(desc->num_readonly_buffers <= 8);
+        for (int i = 0; i < desc->num_readonly_buffers; i++) {
+            storage_buffers[i] = bk__gfx_buffer_handle(desc->readonly_buffers[i]);
+        }
+        SDL_BindGPUComputeStorageBuffers(pass, 0, storage_buffers,
+                                         (Uint32)desc->num_readonly_buffers);
+    }
+
+    SDL_DispatchGPUCompute(pass, desc->groups_x, desc->groups_y, desc->groups_z);
+    SDL_EndGPUComputePass(pass);
+
+    SDL_GPUFence *fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
+    if (fence == nullptr) {
+        SDL_Log("BK: bk_gfx_compute_dispatch: SDL_SubmitGPUCommandBufferAndAcquireFence failed: %s",
+                SDL_GetError());
+        return false;
+    }
+    if (!SDL_WaitForGPUFences(device, true, &fence, 1)) {
+        SDL_Log("BK: bk_gfx_compute_dispatch: SDL_WaitForGPUFences failed: %s", SDL_GetError());
+        SDL_ReleaseGPUFence(device, fence);
+        return false;
+    }
+    SDL_ReleaseGPUFence(device, fence);
+    return true;
 }
