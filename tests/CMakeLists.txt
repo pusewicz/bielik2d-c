@@ -54,3 +54,11 @@ add_executable(test_gfx_capture test_gfx_capture.c)
 target_link_libraries(test_gfx_capture PRIVATE bielik bk_warnings)
 add_test(NAME test_gfx_capture COMMAND test_gfx_capture)
 set_tests_properties(test_gfx_capture PROPERTIES TIMEOUT 30)
+
+add_executable(test_gfx_buffer test_gfx_buffer.c)
+target_link_libraries(test_gfx_buffer PRIVATE bielik bk_warnings)
+target_include_directories(test_gfx_buffer PRIVATE ${PROJECT_SOURCE_DIR}/src)
+add_test(NAME test_gfx_buffer COMMAND test_gfx_buffer)
+
+add_library(test_header_bk_gfx_buffer OBJECT test_header_bk_gfx_buffer.c)
+target_link_libraries(test_header_bk_gfx_buffer PRIVATE bielik bk_warnings)
