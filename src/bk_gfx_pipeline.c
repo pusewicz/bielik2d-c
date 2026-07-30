@@ -97,8 +97,17 @@ static SDL_GPUPrimitiveType s_primitive_type(BK_GfxPrimitiveType type) {
 BK_GfxPipeline *bk_gfx_pipeline_create(SDL_GPUDevice *device, const BK_GfxPipelineDesc *desc) {
     BK_ASSERT(device != nullptr);
     BK_ASSERT(desc != nullptr);
-    BK_ASSERT(desc->num_vertex_buffers <= 8);
-    BK_ASSERT(desc->num_vertex_attributes <= 16);
+
+    if (desc->num_vertex_buffers < 0 || desc->num_vertex_buffers > 8) {
+        SDL_Log("BK: bk_gfx_pipeline_create: num_vertex_buffers must be in [0, 8], got %d",
+                desc->num_vertex_buffers);
+        return nullptr;
+    }
+    if (desc->num_vertex_attributes < 0 || desc->num_vertex_attributes > 16) {
+        SDL_Log("BK: bk_gfx_pipeline_create: num_vertex_attributes must be in [0, 16], got %d",
+                desc->num_vertex_attributes);
+        return nullptr;
+    }
 
     SDL_GPUShader *vertex_shader =
         s_create_shader(device, &desc->vertex_shader, SDL_GPU_SHADERSTAGE_VERTEX);
@@ -112,7 +121,7 @@ BK_GfxPipeline *bk_gfx_pipeline_create(SDL_GPUDevice *device, const BK_GfxPipeli
         return nullptr;
     }
 
-    SDL_GPUVertexBufferDescription sdl_buffers[8];
+    SDL_GPUVertexBufferDescription sdl_buffers[8] = {0};
     for (int i = 0; i < desc->num_vertex_buffers; i++) {
         sdl_buffers[i] = (SDL_GPUVertexBufferDescription){
             .slot = desc->vertex_buffers[i].slot,
@@ -121,7 +130,7 @@ BK_GfxPipeline *bk_gfx_pipeline_create(SDL_GPUDevice *device, const BK_GfxPipeli
         };
     }
 
-    SDL_GPUVertexAttribute sdl_attrs[16];
+    SDL_GPUVertexAttribute sdl_attrs[16] = {0};
     for (int i = 0; i < desc->num_vertex_attributes; i++) {
         sdl_attrs[i] = (SDL_GPUVertexAttribute){
             .location = desc->vertex_attributes[i].location,

@@ -85,3 +85,13 @@ jobs:
 
       - name: Test
         run: ctest --test-dir build --output-on-failure -E "test_app_lifecycle|test_gfx_pipeline"
+
+      - name: Test (GPU-dependent, Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        continue-on-error: true
+        run: xvfb-run ctest --test-dir build --output-on-failure -R "test_app_lifecycle|test_gfx_pipeline"
+
+      - name: Test (GPU-dependent, macOS)
+        if: matrix.os != 'ubuntu-latest'
+        continue-on-error: true
+        run: ctest --test-dir build --output-on-failure -R "test_app_lifecycle|test_gfx_pipeline"

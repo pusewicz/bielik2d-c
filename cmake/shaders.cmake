@@ -24,9 +24,9 @@ function(bk_compile_shader)
         message(FATAL_ERROR "bk_compile_shader: unknown STAGE '${ARG_STAGE}' (expected vertex or fragment)")
     endif()
 
-    set(src "${CMAKE_SOURCE_DIR}/shaders/${ARG_NAME}.${src_ext}")
-    set(spv "${CMAKE_SOURCE_DIR}/shaders/${ARG_NAME}.${ARG_STAGE}.spv")
-    set(msl "${CMAKE_SOURCE_DIR}/shaders/${ARG_NAME}.${ARG_STAGE}.msl")
+    set(src "${PROJECT_SOURCE_DIR}/shaders/${ARG_NAME}.${src_ext}")
+    set(spv "${PROJECT_SOURCE_DIR}/shaders/${ARG_NAME}.${ARG_STAGE}.spv")
+    set(msl "${PROJECT_SOURCE_DIR}/shaders/${ARG_NAME}.${ARG_STAGE}.msl")
 
     add_custom_command(
         OUTPUT "${spv}"
@@ -51,7 +51,7 @@ endfunction()
 function(bk_stage_shaders TARGET)
     add_custom_command(TARGET ${TARGET} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${CMAKE_SOURCE_DIR}/shaders" "$<TARGET_FILE_DIR:${TARGET}>/shaders"
+                "${PROJECT_SOURCE_DIR}/shaders" "$<TARGET_FILE_DIR:${TARGET}>/shaders"
         COMMENT "Staging shaders/ next to ${TARGET}"
     )
 endfunction()

@@ -30,6 +30,11 @@ int bk__gfx_get_pending_vertex_count(void) { return s_pending_vertex_count; }
 void bk__gfx_flush(void) {
     static bool s_logged_acquire_failure = false;
 
+    BK_GfxPipeline *pending_pipeline = s_pending_pipeline;
+    int pending_vertex_count = s_pending_vertex_count;
+    s_pending_pipeline = nullptr;
+    s_pending_vertex_count = 0;
+
     SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(bk_gpu());
     if (!cmd) {
         if (!s_logged_acquire_failure) {
@@ -59,11 +64,9 @@ void bk__gfx_flush(void) {
         .store_op = SDL_GPU_STOREOP_STORE,
     };
     SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(cmd, &target, 1, nullptr);
-    if (s_pending_pipeline != nullptr) {
-        SDL_BindGPUGraphicsPipeline(pass, bk__gfx_pipeline_handle(s_pending_pipeline));
-        SDL_DrawGPUPrimitives(pass, (Uint32)s_pending_vertex_count, 1, 0, 0);
-        s_pending_pipeline = nullptr;
-        s_pending_vertex_count = 0;
+    if (pending_pipeline != nullptr) {
+        SDL_BindGPUGraphicsPipeline(pass, bk__gfx_pipeline_handle(pending_pipeline));
+        SDL_DrawGPUPrimitives(pass, (Uint32)pending_vertex_count, 1, 0, 0);
     }
     SDL_EndGPURenderPass(pass);
 

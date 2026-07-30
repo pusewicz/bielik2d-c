@@ -20,9 +20,19 @@ typedef struct AppState {
 static AppState s_state;
 
 static void *s_load_shader_file(const char *relative_path, size_t *out_size) {
+    const char *base_path = SDL_GetBasePath();
+    if (base_path == nullptr) {
+        SDL_Log("BK: SDL_GetBasePath failed: %s", SDL_GetError());
+        return nullptr;
+    }
+
     char path[512];
-    SDL_snprintf(path, sizeof path, "%sshaders/%s", SDL_GetBasePath(), relative_path);
-    return SDL_LoadFile(path, out_size);
+    SDL_snprintf(path, sizeof path, "%sshaders/%s", base_path, relative_path);
+    void *data = SDL_LoadFile(path, out_size);
+    if (data == nullptr) {
+        SDL_Log("BK: failed to load shader file %s: %s", path, SDL_GetError());
+    }
+    return data;
 }
 
 static BK_GfxShaderDesc s_load_triangle_shader(const char *stage) {

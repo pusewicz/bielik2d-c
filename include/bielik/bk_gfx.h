@@ -1,5 +1,6 @@
 #pragma once
-#include <bielik/bk_gfx_pipeline.h>
+
+typedef struct BK_GfxPipeline BK_GfxPipeline;
 
 /// RGBA color.
 typedef struct BK_Color {

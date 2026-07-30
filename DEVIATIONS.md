@@ -340,7 +340,12 @@ scenario (create a pipeline against a real device, no window) actually
 runnable. `bk_gfx_pipeline_create` itself is unchanged from the brief: it
 still takes `device` as an explicit, caller-supplied parameter and does not
 call `SDL_Init` itself, consistent with the module's stated design (pipelines
-creatable/testable without a running app or window).
+creatable/testable without a running app or window). This does mean the
+design spec's framing of the golden-image test as "verifiable in CI without a
+display server at all" (§6) is slightly too strong on platforms where video
+subsystem init itself requires a display server (Linux/X11/Wayland, hence
+`xvfb-run` in CI; less of an issue on macOS/Windows) — the test still needs
+no *window* or *swapchain*, but it does need `SDL_INIT_VIDEO`.
 
 ## src/bk_gfx_pipeline.c include order (task-2-brief.md)
 

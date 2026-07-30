@@ -6,8 +6,11 @@
 #include <stdlib.h>
 
 static void *s_load_shader_file(const char *relative_path, size_t *out_size) {
+    const char *base_path = SDL_GetBasePath();
+    REQUIRE(base_path != nullptr);
+
     char path[512];
-    SDL_snprintf(path, sizeof path, "%sshaders/%s", SDL_GetBasePath(), relative_path);
+    SDL_snprintf(path, sizeof path, "%sshaders/%s", base_path, relative_path);
     void *data = SDL_LoadFile(path, out_size);
     REQUIRE(data != nullptr);
     return data;
@@ -60,6 +63,41 @@ static void test_create_and_destroy_pipeline_succeeds(void) {
     bk_gfx_pipeline_destroy(pipeline);
     s_free_shader(&vertex);
     s_free_shader(&fragment);
+    SDL_DestroyGPUDevice(device);
+}
+
+static void test_out_of_range_vertex_counts_return_null(void) {
+    // Defensive, independent of test-function call order: see the identical call
+    // in test_create_and_destroy_pipeline_succeeds above for why this is required.
+    SDL_Init(SDL_INIT_VIDEO);
+
+    SDL_GPUDevice *device = SDL_CreateGPUDevice(
+        SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_MSL, false,
+        nullptr);
+    REQUIRE(device != nullptr);
+
+    // The bounds check runs before any shader is created, so no real shader
+    // bytecode is needed here: an out-of-range count must fail before
+    // desc.vertex_shader/fragment_shader are ever touched.
+    BK_GfxPipelineDesc desc = {
+        .primitive_type = BK_GFX_PRIMITIVE_TRIANGLE_LIST,
+        .color_target_format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
+        .blend_mode = BK_GFX_BLEND_NONE,
+    };
+
+    desc.num_vertex_buffers = 9;
+    REQUIRE(bk_gfx_pipeline_create(device, &desc) == nullptr);
+
+    desc.num_vertex_buffers = -1;
+    REQUIRE(bk_gfx_pipeline_create(device, &desc) == nullptr);
+
+    desc.num_vertex_buffers = 0;
+    desc.num_vertex_attributes = 17;
+    REQUIRE(bk_gfx_pipeline_create(device, &desc) == nullptr);
+
+    desc.num_vertex_attributes = -1;
+    REQUIRE(bk_gfx_pipeline_create(device, &desc) == nullptr);
+
     SDL_DestroyGPUDevice(device);
 }
 
@@ -172,6 +210,7 @@ static void test_draw_produces_expected_pixels(void) {
 
 int main(void) {
     test_create_and_destroy_pipeline_succeeds();
+    test_out_of_range_vertex_counts_return_null();
     test_draw_produces_expected_pixels();
     test_destroy_null_is_noop();
     printf("test_gfx_pipeline: OK\n");
