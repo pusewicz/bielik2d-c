@@ -15,6 +15,10 @@ Phase 0 (scaffold) and Phase 1 (app core) are implemented: the CMake build syste
 6 all exist. Check the actual directory contents (`PLAN.md` section 4 has the current
 layout) before assuming a command exists beyond what's listed here.
 
+Phase 2 (gfx core) is underway as sub-projects, each with its own spec
+(`docs/superpowers/specs/`) and implementation plan (`docs/superpowers/plans/`) —
+`PLAN.md` only covers Phase 0/1.
+
 Build: `cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBK_WERROR=ON && cmake --build build`.
 Test: `ctest --test-dir build --output-on-failure` (or run a single test
 binary directly, e.g. `./build/tests/test_version`).
@@ -46,6 +50,8 @@ is worth reading as a template for conventions here.
   instead of vendoring a generated font header.
 - **Shaders**: precompile offline with SDL_shadercross (HLSL/SPIR-V → SPIR-V/DXIL/MSL) and
   ship compiled bytecode in asset packs — do not write a runtime transpiler like CF did.
+  Current interim toolchain is `glslc`+`spirv-cross` compiling GLSL, not shadercross+HLSL —
+  shadercross has no tagged release and no macOS prebuilt DXC; see `DEVIATIONS.md`.
 - **Physics/collision**: Box2D v3 (C, SIMD, multithreaded), used via sensors/queries even
   for simple overlap tests. Box3D (same data model/API, released June 2026) is the story
   for optional 3D later, so don't reach for a separate 3D collision lib.
@@ -108,6 +114,18 @@ infrastructure into a bounded, checkable deliverable.
 - CI should run on Linux + Windows-clang from day one; add an Emscripten leg once the
   webgpu.h web backend (see the locked-in web/graphics backend decision above) lands.
 
+## SDL_GPU gotchas
+
+- `SDL_CreateGPUDevice` requires `SDL_Init(SDL_INIT_VIDEO)` first, even for a headless
+  device with no window (`SDL_GPUSelectBackend` calls `SDL_GetVideoDevice()` internally
+  and errors otherwise).
+- The swapchain texture is write-only for sampling, but `SDL_DownloadFromGPUTexture`
+  works on it directly via a copy pass — no intermediate blit needed for
+  screenshot/capture use cases.
+- When wrapping GPU-downloaded pixel bytes as an `SDL_Surface`, use SDL's `_32` aliases
+  (`SDL_PIXELFORMAT_RGBA32`/`BGRA32`), not the packed `_8888` names — the packed names
+  are bit-packed order, not byte-array order, and flip on little-endian.
+
 ## Conventions
 
 Naming:
@@ -141,3 +159,8 @@ Style:
 Process:
 - Never reorganize the file layout beyond section 4 of `PLAN.md`.
 - Keep functions small; no premature abstraction; no speculative options.
+- Regenerating shader bytecode alone doesn't restage it next to already-built
+  binaries unless something forces a relink of the consuming target (tracked in
+  bielik2d-c#2) — touch a source file of the sample/test to force it meanwhile.
+- Deferred/non-blocking findings (bugs, follow-ups, feature ideas) get filed as
+  GitHub issues on `pusewicz/bielik2d-c`, not left as code comments or session notes.
