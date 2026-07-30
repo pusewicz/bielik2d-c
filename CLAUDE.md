@@ -125,6 +125,21 @@ infrastructure into a bounded, checkable deliverable.
 - When wrapping GPU-downloaded pixel bytes as an `SDL_Surface`, use SDL's `_32` aliases
   (`SDL_PIXELFORMAT_RGBA32`/`BGRA32`), not the packed `_8888` names — the packed names
   are bit-packed order, not byte-array order, and flip on little-endian.
+- `BK_GfxShaderDesc.num_samplers`/`num_uniform_buffers` (and the equivalent compute
+  resource counts) must match what the shader binary actually declares. A mismatch
+  does **not** fail at `SDL_CreateGPUShader`/pipeline-creation time — it fails
+  silently later, at draw/dispatch time, with no `SDL_Log` output and no error
+  return: the render pass's whole command buffer is dropped, so a texture that should
+  have been cleared-then-drawn instead reads back as all-zero bytes (not even the
+  clear color). If a golden-image test's downloaded pixels are unexpectedly all zero
+  with no logged failure anywhere in the chain, check the resource counts on every
+  shader desc first.
+- A texture created with both `SDL_GPU_TEXTUREUSAGE_SAMPLER` and
+  `SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_WRITE` is valid (confirmed on Metal) — only
+  `SAMPLER | GRAPHICS_STORAGE_READ` is documented as an invalid combination. This is
+  what makes a compute-shader-filled, later-sampled texture (`BK_GFX_TEXTURE_USAGE_
+  COMPUTE_TARGET`) a single texture rather than a render-then-copy-into-a-second-
+  texture dance.
 
 ## Conventions
 
