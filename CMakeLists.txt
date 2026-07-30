@@ -39,6 +39,9 @@ target_link_libraries(bielik PRIVATE bk_warnings)
 
 bk_compile_shader(NAME triangle STAGE vertex)
 bk_compile_shader(NAME triangle STAGE fragment)
+bk_compile_shader(NAME textured STAGE vertex)
+bk_compile_shader(NAME textured STAGE fragment)
+bk_compile_shader(NAME gradient STAGE compute)
 
 if(BK_BUILD_TESTS)
     enable_testing()
