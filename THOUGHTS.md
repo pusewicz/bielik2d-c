@@ -1,3 +1,8 @@
+Pivot note: this plan supersedes the earlier Swift 6.3 + SDL3 direction. Bielik2D is now
+targeting C23 — a clean rebuild that treats Cute Framework as donor code rather than a
+Swift-native wrapper around SDL3. Everything below was written with that C23 target in
+mind.
+
 What Cute Framework actually is in mid-2026
 
 The first-party surface is smaller than it looks: ~21.4k lines of implementation across 32 .cpp files (it's a C API over a C++20 codebase, per its own AGENTS.md), plus ~24.5k lines of public headers that are heavily doc comments. The rest of the repo weight is embedded data (a 103k-line calibri.h font header, a 15k-line joypad mapping DB) and vendored single-file libs: cute_sound + stb_vorbis (audio), cute_c2 + pico_qt (collision/spatial), cute_net/cute_tls/cute_https + s2n (networking), cute_aseprite, cute_png, minicoro, yyjson, stb_truetype, Dear ImGui. It FetchContents SDL 3.4.0 and PhysFS from source. The ECS is gone from src entirely.
