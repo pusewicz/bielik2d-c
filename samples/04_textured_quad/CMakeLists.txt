@@ -1,0 +1,8 @@
+add_executable(04_textured_quad main.c)
+target_link_libraries(04_textured_quad PRIVATE bielik bk_warnings)
+bk_stage_shaders(04_textured_quad)
+
+add_executable(04_textured_quad_run main.c)
+target_link_libraries(04_textured_quad_run PRIVATE bielik bk_warnings)
+target_compile_definitions(04_textured_quad_run PRIVATE BK_MAIN_HANDLED)
+bk_stage_shaders(04_textured_quad_run)
