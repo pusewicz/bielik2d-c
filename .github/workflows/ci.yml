@@ -11,12 +11,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-26.04, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Linux dependencies
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-26.04'
         run: >
           sudo apt-get update && sudo apt-get install -y
           build-essential git make pkg-config cmake ninja-build gnome-desktop-testing
@@ -28,7 +28,7 @@ jobs:
           liburing-dev mesa-vulkan-drivers xvfb
 
       - name: Configure (Ubuntu)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-26.04'
         env:
           CC: clang
           CXX: clang++
@@ -49,17 +49,17 @@ jobs:
         run: ctest --test-dir build --output-on-failure -C Release -E "test_app_lifecycle|test_gfx_pipeline|test_gfx_capture|test_gfx_buffer|test_gfx_texture|test_gfx_compute"
 
       - name: Test (GPU-dependent, Ubuntu)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-26.04'
         continue-on-error: true
         run: xvfb-run ctest --test-dir build --output-on-failure -C Release -R "test_app_lifecycle|test_gfx_pipeline|test_gfx_capture|test_gfx_buffer|test_gfx_texture|test_gfx_compute"
 
       - name: Test (GPU-dependent, macOS/Windows)
-        if: matrix.os != 'ubuntu-latest'
+        if: matrix.os != 'ubuntu-26.04'
         continue-on-error: true
         run: ctest --test-dir build --output-on-failure -C Release -R "test_app_lifecycle|test_gfx_pipeline|test_gfx_capture|test_gfx_buffer|test_gfx_texture|test_gfx_compute"
 
       - name: Smoke test sample (Ubuntu)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-26.04'
         continue-on-error: true
         run: xvfb-run build/samples/01_clear/01_clear --frames 120
 
@@ -69,12 +69,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-26.04, macos-latest]
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Linux dependencies
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-26.04'
         run: >
           sudo apt-get update && sudo apt-get install -y
           build-essential git make pkg-config cmake ninja-build gnome-desktop-testing
@@ -86,7 +86,7 @@ jobs:
           liburing-dev mesa-vulkan-drivers xvfb
 
       - name: Configure (Ubuntu)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-26.04'
         env:
           CC: clang
           CXX: clang++
@@ -103,11 +103,11 @@ jobs:
         run: ctest --test-dir build --output-on-failure -E "test_app_lifecycle|test_gfx_pipeline|test_gfx_capture|test_gfx_buffer|test_gfx_texture|test_gfx_compute"
 
       - name: Test (GPU-dependent, Ubuntu)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-26.04'
         continue-on-error: true
         run: xvfb-run ctest --test-dir build --output-on-failure -R "test_app_lifecycle|test_gfx_pipeline|test_gfx_capture|test_gfx_buffer|test_gfx_texture|test_gfx_compute"
 
       - name: Test (GPU-dependent, macOS)
-        if: matrix.os != 'ubuntu-latest'
+        if: matrix.os != 'ubuntu-26.04'
         continue-on-error: true
         run: ctest --test-dir build --output-on-failure -R "test_app_lifecycle|test_gfx_pipeline|test_gfx_capture|test_gfx_buffer|test_gfx_texture|test_gfx_compute"
