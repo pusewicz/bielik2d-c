@@ -1,3 +1,4 @@
+#include "internal/bk_app_internal.h"
 #include "internal/bk_gfx_internal.h"
 #include "internal/bk_gfx_pipeline_internal.h"
 #include <SDL3/SDL.h>
@@ -71,4 +72,63 @@ void bk__gfx_flush(void) {
     SDL_EndGPURenderPass(pass);
 
     SDL_SubmitGPUCommandBuffer(cmd);
+}
+
+void *bk__gfx_download_texture(SDL_GPUDevice *device, SDL_GPUCommandBuffer *cmd,
+                               SDL_GPUTexture *texture, Uint32 width, Uint32 height,
+                               SDL_GPUTextureFormat format) {
+    BK_ASSERT(device != nullptr);
+    BK_ASSERT(cmd != nullptr);
+    BK_ASSERT(texture != nullptr);
+    BK_ASSERT(format == SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM ||
+              format == SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM);
+
+    SDL_GPUTransferBufferCreateInfo transfer_info = {
+        .usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD,
+        .size = width * height * 4,
+    };
+    SDL_GPUTransferBuffer *transfer = SDL_CreateGPUTransferBuffer(device, &transfer_info);
+    if (transfer == nullptr) {
+        SDL_Log("BK: SDL_CreateGPUTransferBuffer failed: %s", SDL_GetError());
+        SDL_SubmitGPUCommandBuffer(cmd);
+        return nullptr;
+    }
+
+    SDL_GPUCopyPass *copy_pass = SDL_BeginGPUCopyPass(cmd);
+    SDL_GPUTextureRegion src = {.texture = texture, .w = width, .h = height, .d = 1};
+    SDL_GPUTextureTransferInfo dst = {
+        .transfer_buffer = transfer, .pixels_per_row = width, .rows_per_layer = height};
+    SDL_DownloadFromGPUTexture(copy_pass, &src, &dst);
+    SDL_EndGPUCopyPass(copy_pass);
+
+    SDL_GPUFence *fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
+    if (fence == nullptr) {
+        SDL_Log("BK: SDL_SubmitGPUCommandBufferAndAcquireFence failed: %s", SDL_GetError());
+        SDL_ReleaseGPUTransferBuffer(device, transfer);
+        return nullptr;
+    }
+    if (!SDL_WaitForGPUFences(device, true, &fence, 1)) {
+        SDL_Log("BK: SDL_WaitForGPUFences failed: %s", SDL_GetError());
+        SDL_ReleaseGPUFence(device, fence);
+        SDL_ReleaseGPUTransferBuffer(device, transfer);
+        return nullptr;
+    }
+    SDL_ReleaseGPUFence(device, fence);
+
+    void *mapped = SDL_MapGPUTransferBuffer(device, transfer, false);
+    if (mapped == nullptr) {
+        SDL_Log("BK: SDL_MapGPUTransferBuffer failed: %s", SDL_GetError());
+        SDL_ReleaseGPUTransferBuffer(device, transfer);
+        return nullptr;
+    }
+
+    size_t byte_size = (size_t)width * (size_t)height * 4;
+    void *pixels = bk__alloc(byte_size);
+    if (pixels != nullptr) {
+        SDL_memcpy(pixels, mapped, byte_size);
+    }
+
+    SDL_UnmapGPUTransferBuffer(device, transfer);
+    SDL_ReleaseGPUTransferBuffer(device, transfer);
+    return pixels;
 }

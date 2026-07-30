@@ -1,4 +1,5 @@
 #pragma once
+#include <SDL3/SDL_gpu.h>
 #include <bielik/bk_gfx.h>
 #include <bielik/bk_gfx_pipeline.h>
 
@@ -19,3 +20,16 @@ BK_GfxPipeline *bk__gfx_get_pending_pipeline(void);
 /// Test-only accessor: returns the vertex count set via bk_gfx_draw this frame, or
 /// 0 if bk_gfx_draw hasn't been called since the last flush.
 int bk__gfx_get_pending_vertex_count(void);
+
+/// Downloads width*height pixels (4 bytes/pixel) from texture via a copy pass added
+/// to cmd, then submits cmd and waits for the GPU fence. cmd must not have been
+/// submitted yet, and must not be used for anything else afterward -- this call
+/// submits it on every path, success or failure. format must be
+/// SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM or SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM (the
+/// only 4-byte-per-pixel formats this helper supports; enforced by assertion, since
+/// which format a caller passes is a programmer decision, not external data).
+/// Returns a heap-allocated copy of the pixels (release with bk__free), or nullptr on
+/// failure (logs via SDL_Log with a "BK: " prefix).
+void *bk__gfx_download_texture(SDL_GPUDevice *device, SDL_GPUCommandBuffer *cmd,
+                               SDL_GPUTexture *texture, Uint32 width, Uint32 height,
+                               SDL_GPUTextureFormat format);

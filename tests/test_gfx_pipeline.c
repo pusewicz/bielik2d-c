@@ -1,4 +1,6 @@
 #include "bk_test.h"
+#include "internal/bk_app_internal.h"
+#include "internal/bk_gfx_internal.h"
 #include "internal/bk_gfx_pipeline_internal.h"
 #include <SDL3/SDL.h>
 #include <bielik/bk_gfx_pipeline.h>
@@ -151,13 +153,6 @@ static void test_draw_produces_expected_pixels(void) {
     SDL_GPUTexture *offscreen = SDL_CreateGPUTexture(device, &texture_info);
     REQUIRE(offscreen != nullptr);
 
-    SDL_GPUTransferBufferCreateInfo transfer_info = {
-        .usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD,
-        .size = (Uint32)(size * size * 4),
-    };
-    SDL_GPUTransferBuffer *transfer = SDL_CreateGPUTransferBuffer(device, &transfer_info);
-    REQUIRE(transfer != nullptr);
-
     SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(device);
     REQUIRE(cmd != nullptr);
 
@@ -172,21 +167,10 @@ static void test_draw_produces_expected_pixels(void) {
     SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
     SDL_EndGPURenderPass(pass);
 
-    SDL_GPUCopyPass *copy_pass = SDL_BeginGPUCopyPass(cmd);
-    SDL_GPUTextureRegion src = {
-        .texture = offscreen, .x = 0, .y = 0, .z = 0, .w = size, .h = size, .d = 1};
-    SDL_GPUTextureTransferInfo dst = {
-        .transfer_buffer = transfer, .offset = 0, .pixels_per_row = size, .rows_per_layer = size};
-    SDL_DownloadFromGPUTexture(copy_pass, &src, &dst);
-    SDL_EndGPUCopyPass(copy_pass);
-
-    SDL_GPUFence *fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
-    REQUIRE(fence != nullptr);
-    REQUIRE(SDL_WaitForGPUFences(device, true, &fence, 1));
-    SDL_ReleaseGPUFence(device, fence);
-
-    const uint8_t *pixels = SDL_MapGPUTransferBuffer(device, transfer, false);
-    REQUIRE(pixels != nullptr);
+    void *pixels_buf = bk__gfx_download_texture(device, cmd, offscreen, size, size,
+                                                SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM);
+    REQUIRE(pixels_buf != nullptr);
+    const uint8_t *pixels = (const uint8_t *)pixels_buf;
 
     // Center: well inside the triangle (NDC bbox [-0.5,0.5] on both axes covers the
     // middle half of the viewport) -> solid red.
@@ -198,12 +182,11 @@ static void test_draw_produces_expected_pixels(void) {
     s_check_pixel(pixels, size, 1, size - 2, 0, 0, 0, 255, tolerance);
     s_check_pixel(pixels, size, size - 2, size - 2, 0, 0, 0, 255, tolerance);
 
-    SDL_UnmapGPUTransferBuffer(device, transfer);
+    bk__free(pixels_buf);
 
     bk_gfx_pipeline_destroy(pipeline);
     s_free_shader(&vertex);
     s_free_shader(&fragment);
-    SDL_ReleaseGPUTransferBuffer(device, transfer);
     SDL_ReleaseGPUTexture(device, offscreen);
     SDL_DestroyGPUDevice(device);
 }
