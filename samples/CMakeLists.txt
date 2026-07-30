@@ -1,3 +1,5 @@
 add_subdirectory(01_clear)
 add_subdirectory(02_ticks)
 add_subdirectory(03_triangle)
+add_subdirectory(04_textured_quad)
+add_subdirectory(05_compute)

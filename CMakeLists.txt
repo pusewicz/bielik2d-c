@@ -29,7 +29,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(SDL3)
 
-add_library(bielik STATIC src/bk_app.c src/bk_gfx.c src/bk_gfx_pipeline.c src/bk_task.c src/bk_time.c)
+add_library(bielik STATIC src/bk_app.c src/bk_gfx.c src/bk_gfx_buffer.c src/bk_gfx_pipeline.c src/bk_gfx_texture.c src/bk_task.c src/bk_time.c)
 add_library(Bielik2D::bielik ALIAS bielik)
 
 target_include_directories(bielik PUBLIC include)
@@ -39,6 +39,9 @@ target_link_libraries(bielik PRIVATE bk_warnings)
 
 bk_compile_shader(NAME triangle STAGE vertex)
 bk_compile_shader(NAME triangle STAGE fragment)
+bk_compile_shader(NAME textured STAGE vertex)
+bk_compile_shader(NAME textured STAGE fragment)
+bk_compile_shader(NAME gradient STAGE compute)
 
 if(BK_BUILD_TESTS)
     enable_testing()
