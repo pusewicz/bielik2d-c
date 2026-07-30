@@ -121,28 +121,33 @@ void bk__gfx_flush(void) {
     if (pending_pipeline != nullptr) { ... }
     SDL_EndGPURenderPass(pass);
 
-    if (s_pending_capture_path[0] != '\0') {
+    if (pending_capture_path[0] != '\0') {
         SDL_GPUTextureFormat format = SDL_GetGPUSwapchainTextureFormat(bk_gpu(), bk_window());
-        void *pixels = bk__gfx_download_texture(bk_gpu(), cmd, tex, swap_w, swap_h, format);
-        if (pixels != nullptr) {
-            SDL_PixelFormat sdl_format = s_pixel_format_for_gpu_format(format);
-            if (sdl_format != SDL_PIXELFORMAT_UNKNOWN) {
-                SDL_Surface *surface =
-                    SDL_CreateSurfaceFrom((int)swap_w, (int)swap_h, sdl_format, pixels, (int)swap_w * 4);
+        SDL_PixelFormat sdl_format = s_pixel_format_for_gpu_format(format);
+        if (sdl_format == SDL_PIXELFORMAT_UNKNOWN) {
+            // Checked BEFORE downloading, not after: bk__gfx_download_texture asserts its
+            // format argument is one of the two supported formats, so downloading first and
+            // checking the mapping second would abort a debug build on an unsupported format
+            // instead of the graceful log-and-drop this branch promises (see §8). Caught during
+            // implementation, not present in an earlier draft of this section.
+            SDL_Log("BK: bk_gfx_request_capture: unsupported swapchain format");
+            SDL_SubmitGPUCommandBuffer(cmd);
+        } else {
+            void *pixels = bk__gfx_download_texture(bk_gpu(), cmd, tex, swap_w, swap_h, format);
+            if (pixels != nullptr) {
+                SDL_Surface *surface = SDL_CreateSurfaceFrom((int)swap_w, (int)swap_h, sdl_format,
+                                                              pixels, (int)swap_w * 4);
                 if (surface != nullptr) {
-                    if (!SDL_SaveBMP(surface, s_pending_capture_path)) {
+                    if (!SDL_SaveBMP(surface, pending_capture_path)) {
                         SDL_Log("BK: SDL_SaveBMP failed: %s", SDL_GetError());
                     }
                     SDL_DestroySurface(surface);
                 } else {
                     SDL_Log("BK: SDL_CreateSurfaceFrom failed: %s", SDL_GetError());
                 }
-            } else {
-                SDL_Log("BK: bk_gfx_request_capture: unsupported swapchain format");
+                bk__free(pixels);
             }
-            bk__free(pixels);
         }
-        s_pending_capture_path[0] = '\0'; // consumed either way
     } else {
         SDL_SubmitGPUCommandBuffer(cmd);
     }
