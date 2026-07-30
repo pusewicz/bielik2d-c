@@ -44,7 +44,7 @@ struct spvUnsafeArray
     }
 };
 
-constant spvUnsafeArray<float2, 3> _19 = spvUnsafeArray<float2, 3>({ float2(0.0, -0.5), float2(0.5), float2(-0.5, 0.5) });
+constant spvUnsafeArray<float2, 3> _19 = spvUnsafeArray<float2, 3>({ float2(0.0, 0.5), float2(0.5, -0.5), float2(-0.5) });
 
 struct main0_out
 {
