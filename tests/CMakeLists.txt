@@ -49,3 +49,8 @@ bk_stage_shaders(test_gfx_pipeline)
 
 add_library(test_header_bk_gfx_pipeline OBJECT test_header_bk_gfx_pipeline.c)
 target_link_libraries(test_header_bk_gfx_pipeline PRIVATE bielik bk_warnings)
+
+add_executable(test_gfx_capture test_gfx_capture.c)
+target_link_libraries(test_gfx_capture PRIVATE bielik bk_warnings)
+add_test(NAME test_gfx_capture COMMAND test_gfx_capture)
+set_tests_properties(test_gfx_capture PROPERTIES TIMEOUT 30)
