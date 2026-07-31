@@ -7,7 +7,7 @@
 struct BK_GfxBuffer {
     SDL_GPUDevice *device;
     SDL_GPUBuffer *handle;
-    uint32_t size;
+    u32 size;
 };
 
 static SDL_GPUBufferUsageFlags s_buffer_usage_flags(BK_GfxBufferUsage usage) {
@@ -23,7 +23,7 @@ static SDL_GPUBufferUsageFlags s_buffer_usage_flags(BK_GfxBufferUsage usage) {
     return 0;
 }
 
-BK_GfxBuffer *bk_gfx_buffer_create(SDL_GPUDevice *device, BK_GfxBufferUsage usage, uint32_t size) {
+BK_GfxBuffer *bk_gfx_buffer_create(SDL_GPUDevice *device, BK_GfxBufferUsage usage, u32 size) {
     BK_ASSERT(device != nullptr);
 
     SDL_GPUBufferCreateInfo info = {
@@ -47,7 +47,7 @@ BK_GfxBuffer *bk_gfx_buffer_create(SDL_GPUDevice *device, BK_GfxBufferUsage usag
     return buffer;
 }
 
-bool bk_gfx_buffer_upload(BK_GfxBuffer *buffer, const void *data, uint32_t offset, uint32_t size) {
+bool bk_gfx_buffer_upload(BK_GfxBuffer *buffer, const void *data, u32 offset, u32 size) {
     BK_ASSERT(buffer != nullptr);
     BK_ASSERT(data != nullptr);
 
@@ -107,7 +107,7 @@ SDL_GPUBuffer *bk__gfx_buffer_handle(const BK_GfxBuffer *buffer) {
     return buffer->handle;
 }
 
-uint32_t bk__gfx_buffer_size(const BK_GfxBuffer *buffer) {
+u32 bk__gfx_buffer_size(const BK_GfxBuffer *buffer) {
     BK_ASSERT(buffer != nullptr);
     return buffer->size;
 }
