@@ -1,13 +1,13 @@
 #pragma once
-#include <stddef.h>
+#include <bielik/bk_types.h>
 
 /// Allocates size bytes via SDL_malloc. Framework-internal; all framework
 /// heap allocation must go through this (and bk__free) so
 /// SDL_SetMemoryFunctions covers everything.
-void *bk__alloc(size_t size);
+void *bk__alloc(usize size);
 
 /// Reallocates via SDL_realloc. See bk__alloc.
-void *bk__realloc(void *ptr, size_t size);
+void *bk__realloc(void *ptr, usize size);
 
 /// Frees memory allocated via bk__alloc/bk__realloc.
 void bk__free(void *ptr);

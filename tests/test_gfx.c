@@ -3,32 +3,32 @@
 #include <bielik/bk_gfx.h>
 
 static void test_default_clear_color(void) {
-    BK_Color c = bk__gfx_get_clear_color();
-    REQUIRE_NEAR(c.r, 0.1f, 1e-6);
-    REQUIRE_NEAR(c.g, 0.1f, 1e-6);
-    REQUIRE_NEAR(c.b, 0.12f, 1e-6);
-    REQUIRE_NEAR(c.a, 1.0f, 1e-6);
+    BK_Color color = bk__gfx_get_clear_color();
+    REQUIRE_NEAR(color.r, 0.1f, 1e-6);
+    REQUIRE_NEAR(color.g, 0.1f, 1e-6);
+    REQUIRE_NEAR(color.b, 0.12f, 1e-6);
+    REQUIRE_NEAR(color.a, 1.0f, 1e-6);
 }
 
 static void test_set_then_get_round_trips(void) {
     bk_gfx_set_clear_color((BK_Color){.r = 0.25f, .g = 0.5f, .b = 0.75f, .a = 1.0f});
 
-    BK_Color c = bk__gfx_get_clear_color();
-    REQUIRE_NEAR(c.r, 0.25f, 1e-6);
-    REQUIRE_NEAR(c.g, 0.5f, 1e-6);
-    REQUIRE_NEAR(c.b, 0.75f, 1e-6);
-    REQUIRE_NEAR(c.a, 1.0f, 1e-6);
+    BK_Color color = bk__gfx_get_clear_color();
+    REQUIRE_NEAR(color.r, 0.25f, 1e-6);
+    REQUIRE_NEAR(color.g, 0.5f, 1e-6);
+    REQUIRE_NEAR(color.b, 0.75f, 1e-6);
+    REQUIRE_NEAR(color.a, 1.0f, 1e-6);
 }
 
 static void test_last_set_wins(void) {
     bk_gfx_set_clear_color((BK_Color){.r = 0.25f, .g = 0.5f, .b = 0.75f, .a = 1.0f});
     bk_gfx_set_clear_color((BK_Color){.r = 0.9f, .g = 0.8f, .b = 0.7f, .a = 0.6f});
 
-    BK_Color c = bk__gfx_get_clear_color();
-    REQUIRE_NEAR(c.r, 0.9f, 1e-6);
-    REQUIRE_NEAR(c.g, 0.8f, 1e-6);
-    REQUIRE_NEAR(c.b, 0.7f, 1e-6);
-    REQUIRE_NEAR(c.a, 0.6f, 1e-6);
+    BK_Color color = bk__gfx_get_clear_color();
+    REQUIRE_NEAR(color.r, 0.9f, 1e-6);
+    REQUIRE_NEAR(color.g, 0.8f, 1e-6);
+    REQUIRE_NEAR(color.b, 0.7f, 1e-6);
+    REQUIRE_NEAR(color.a, 0.6f, 1e-6);
 }
 
 static void test_request_capture_sets_pending_path(void) {
@@ -93,10 +93,10 @@ static void test_bind_canvas_sets_pending_state(void) {
 }
 
 static void test_swapchain_depth_size_is_zero_until_created(void) {
-    int w = -1, h = -1;
-    bk__gfx_get_swapchain_depth_size(&w, &h);
-    REQUIRE(w == 0);
-    REQUIRE(h == 0);
+    i32 width = -1, height = -1;
+    bk__gfx_get_swapchain_depth_size(&width, &height);
+    REQUIRE(width == 0);
+    REQUIRE(height == 0);
 }
 
 static void test_swapchain_depth_shutdown_is_noop_when_never_created(void) {
@@ -106,10 +106,10 @@ static void test_swapchain_depth_shutdown_is_noop_when_never_created(void) {
     bk__gfx_configure_swapchain_depth(true);
     bk__gfx_shutdown();
 
-    int w = -1, h = -1;
-    bk__gfx_get_swapchain_depth_size(&w, &h);
-    REQUIRE(w == 0);
-    REQUIRE(h == 0);
+    i32 width = -1, height = -1;
+    bk__gfx_get_swapchain_depth_size(&width, &height);
+    REQUIRE(width == 0);
+    REQUIRE(height == 0);
 
     bk__gfx_configure_swapchain_depth(false); // restore the default for other tests
 }

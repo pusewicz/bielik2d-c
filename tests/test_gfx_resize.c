@@ -17,10 +17,10 @@ static BK_Result test_init(void **state, int argc, char **argv) {
 
     // Deterministic before anything external (a WM, a display server) has a chance
     // to interfere: right after boot, bk_window_size must equal what was requested.
-    int w = 0, h = 0;
-    bk_window_size(&w, &h);
-    REQUIRE(w == 64);
-    REQUIRE(h == 64);
+    i32 width = 0, height = 0;
+    bk_window_size(&width, &height);
+    REQUIRE(width == 64);
+    REQUIRE(height == 64);
     return BK_CONTINUE;
 }
 
@@ -80,8 +80,8 @@ static void test_render(void *state, const BK_FrameInfo *f) {
 int main(int argc, char **argv) {
     BK_AppDesc desc = {
         .window = {.title = "test_gfx_resize",
-                   .w = 64,
-                   .h = 64,
+                   .width = 64,
+                   .height = 64,
                    .resizable = true,
                    .depth_stencil = true},
         .time = {.tick_hz = 60},

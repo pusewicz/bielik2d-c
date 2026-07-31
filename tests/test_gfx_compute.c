@@ -22,7 +22,7 @@ static SDL_GPUDevice *s_create_device(void) {
     return device;
 }
 
-static void *s_load_shader_file(const char *relative_path, size_t *out_size) {
+static void *s_load_shader_file(const char *relative_path, usize *out_size) {
     const char *base_path = SDL_GetBasePath();
     REQUIRE(base_path != nullptr);
 
@@ -67,9 +67,9 @@ static void test_create_and_destroy_compute_pipeline_succeeds(void) {
 
 static void test_destroy_null_is_noop(void) { bk_gfx_compute_pipeline_destroy(nullptr); }
 
-static void s_check_pixel(const uint8_t *pixels, int width, int x, int y, uint8_t r, uint8_t g,
-                          uint8_t b, uint8_t a, int tolerance) {
-    size_t i = ((size_t)y * (size_t)width + (size_t)x) * 4;
+static void s_check_pixel(const u8 *pixels, int width, int x, int y, u8 r, u8 g, u8 b, u8 a,
+                          int tolerance) {
+    usize i = ((usize)y * (usize)width + (usize)x) * 4;
     REQUIRE(abs((int)pixels[i + 0] - (int)r) <= tolerance);
     REQUIRE(abs((int)pixels[i + 1] - (int)g) <= tolerance);
     REQUIRE(abs((int)pixels[i + 2] - (int)b) <= tolerance);
@@ -93,7 +93,7 @@ static void test_dispatch_produces_expected_gradient(void) {
 
     // Params: base_color = (0.2, 0.3, 0.4, 1.0), scale = (0.5, 0.4, 0.0, 0.0). std140
     // layout: two vec4s, 16-byte aligned, no padding needed.
-    float params[8] = {0.2f, 0.3f, 0.4f, 1.0f, 0.5f, 0.4f, 0.0f, 0.0f};
+    f32 params[8] = {0.2f, 0.3f, 0.4f, 1.0f, 0.5f, 0.4f, 0.0f, 0.0f};
     BK_GfxBuffer *params_buffer =
         bk_gfx_buffer_create(device, BK_GFX_BUFFER_USAGE_STORAGE_READ, sizeof params);
     REQUIRE(params_buffer != nullptr);
@@ -122,7 +122,7 @@ static void test_dispatch_produces_expected_gradient(void) {
     void *pixels_buf = bk__gfx_download_texture(device, cmd, bk__gfx_texture_handle(target), size,
                                                 size, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM);
     REQUIRE(pixels_buf != nullptr);
-    const uint8_t *pixels = (const uint8_t *)pixels_buf;
+    const u8 *pixels = (const u8 *)pixels_buf;
 
     // uv = coord / (size - 1). color = base_color + scale * vec4(uv, 0, 0).
     // (0,0): uv=(0,0) -> (0.2, 0.3, 0.4, 1.0) -> (51, 77, 102, 255).

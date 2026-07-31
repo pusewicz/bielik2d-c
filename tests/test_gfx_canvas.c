@@ -34,10 +34,10 @@ static void test_create_canvas_without_depth_succeeds(void) {
         bk_gfx_canvas_create(device, &(BK_GfxCanvasDesc){.width = 64, .height = 32});
     REQUIRE(canvas != nullptr);
 
-    int w = 0, h = 0;
-    bk_gfx_canvas_size(canvas, &w, &h);
-    REQUIRE_EQ_U64((uint64_t)w, 64);
-    REQUIRE_EQ_U64((uint64_t)h, 32);
+    i32 width = 0, height = 0;
+    bk_gfx_canvas_size(canvas, &width, &height);
+    REQUIRE_EQ_U64((uint64_t)width, 64);
+    REQUIRE_EQ_U64((uint64_t)height, 32);
 
     BK_GfxTexture *color = bk_gfx_canvas_texture(canvas);
     REQUIRE(color != nullptr);

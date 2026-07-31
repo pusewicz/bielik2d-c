@@ -1,4 +1,5 @@
 #include "bk_test.h"
+#include <SDL3/SDL.h>
 #include <bielik/bk_app.h>
 #include <bielik/bk_gfx.h>
 #include <stdio.h>
@@ -22,9 +23,9 @@ static BK_Result test_init(void **state, int argc, char **argv) {
     return BK_CONTINUE;
 }
 
-static BK_Result test_update(void *state, const BK_FrameInfo *f) {
+static BK_Result test_update(void *state, const BK_FrameInfo *frame) {
     (void)state;
-    (void)f;
+    (void)frame;
     s_update_calls++;
     if (s_update_calls >= 3) {
         return BK_DONE;
@@ -32,9 +33,9 @@ static BK_Result test_update(void *state, const BK_FrameInfo *f) {
     return BK_CONTINUE;
 }
 
-static void test_render(void *state, const BK_FrameInfo *f) {
+static void test_render(void *state, const BK_FrameInfo *frame) {
     (void)state;
-    (void)f;
+    (void)frame;
     bk_gfx_set_clear_color((BK_Color){.r = 0.2f, .g = 0.4f, .b = 0.6f, .a = 1.0f});
     // Request on the first render call reached, whichever tick that lands on --
     // robust to fixed-tick batching (multiple ticks can run before one render call).
@@ -46,7 +47,7 @@ static void test_render(void *state, const BK_FrameInfo *f) {
 
 int main(int argc, char **argv) {
     BK_AppDesc desc = {
-        .window = {.title = "test_gfx_capture", .w = 64, .h = 64},
+        .window = {.title = "test_gfx_capture", .width = 64, .height = 64},
         .time = {.tick_hz = 60},
         .init = test_init,
         .update = test_update,
@@ -65,9 +66,9 @@ int main(int argc, char **argv) {
     REQUIRE(rgba != nullptr);
     SDL_DestroySurface(loaded);
 
-    const uint8_t *pixels = (const uint8_t *)rgba->pixels;
+    const u8 *pixels = (const u8 *)rgba->pixels;
     constexpr int tolerance = 5;
-    size_t center = ((size_t)(rgba->h / 2) * (size_t)rgba->pitch) + (size_t)(rgba->w / 2) * 4;
+    usize center = ((usize)(rgba->h / 2) * (usize)rgba->pitch) + (usize)(rgba->w / 2) * 4;
     REQUIRE(abs((int)pixels[center + 0] - 51) <= tolerance);  // R = 0.2 * 255
     REQUIRE(abs((int)pixels[center + 1] - 102) <= tolerance); // G = 0.4 * 255
     REQUIRE(abs((int)pixels[center + 2] - 153) <= tolerance); // B = 0.6 * 255

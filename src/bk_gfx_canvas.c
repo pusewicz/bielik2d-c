@@ -26,8 +26,8 @@ struct BK_GfxCanvas {
     BK_GfxTexture *color;
     BK_GfxTexture *depth; // nullptr if the canvas has no depth-stencil attachment
     SDL_GPUFilter blit_filter;
-    int width;
-    int height;
+    i32 width;
+    i32 height;
 };
 
 BK_GfxCanvas *bk_gfx_canvas_create(SDL_GPUDevice *device, const BK_GfxCanvasDesc *desc) {
@@ -85,7 +85,7 @@ BK_GfxTexture *bk_gfx_canvas_texture(BK_GfxCanvas *canvas) {
     return canvas->color;
 }
 
-void bk_gfx_canvas_size(const BK_GfxCanvas *canvas, int *out_width, int *out_height) {
+void bk_gfx_canvas_size(const BK_GfxCanvas *canvas, i32 *out_width, i32 *out_height) {
     BK_ASSERT(canvas != nullptr);
     if (out_width != nullptr) {
         *out_width = canvas->width;

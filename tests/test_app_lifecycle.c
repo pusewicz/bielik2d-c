@@ -13,27 +13,27 @@ static BK_Result test_init(void **state, int argc, char **argv) {
     return BK_CONTINUE;
 }
 
-static BK_Result test_update(void *state, const BK_FrameInfo *f) {
+static BK_Result test_update(void *state, const BK_FrameInfo *frame) {
     (void)state;
     s_update_calls++;
-    REQUIRE_EQ_U64(f->tick, (uint64_t)s_update_calls);
-    REQUIRE_NEAR(f->dt, 1.0 / 60.0, 1e-9);
-    REQUIRE(f->alpha == 0.0);
-    REQUIRE(f->real_time >= 0.0);
+    REQUIRE_EQ_U64(frame->tick, (u64)s_update_calls);
+    REQUIRE_NEAR(frame->dt, 1.0 / 60.0, 1e-9);
+    REQUIRE(frame->alpha == 0.0);
+    REQUIRE(frame->real_time >= 0.0);
     if (s_update_calls >= 3) {
         return BK_DONE;
     }
     return BK_CONTINUE;
 }
 
-static void test_render(void *state, const BK_FrameInfo *f) {
+static void test_render(void *state, const BK_FrameInfo *frame) {
     (void)state;
-    (void)f;
+    (void)frame;
 }
 
 int main(int argc, char **argv) {
     BK_AppDesc desc = {
-        .window = {.title = "test_app_lifecycle", .w = 64, .h = 64},
+        .window = {.title = "test_app_lifecycle", .width = 64, .height = 64},
         .time = {.tick_hz = 60},
         .init = test_init,
         .update = test_update,

@@ -1,5 +1,11 @@
 add_library(bk_warnings INTERFACE)
 target_compile_options(bk_warnings INTERFACE
+    # The Visual Studio ClangCL toolset enables a much broader warning set than plain
+    # clang's defaults (things like -Wpre-c23-compat, -Wpadded, -Wreserved-macro-
+    # identifier) -- -Wno-everything resets that back to a clean slate before this
+    # project's own warnings are enabled below, so behavior matches plain clang/
+    # AppleClang on Linux/macOS (a no-op there, since -Weverything isn't implicitly on).
+    -Wno-everything
     -Wall -Wextra -Wshadow -Wstrict-prototypes -Wvla
 )
 

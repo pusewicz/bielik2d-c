@@ -7,7 +7,6 @@
 #include <SDL3/SDL_main.h>
 #include <bielik/bk_app.h>
 #include <bielik/bk_time.h>
-#include <stddef.h>
 
 #define BK_STR_(x) #x
 #define BK_STR(x) BK_STR_(x)
@@ -20,18 +19,18 @@ const char *bk_version_string(void) {
     return BK_STR(BK_VERSION_MAJOR) "." BK_STR(BK_VERSION_MINOR) "." BK_STR(BK_VERSION_PATCH);
 }
 
-void *bk__alloc(size_t size) { return SDL_malloc(size); }
+void *bk__alloc(usize size) { return SDL_malloc(size); }
 
-void *bk__realloc(void *ptr, size_t size) { return SDL_realloc(ptr, size); }
+void *bk__realloc(void *ptr, usize size) { return SDL_realloc(ptr, size); }
 
 void bk__free(void *ptr) { SDL_free(ptr); }
 
-static constexpr size_t s_arena_default_capacity = 4 * 1024 * 1024;
+static constexpr usize s_arena_default_capacity = 4 * 1024 * 1024;
 
 static struct {
     unsigned char *base;
-    size_t capacity;
-    size_t used;
+    usize capacity;
+    usize used;
 } s_frame_arena;
 
 void bk__arena_reset(void) { s_frame_arena.used = 0; }
@@ -45,7 +44,7 @@ void bk__arena_free(void) {
     }
 }
 
-void *bk_frame_alloc(size_t size, size_t align) {
+void *bk_frame_alloc(usize size, usize align) {
     if (s_frame_arena.base == nullptr) {
         unsigned char *base = bk__alloc(s_arena_default_capacity);
         BK_ASSERT(base != nullptr);
@@ -63,9 +62,9 @@ void *bk_frame_alloc(size_t size, size_t align) {
         BK_ASSERT((align & (align - 1)) == 0);
     }
 
-    size_t worst_case = s_frame_arena.used + (align - 1) + size;
+    usize worst_case = s_frame_arena.used + (align - 1) + size;
     if (worst_case > s_frame_arena.capacity) {
-        size_t new_capacity = s_frame_arena.capacity;
+        usize new_capacity = s_frame_arena.capacity;
         while (new_capacity < worst_case) {
             new_capacity *= 2;
         }
@@ -82,7 +81,7 @@ void *bk_frame_alloc(size_t size, size_t align) {
     uintptr_t base_addr = (uintptr_t)s_frame_arena.base;
     uintptr_t cursor_addr = base_addr + s_frame_arena.used;
     uintptr_t aligned_addr = (cursor_addr + (align - 1)) & ~(uintptr_t)(align - 1);
-    size_t aligned_offset = (size_t)(aligned_addr - base_addr);
+    usize aligned_offset = (usize)(aligned_addr - base_addr);
 
     s_frame_arena.used = aligned_offset + size;
     return s_frame_arena.base + aligned_offset;
@@ -99,9 +98,10 @@ typedef struct BK_AppState {
     BK_Clock clock;
     SDL_Window *window;
     SDL_GPUDevice *gpu;
-    uint64_t boot_now_ns;
-    int window_w;
-    int window_h;
+    u64 boot_now_ns;
+    i32 window_w;
+    i32 window_h;
+    bool booted; // true once bk__boot reaches a state desc.init had a chance to populate
 } BK_AppState;
 
 static BK_AppState s_app;
@@ -112,7 +112,7 @@ static BK_AppState s_app;
 // SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED -- idempotent and cheap enough to run on
 // either event regardless of which one a given platform actually fires.
 static void s_refresh_window_size(void) {
-    int w = 0, h = 0;
+    i32 w = 0, h = 0;
     SDL_GetWindowSizeInPixels(s_app.window, &w, &h);
     s_app.window_w = w > 0 ? w : 1;
     s_app.window_h = h > 0 ? h : 1;
@@ -132,11 +132,11 @@ SDL_AppResult bk__boot(BK_AppDesc (*get_desc)(void), void **appstate, int argc, 
     if (s_app.desc.window.title == nullptr) {
         s_app.desc.window.title = "Bielik2D";
     }
-    if (s_app.desc.window.w == 0) {
-        s_app.desc.window.w = 1280;
+    if (s_app.desc.window.width == 0) {
+        s_app.desc.window.width = 1280;
     }
-    if (s_app.desc.window.h == 0) {
-        s_app.desc.window.h = 720;
+    if (s_app.desc.window.height == 0) {
+        s_app.desc.window.height = 720;
     }
     if (s_app.desc.time.max_ticks_per_frame == 0) {
         s_app.desc.time.max_ticks_per_frame = 8;
@@ -158,8 +158,8 @@ SDL_AppResult bk__boot(BK_AppDesc (*get_desc)(void), void **appstate, int argc, 
     if (s_app.desc.window.fullscreen) {
         window_flags |= SDL_WINDOW_FULLSCREEN;
     }
-    s_app.window = SDL_CreateWindow(s_app.desc.window.title, s_app.desc.window.w,
-                                    s_app.desc.window.h, window_flags);
+    s_app.window = SDL_CreateWindow(s_app.desc.window.title, s_app.desc.window.width,
+                                    s_app.desc.window.height, window_flags);
     if (!s_app.window) {
         char msg[256];
         SDL_snprintf(msg, sizeof msg, "SDL_CreateWindow failed: %s", SDL_GetError());
@@ -205,54 +205,56 @@ SDL_AppResult bk__boot(BK_AppDesc (*get_desc)(void), void **appstate, int argc, 
     bk__task_set_desc(&s_app.desc.tasks);
 
     *appstate = s_app.desc.userdata;
-    BK_Result r = BK_CONTINUE;
+    BK_Result result = BK_CONTINUE;
     if (s_app.desc.init) {
-        r = s_app.desc.init(appstate, argc, argv);
+        result = s_app.desc.init(appstate, argc, argv);
     }
-    if (r == BK_DONE) {
+    if (result == BK_DONE) {
+        s_app.booted = true;
         return (SDL_AppResult)BK_DONE;
     }
-    if (r != BK_CONTINUE) {
+    if (result != BK_CONTINUE) {
         return s_boot_fail("app init callback failed");
     }
 
+    s_app.booted = true;
     return SDL_APP_CONTINUE;
 }
 
 SDL_AppResult bk__iterate(void *appstate) {
-    uint64_t now = SDL_GetTicksNS();
+    u64 now = SDL_GetTicksNS();
     BK_ClockFrame cf = bk_clock_advance(&s_app.clock, now);
 
     BK_FrameInfo info = {0};
     for (int i = 0; i < cf.ticks; i++) {
         // TODO(phase4): input snapshot slot — bk_input__begin_tick() runs here
-        uint64_t tick_i = s_app.clock.tick - (uint64_t)cf.ticks + (uint64_t)i + 1;
+        u64 tick_i = s_app.clock.tick - (u64)cf.ticks + (u64)i + 1;
         info = (BK_FrameInfo){
             .tick = tick_i,
-            .sim_time = (double)tick_i * bk_clock_fixed_dt(&s_app.clock),
-            .real_time = (double)(now - s_app.boot_now_ns) / 1e9,
+            .sim_time = (f64)tick_i * bk_clock_fixed_dt(&s_app.clock),
+            .real_time = (f64)(now - s_app.boot_now_ns) / 1e9,
             .dt = s_app.desc.time.tick_hz != 0 ? bk_clock_fixed_dt(&s_app.clock) : cf.frame_dt,
             .alpha = 0.0,
         };
 
         if (s_app.desc.update) {
-            BK_Result r = s_app.desc.update(appstate, &info);
-            if (r != BK_CONTINUE) {
-                return (SDL_AppResult)r;
+            BK_Result result = s_app.desc.update(appstate, &info);
+            if (result != BK_CONTINUE) {
+                return (SDL_AppResult)result;
             }
         }
         // TODO(phase8): physics slot — bk_physics__step() runs here iff bk_physics_init was called
         if (s_app.desc.post_update) {
-            BK_Result r = s_app.desc.post_update(appstate, &info);
-            if (r != BK_CONTINUE) {
-                return (SDL_AppResult)r;
+            BK_Result result = s_app.desc.post_update(appstate, &info);
+            if (result != BK_CONTINUE) {
+                return (SDL_AppResult)result;
             }
         }
     }
 
     info.tick = s_app.clock.tick;
     info.sim_time = bk_clock_sim_time(&s_app.clock);
-    info.real_time = (double)(now - s_app.boot_now_ns) / 1e9;
+    info.real_time = (f64)(now - s_app.boot_now_ns) / 1e9;
     info.dt = cf.frame_dt;
     info.alpha = cf.alpha;
 
@@ -276,8 +278,8 @@ SDL_AppResult bk__event(void *appstate, SDL_Event *event) {
     }
 
     if (s_app.desc.event) {
-        BK_Result r = s_app.desc.event(appstate, event);
-        return (SDL_AppResult)r;
+        BK_Result result = s_app.desc.event(appstate, event);
+        return (SDL_AppResult)result;
     }
     if (event->type == SDL_EVENT_QUIT) {
         return SDL_APP_SUCCESS;
@@ -286,7 +288,12 @@ SDL_AppResult bk__event(void *appstate, SDL_Event *event) {
 }
 
 void bk__shutdown(void *appstate, SDL_AppResult result) {
-    if (s_app.desc.quit) {
+    // Skip quit if boot never reached the point where desc.init could populate
+    // *appstate -- e.g. init itself returned BK_FAIL, or an earlier boot step
+    // (SDL_Init, window/GPU creation) failed. appstate is otherwise whatever
+    // it was left at (typically nullptr), which every sample's quit callback
+    // unconditionally dereferences.
+    if (s_app.booted && s_app.desc.quit) {
         s_app.desc.quit(appstate, (BK_Result)result);
     }
     bk__arena_free();
@@ -306,7 +313,7 @@ SDL_Window *bk_window(void) { return s_app.window; }
 
 SDL_GPUDevice *bk_gpu(void) { return s_app.gpu; }
 
-void bk_window_size(int *out_w, int *out_h) {
+void bk_window_size(i32 *out_w, i32 *out_h) {
     if (out_w != nullptr) {
         *out_w = s_app.window_w;
     }
@@ -316,8 +323,8 @@ void bk_window_size(int *out_w, int *out_h) {
 }
 
 void bk_quit(void) {
-    SDL_Event e = {.type = SDL_EVENT_QUIT};
-    SDL_PushEvent(&e);
+    SDL_Event event = {.type = SDL_EVENT_QUIT};
+    SDL_PushEvent(&event);
 }
 
 static BK_AppDesc s_run_desc;

@@ -10,8 +10,8 @@ struct BK_GfxTexture {
     SDL_GPUTexture *handle;
     BK_GfxTextureUsage usage;
     SDL_GPUTextureFormat format;
-    Uint32 width;
-    Uint32 height;
+    u32 width;
+    u32 height;
 };
 
 struct BK_GfxSampler {
@@ -19,8 +19,8 @@ struct BK_GfxSampler {
     SDL_GPUSampler *handle;
 };
 
-BK_GfxTexture *bk_gfx_texture_create(SDL_GPUDevice *device, BK_GfxTextureUsage usage, int width,
-                                     int height) {
+BK_GfxTexture *bk_gfx_texture_create(SDL_GPUDevice *device, BK_GfxTextureUsage usage, i32 width,
+                                     i32 height) {
     BK_ASSERT(device != nullptr);
     BK_ASSERT(width > 0);
     BK_ASSERT(height > 0);
@@ -68,8 +68,8 @@ BK_GfxTexture *bk_gfx_texture_create(SDL_GPUDevice *device, BK_GfxTextureUsage u
     texture->handle = handle;
     texture->usage = usage;
     texture->format = format;
-    texture->width = (Uint32)width;
-    texture->height = (Uint32)height;
+    texture->width = (u32)width;
+    texture->height = (u32)height;
     return texture;
 }
 
@@ -78,7 +78,7 @@ bool bk_gfx_texture_upload(BK_GfxTexture *texture, const void *rgba_pixels) {
     BK_ASSERT(rgba_pixels != nullptr);
     BK_ASSERT(texture->usage == BK_GFX_TEXTURE_USAGE_SAMPLER);
 
-    Uint32 byte_size = texture->width * texture->height * 4;
+    u32 byte_size = texture->width * texture->height * 4;
 
     SDL_GPUTransferBufferCreateInfo transfer_info = {
         .usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,

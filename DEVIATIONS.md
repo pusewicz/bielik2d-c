@@ -357,3 +357,41 @@ verbatim `src/bk_gfx_pipeline.c` lists
 putting `bk_app_internal.h` first, and also reflows a few multi-line function
 signatures' continuation-line indentation. Ran `clang-format -i` on the file;
 no type, field, or function body changed.
+
+## PLAN.md §6.1's type spellings and parameter names are superseded by the fundamental-types migration (PLAN.md:164-241)
+
+`PLAN.md` §6.1 is `CLAUDE.md`'s named "normative spec for the public API," but its
+code listings still show the pre-migration API: `BK_WindowDesc { int w, h; }`,
+`BK_Clock *c`/`const BK_FrameInfo *f`/`const SDL_Event *e` parameter names,
+`uint64_t tick`/`double sim_time` field types in `BK_FrameInfo`, `int32_t`/`uint32_t`
+in the `BK_TaskFn` typedef, and `size_t size, size_t align` in `bk_frame_alloc`. The
+fundamental-types migration (`docs/superpowers/specs/2026-07-30-fundamental-types-design.md`,
+`docs/superpowers/plans/2026-07-31-fundamental-types-plan.md`) superseded every one of
+these: `include/bielik/bk_types.h`'s short aliases replaced the `stdint.h`/`float`/
+`double`/`size_t` spellings project-wide (`u64 tick`, `f64 sim_time`, `i32`/`u32` in
+`BK_TaskFn`, `usize size, usize align` in `bk_frame_alloc`), and the identifier
+readability sweep in the same effort renamed the single-letter parameters/fields
+`PLAN.md` §6.1 still shows (`BK_Clock *clock`, `const BK_FrameInfo *frame`, `const
+SDL_Event *event`, `BK_WindowDesc.width`/`.height`). Per this file's own convention,
+`PLAN.md` §6.1's text is left as the frozen historical record of Phase 0/1's original
+design rather than rewritten to match — this entry, plus the two documents above, are
+the source of truth for the current header shape. Verified against
+`include/bielik/bk_app.h`, `bk_time.h`, `bk_task.h`, and `bk_gfx.h` as they stand
+today, not re-derived from the stale listing.
+
+## bk_app.h trailing-comment column (fundamental-types-plan task-2-brief.md)
+
+Same category as the `bk_app.h`/`bk_app.c` hand-aligned-spacing entry above,
+recurring because the fundamental-types migration shortens several field
+types (`uint64_t tick` -> `u64 tick`, `double sim_time` -> `f64 sim_time`),
+which shifts where `clang-format`'s trailing-comment column lands.
+`clang-format --dry-run --Werror` flagged one line in `BK_FrameInfo`
+(`u64 tick;` needed two more spaces before its comment to match the
+realigned column). Ran `clang-format -i` on all four of this task's files;
+the only output change was that one whitespace-only comment-column shift in
+`bk_app.h` — no include reordering, and no type, field, or function body
+changed anywhere. Note the same conflict is not yet resolved upstream:
+`include/bielik/bk_time.h` and `include/bielik/bk_types.h`, both merged in
+the prior (Task 1) fundamental-types commit, still fail
+`clang-format --dry-run --Werror` for the same reason and were left as-is
+since they're outside this task's file list.

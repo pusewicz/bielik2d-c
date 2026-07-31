@@ -1,4 +1,5 @@
 #pragma once
+#include <bielik/bk_types.h>
 
 typedef struct BK_GfxPipeline BK_GfxPipeline;
 typedef struct BK_GfxBuffer BK_GfxBuffer;
@@ -8,7 +9,7 @@ typedef struct BK_GfxCanvas BK_GfxCanvas;
 
 /// RGBA color.
 typedef struct BK_Color {
-    float r, g, b, a;
+    f32 r, g, b, a;
 } BK_Color;
 
 /// Sets the color the swapchain is cleared to each frame.
@@ -20,7 +21,7 @@ void bk_gfx_bind_pipeline(BK_GfxPipeline *pipeline);
 
 /// Issues a draw of vertex_count vertices using the most recently bound pipeline.
 /// Must be called after bk_gfx_bind_pipeline in the same frame.
-void bk_gfx_draw(int vertex_count);
+void bk_gfx_draw(i32 vertex_count);
 
 /// Binds a vertex buffer to slot 0 for the next draw call this frame. The binding is
 /// consumed (cleared) by the frame's flush.
@@ -39,7 +40,7 @@ void bk_gfx_bind_texture(BK_GfxTexture *texture, BK_GfxSampler *sampler);
 /// pipeline, vertex buffer, and index buffer. Must be called after
 /// bk_gfx_bind_pipeline/bk_gfx_bind_vertex_buffer/bk_gfx_bind_index_buffer in the
 /// same frame.
-void bk_gfx_draw_indexed(int index_count);
+void bk_gfx_draw_indexed(i32 index_count);
 
 /// Renders this frame into canvas instead of the swapchain, then blits the canvas
 /// onto the swapchain (stretched to fit, filtered per the canvas's blit_filter) once

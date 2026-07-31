@@ -158,11 +158,11 @@ static BK_Result app_init(void **state, int argc, char **argv) {
 }
 
 // update: supports --frames N for CI smoke testing, same as 01_clear/02_ticks/03_triangle.
-static BK_Result app_update(void *state, const BK_FrameInfo *f) {
-    (void)f;
-    AppState *s = state;
-    s->frame_count++;
-    if (s->frame_limit > 0 && s->frame_count >= s->frame_limit) {
+static BK_Result app_update(void *state, const BK_FrameInfo *frame) {
+    (void)frame;
+    AppState *app = state;
+    app->frame_count++;
+    if (app->frame_limit > 0 && app->frame_count >= app->frame_limit) {
         return BK_DONE;
     }
     return BK_CONTINUE;
@@ -171,46 +171,46 @@ static BK_Result app_update(void *state, const BK_FrameInfo *f) {
 // render: bind the canvas, pipeline, and vertex buffer, then draw both triangles as
 // one 6-vertex call. The framework's frame pipeline renders into the canvas, blits it
 // onto the swapchain, and presents right after render returns.
-static void app_render(void *state, const BK_FrameInfo *f) {
-    (void)f;
-    AppState *s = state;
-    bk_gfx_bind_canvas(s->canvas);
-    bk_gfx_bind_pipeline(s->pipeline);
-    bk_gfx_bind_vertex_buffer(s->vertex_buffer);
+static void app_render(void *state, const BK_FrameInfo *frame) {
+    (void)frame;
+    AppState *app = state;
+    bk_gfx_bind_canvas(app->canvas);
+    bk_gfx_bind_pipeline(app->pipeline);
+    bk_gfx_bind_vertex_buffer(app->vertex_buffer);
     bk_gfx_draw(6);
 }
 
-static BK_Result app_event(void *state, const SDL_Event *e) {
+static BK_Result app_event(void *state, const SDL_Event *event) {
     (void)state;
-    if (e->type == SDL_EVENT_QUIT) {
+    if (event->type == SDL_EVENT_QUIT) {
         return BK_DONE;
     }
-    if (e->type == SDL_EVENT_KEY_DOWN && e->key.key == SDLK_ESCAPE) {
+    if (event->type == SDL_EVENT_KEY_DOWN && event->key.key == SDLK_ESCAPE) {
         return BK_DONE;
     }
-    if (e->type == SDL_EVENT_WINDOW_RESIZED) {
+    if (event->type == SDL_EVENT_WINDOW_RESIZED) {
         // bk_window_size is already current here -- the framework refreshes it
         // before any app .event handler runs. The canvas stays pinned at
         // CANVAS_W x CANVAS_H regardless; only the blit's destination changes.
-        int w = 0, h = 0;
-        bk_window_size(&w, &h);
-        SDL_Log("BK: window resized to %dx%d", w, h);
+        i32 width = 0, height = 0;
+        bk_window_size(&width, &height);
+        SDL_Log("BK: window resized to %dx%d", width, height);
     }
     return BK_CONTINUE;
 }
 
 static void app_quit(void *state, BK_Result result) {
     (void)result;
-    AppState *s = state;
-    bk_gfx_buffer_destroy(s->vertex_buffer);
-    bk_gfx_pipeline_destroy(s->pipeline);
-    bk_gfx_canvas_destroy(s->canvas);
+    AppState *app = state;
+    bk_gfx_buffer_destroy(app->vertex_buffer);
+    bk_gfx_pipeline_destroy(app->pipeline);
+    bk_gfx_canvas_destroy(app->canvas);
 }
 
 #ifdef BK_MAIN_HANDLED
 int main(int argc, char **argv) {
     BK_AppDesc desc = {
-        .window = {.title = "06_canvas", .w = 960, .h = 540, .resizable = true},
+        .window = {.title = "06_canvas", .width = 960, .height = 540, .resizable = true},
         .init = app_init,
         .update = app_update,
         .render = app_render,
@@ -220,6 +220,6 @@ int main(int argc, char **argv) {
     return bk_run(&desc, argc, argv);
 }
 #else
-BK_APP(.window = {.title = "06_canvas", .w = 960, .h = 540, .resizable = true}, .init = app_init,
+BK_APP(.window = {.title = "06_canvas", .width = 960, .height = 540, .resizable = true}, .init = app_init,
        .update = app_update, .render = app_render, .event = app_event, .quit = app_quit, )
 #endif

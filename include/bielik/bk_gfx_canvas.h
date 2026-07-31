@@ -20,7 +20,7 @@ SDL_GPUTextureFormat bk_gfx_depth_stencil_format(SDL_GPUDevice *device);
 typedef struct BK_GfxCanvas BK_GfxCanvas;
 
 typedef struct BK_GfxCanvasDesc {
-    int width, height;
+    i32 width, height;
     bool depth_stencil;       // allocate a depth-stencil attachment
     BK_GfxFilter blit_filter; // filter used when blitting to the swapchain (0 == NEAREST)
 } BK_GfxCanvasDesc;
@@ -39,4 +39,4 @@ void bk_gfx_canvas_destroy(BK_GfxCanvas *canvas);
 BK_GfxTexture *bk_gfx_canvas_texture(BK_GfxCanvas *canvas);
 
 /// Writes the canvas's width/height in pixels to *out_width/*out_height.
-void bk_gfx_canvas_size(const BK_GfxCanvas *canvas, int *out_width, int *out_height);
+void bk_gfx_canvas_size(const BK_GfxCanvas *canvas, i32 *out_width, i32 *out_height);

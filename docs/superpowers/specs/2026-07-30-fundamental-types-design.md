@@ -165,23 +165,50 @@ where the letter is itself the domain-standard token.
   parameters in test pixel-comparison helpers), matching `SDL_FColor` and every other
   graphics API's convention field-for-field
 
-**Renamed — known sites (implementation plan confirms full coverage):**
-- `BK_Clock *c` → `BK_Clock *clock` — `bk_time.h`/`bk_time.c` (`bk_clock_init`,
-  `bk_clock_advance`, `bk_clock_fixed_dt`, `bk_clock_sim_time`) and `tests/test_time.c`.
-  `-Wshadow -Werror` is already enabled project-wide; `clock()` from `<time.h>` isn't
-  transitively included by any current header, but the implementation step verifies
-  this by building with `-DBK_WERROR=ON` rather than assuming it.
-- `const BK_FrameInfo *f` → `const BK_FrameInfo *frame` — `bk_app.h`'s `update`/
-  `fixed_update`/`render` callback signatures and every sample/test implementing them
-  (`01_clear` .. `05_compute`, `test_app_lifecycle.c`, `test_gfx_capture.c`).
-- `const SDL_Event *e` → `const SDL_Event *event` — `bk_app.h`'s `event` callback and
-  its sample implementations.
-- `BK_Result r` → `BK_Result result` — locals in `bk_app.c`'s frame loop.
-- Other meaningless single-letter locals (e.g. `float t` in `samples/01_clear/main.c`,
-  `size_t n` in `tests/test_time.c`) → renamed to what they hold (`elapsed`, `count`,
-  etc.); exact names are an implementation-plan-level decision, not a spec-level one.
+**Correction:** an earlier draft of this section claimed width/height were "already
+spelled out in the public API, so not an issue." That's true for
+`bk_gfx_texture_create`'s `int width, int height` params, but false for
+`BK_WindowDesc { int w, h; }` (`bk_app.h`) — a genuine single-letter pair with no
+domain-token exemption. It's in scope; the implementation plan enumerates every call
+site.
 
-Scope matches §5: public headers, sources, internal headers, tests, samples.
+**Renamed — known sites** (full inventory; the implementation plan carries exact
+before/after code per file, not a re-derivation of this list):
+- `BK_Clock *c` → `BK_Clock *clock` — `bk_time.h`/`bk_time.c` (`bk_clock_init`,
+  `bk_clock_advance`, `bk_clock_fixed_dt`, `bk_clock_sim_time`) and every `BK_Clock`
+  local in `tests/test_time.c` (`c`, `c2`, `vc`). `-Wshadow -Werror` is already enabled
+  project-wide; `clock()` from `<time.h>` isn't transitively included by any current
+  header, but this is verified empirically as the implementation plan's first task
+  (a deliberate spike, since six other tasks assume the answer) by building with
+  `-DBK_WERROR=ON`, not assumed.
+- `const BK_FrameInfo *f` → `const BK_FrameInfo *frame` — `bk_app.h`'s `update`/
+  `post_update`/`render` callback signatures and every sample/test implementing them
+  (`01_clear` .. `05_compute`, `test_app_lifecycle.c`, `test_gfx_capture.c`). Also
+  covers bare `BK_ClockFrame f` locals in `tests/test_time.c` (there named for the
+  clock-advance result, not `BK_FrameInfo`, but the same single-letter problem).
+- `const SDL_Event *e` → `const SDL_Event *event` — `bk_app.h`'s `event` callback and
+  its five sample implementations.
+- `BK_Result r` → `BK_Result result` — locals in `bk_app.c`'s frame loop
+  (`bk__boot`, `bk__iterate`, `bk__event`).
+- `BK_Color c` → renamed to what it holds at each site (e.g. `color`) — a local in
+  `bk_gfx.c`'s `bk__gfx_flush` and in every `tests/test_gfx.c` test function that reads
+  it back via `bk__gfx_get_clear_color`.
+- `AppState *s` → `AppState *app` — the per-callback local in all five samples
+  (`s = state;` inside `app_update`/`app_render`/`app_event`/`app_quit`). Does not
+  touch the `s_state`/`s_` file-static prefix convention, which is unrelated and
+  already correct.
+- `BK_WindowDesc.w`/`.h` → `.width`/`.height` — `bk_app.h`'s struct definition,
+  `bk_app.c`'s `bk__boot` (every `s_app.desc.window.w`/`.h` read and the
+  `SDL_CreateWindow` call site), and the two designated-initializer call sites
+  (`tests/test_app_lifecycle.c`'s `.w = 64, .h = 64` and
+  `tests/test_gfx_capture.c`'s `.w = 64, .h = 64`).
+- Other meaningless single-letter locals: `float t` in `samples/01_clear/main.c`
+  (renamed `elapsed`), `size_t n` in `tests/test_time.c` (renamed `count`).
+
+Scope matches §5: public headers, sources, internal headers, tests, samples. Every
+migrated public header also needs `#include <bielik/bk_types.h>` added if it didn't
+already need `<stdint.h>`/`<stddef.h>` for something else — otherwise standalone
+compilation (`test_header_*.c`) fails on the first `u32`/`f32`/etc. it hits.
 
 ## 7. Testing
 
@@ -198,6 +225,25 @@ Scope matches §5: public headers, sources, internal headers, tests, samples.
   at call sites change) both before and after.
 - `ctest --test-dir build --output-on-failure` with `-DBK_WERROR=ON` must be clean,
   including `-Wshadow`, after the identifier renames.
+- **A green build does not prove the migration is complete.** Every alias in
+  `bk_types.h` is a transparent typedef (`u32` *is* `uint32_t` *is* SDL's `Uint32`), so
+  a half-migrated file compiles and passes tests identically to a fully-migrated one.
+  The actual completeness gate is a grep sweep, run as the last implementation task:
+  ```
+  grep -rnE '\b(uint(8|16|32|64)_t|int(8|16|32|64)_t|size_t|ptrdiff_t)\b' include/ src/ tests/ samples/
+  grep -rnE '\bfloat\b|\bdouble\b' include/ src/ tests/ samples/
+  ```
+  Expected surviving matches, and only these: `Uint32` locals at direct SDL_GPU call
+  boundaries (`bk_gfx.c`'s `swap_w`/`swap_h`, `bk__gfx_download_texture`'s
+  `width`/`height` params) — exempted by §5's "direct third-party API types at call
+  sites" rule — and `<stdint.h>` retained solely for the `UINT32_MAX` macro in
+  `tests/test_gfx_buffer.c`. Any other match is an incomplete migration.
+
+  (`bk_gfx_texture.c`'s `struct BK_GfxTexture`'s `width`/`height` fields were
+  originally expected to stay `Uint32` under the same exemption, but Task 7 shipped
+  them as `u32` instead — a deliberate, better call recorded in that task's report,
+  since those fields aren't a direct SDL_GPU call-site type the way `swap_w`/`swap_h`
+  and `bk__gfx_download_texture`'s params are. Not a `Uint32` exemption anymore.)
 
 ## 8. Explicitly out of scope
 
@@ -217,16 +263,32 @@ Scope matches §5: public headers, sources, internal headers, tests, samples.
 `clang-tidy` is the tool for that, and nothing in this repo runs it today (no
 `.clang-tidy`, no CI step).
 
-New `.clang-tidy` at the repo root enables two checks:
+New `.clang-tidy` at the repo root enables one check, deliberately not two:
 
-- `readability-identifier-length` — bans single-letter/short names for variables,
-  parameters, and loop counters, with an `IgnoredVariableNames`/`IgnoredParameterNames`/
-  `IgnoredLoopCounterNames` regex covering the exemptions from §6: `^(i|x|y|r|g|b|a)$`.
+- `readability-identifier-length` — bans single-letter names for variables,
+  parameters, and loop counters, with `MinimumVariableNameLength`,
+  `MinimumParameterNameLength`, and `MinimumLoopCounterNameLength` all set to `2`
+  (the check's own default is `3`, which would also flag legitimate two-letter names
+  already in this codebase — `dt`, `cf`, `f1`/`f2`/`vf`, `p1`/`p2`, `ok` — that §6 never
+  asked to rename). An `IgnoredVariableNames`/`IgnoredParameterNames`/
+  `IgnoredLoopCounterNames` regex of `^(i|x|y|r|g|b|a)$` covers the exemptions from §6.
   This is what keeps the §6 sweep from silently regressing as new code is added.
-- `readability-identifier-naming` — checks the `bk_`/`BK_`/`bk__`/`s_` conventions
-  already documented in `CLAUDE.md`'s Conventions section but never mechanically
-  enforced until now (functions: `bk_` + lower_case; types: `BK_` + CamelCase; enum
-  constants: `BK_` + UPPER_CASE; internal linkage: `bk__`/`s_` prefixes).
+  **Known limitation, accepted rather than engineered around:** the match is purely
+  lexical — a future variable named `r` that has nothing to do with a color channel
+  (e.g. a re-introduced `BK_Result r`) is just as exempt as the legitimate color-channel
+  case, because clang-tidy has no way to distinguish them by meaning. Catching that
+  case is a code-review job, not a tooling job.
+
+`readability-identifier-naming` (the `bk_`/`BK_`/`bk__`/`s_` prefix-convention check)
+was considered and dropped: `bk_types.h`'s bare `i32`/`u32`/`f32`/etc. (§2 — chosen
+deliberately, see §3) directly violate the "types get `BK_` + CamelCase" rule that
+check would enforce, so shipping both means either the check immediately fails CI on
+the very header this effort introduces, or `bk_types.h` needs a standing
+per-file suppression carved out on day one. Per `CLAUDE.md`'s "no speculative
+options," and since the user's ask was specifically about the single-letter problem
+(not the prefix conventions), only `readability-identifier-length` ships now.
+Enforcing the `bk_`/`BK_` conventions mechanically is a reasonable future addition,
+but it's a separate effort with its own exemption design, not a rider on this one.
 
 **Landing plan** (bootstrapped the same way the lavapipe GPU CI step was): a new CI step
 runs `clang-tidy` over the changed sources with `continue-on-error: true`. It reports
@@ -262,3 +324,17 @@ documentation upkeep, not a new convention.
   to this repo and untuned against SDL/Box2D-adjacent glue code, so the lavapipe
   bootstrapping pattern (prove quiet, then remove the escape hatch) applies here too
   rather than risking an immediately-red, unrelated CI gate.
+- `readability-identifier-naming` shipped in an earlier draft of this spec alongside
+  `readability-identifier-length`, then was dropped: it directly contradicts
+  `bk_types.h`'s bare type names (§2/§3), and per "no speculative options" a
+  per-file suppression carved out to route around a check the user didn't ask for
+  isn't worth the complexity. Only the check that enforces what was actually
+  requested (no single-letter identifiers) ships.
+- `readability-identifier-length`'s `Minimum*NameLength` is set to `2`, not left at
+  its default of `3`: the requested rule is "no single-letter names," not "no short
+  names," and the default would flag pre-existing, legitimate two-letter identifiers
+  (`dt`, `cf`, `ok`, etc.) that were never in scope.
+- `bk_time` (the `clock()`/`<time.h>`/`-Wshadow` collision risk named in the "Renamed
+  — known sites" list above) is validated empirically as the implementation plan's
+  first task, not assumed and deferred — six other tasks depend on `clock` being a
+  safe name, so the plan proves it before building on it.

@@ -42,9 +42,9 @@ static void test_upload_in_bounds_succeeds(void) {
     BK_GfxBuffer *buffer = bk_gfx_buffer_create(device, BK_GFX_BUFFER_USAGE_VERTEX, 64);
     REQUIRE(buffer != nullptr);
 
-    uint8_t data[32];
+    u8 data[32];
     for (int i = 0; i < 32; i++) {
-        data[i] = (uint8_t)i;
+        data[i] = (u8)i;
     }
 
     REQUIRE(bk_gfx_buffer_upload(buffer, data, 0, sizeof data));
@@ -59,7 +59,7 @@ static void test_upload_at_offset_succeeds(void) {
     BK_GfxBuffer *buffer = bk_gfx_buffer_create(device, BK_GFX_BUFFER_USAGE_VERTEX, 64);
     REQUIRE(buffer != nullptr);
 
-    uint8_t data[16] = {0};
+    u8 data[16] = {0};
     REQUIRE(bk_gfx_buffer_upload(buffer, data, 32, sizeof data));
 
     bk_gfx_buffer_destroy(buffer);
@@ -72,7 +72,7 @@ static void test_oversized_upload_returns_false(void) {
     BK_GfxBuffer *buffer = bk_gfx_buffer_create(device, BK_GFX_BUFFER_USAGE_VERTEX, 64);
     REQUIRE(buffer != nullptr);
 
-    uint8_t data[8] = {0};
+    u8 data[8] = {0};
 
     // size alone exceeds the buffer.
     REQUIRE(!bk_gfx_buffer_upload(buffer, data, 0, 128));

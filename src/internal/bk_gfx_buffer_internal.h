@@ -10,4 +10,4 @@ SDL_GPUBuffer *bk__gfx_buffer_handle(const BK_GfxBuffer *buffer);
 
 /// Returns the byte size buffer was created with. Framework-internal; test-only
 /// accessor.
-uint32_t bk__gfx_buffer_size(const BK_GfxBuffer *buffer);
+u32 bk__gfx_buffer_size(const BK_GfxBuffer *buffer);
