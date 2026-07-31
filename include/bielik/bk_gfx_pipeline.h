@@ -1,12 +1,11 @@
 #pragma once
 #include <SDL3/SDL_gpu.h>
-#include <stddef.h>
-#include <stdint.h>
+#include <bielik/bk_types.h>
 
 /// One precompiled shader bytecode blob for a single backend format.
 typedef struct BK_GfxShaderVariant {
     const void *code;
-    size_t code_size;
+    usize code_size;
     const char *entry_point;
 } BK_GfxShaderVariant;
 
@@ -19,8 +18,8 @@ typedef struct BK_GfxShaderDesc {
     BK_GfxShaderVariant spirv;
     BK_GfxShaderVariant dxil;
     BK_GfxShaderVariant msl;
-    int num_samplers;
-    int num_uniform_buffers;
+    i32 num_samplers;
+    i32 num_uniform_buffers;
 } BK_GfxShaderDesc;
 
 /// Per-vertex attribute formats supported by pipeline vertex input state.
@@ -34,16 +33,16 @@ typedef enum BK_GfxVertexFormat {
 /// One vertex attribute: which shader input location it feeds, which vertex buffer
 /// slot it reads from, its format, and its byte offset within that slot's stride.
 typedef struct BK_GfxVertexAttribute {
-    uint32_t location;
-    uint32_t buffer_slot;
+    u32 location;
+    u32 buffer_slot;
     BK_GfxVertexFormat format;
-    uint32_t offset;
+    u32 offset;
 } BK_GfxVertexAttribute;
 
 /// One vertex buffer slot's stride, in bytes.
 typedef struct BK_GfxVertexBufferLayout {
-    uint32_t slot;
-    uint32_t pitch;
+    u32 slot;
+    u32 pitch;
 } BK_GfxVertexBufferLayout;
 
 typedef enum BK_GfxPrimitiveType {
@@ -71,9 +70,9 @@ typedef struct BK_GfxPipelineDesc {
     // gl_VertexIndex/SV_VertexID with no bound vertex buffer). Max 8 buffers, 16
     // attributes.
     const BK_GfxVertexBufferLayout *vertex_buffers;
-    int num_vertex_buffers;
+    i32 num_vertex_buffers;
     const BK_GfxVertexAttribute *vertex_attributes;
-    int num_vertex_attributes;
+    i32 num_vertex_attributes;
 
     BK_GfxPrimitiveType primitive_type;
 
@@ -105,11 +104,11 @@ typedef struct BK_GfxComputePipelineDesc {
     BK_GfxShaderVariant spirv;
     BK_GfxShaderVariant dxil;
     BK_GfxShaderVariant msl;
-    int num_readonly_storage_buffers;
-    int num_readwrite_storage_textures;
-    uint32_t threadcount_x;
-    uint32_t threadcount_y;
-    uint32_t threadcount_z;
+    i32 num_readonly_storage_buffers;
+    i32 num_readwrite_storage_textures;
+    u32 threadcount_x;
+    u32 threadcount_y;
+    u32 threadcount_z;
 } BK_GfxComputePipelineDesc;
 
 /// Opaque compute pipeline: a compiled compute shader, bound and dispatched via
@@ -130,12 +129,12 @@ void bk_gfx_compute_pipeline_destroy(BK_GfxComputePipeline *pipeline);
 typedef struct BK_GfxComputeDispatchDesc {
     BK_GfxComputePipeline *pipeline;
     BK_GfxTexture *const *readwrite_textures;
-    int num_readwrite_textures;
+    i32 num_readwrite_textures;
     BK_GfxBuffer *const *readonly_buffers;
-    int num_readonly_buffers;
-    uint32_t groups_x;
-    uint32_t groups_y;
-    uint32_t groups_z;
+    i32 num_readonly_buffers;
+    u32 groups_x;
+    u32 groups_y;
+    u32 groups_z;
 } BK_GfxComputeDispatchDesc;
 
 /// Dispatches a compute pipeline synchronously: acquires its own command buffer,
