@@ -62,7 +62,7 @@ headless/canvas use."*
 typedef struct BK_GfxCanvas BK_GfxCanvas;
 
 typedef struct BK_GfxCanvasDesc {
-    int width, height;
+    i32 width, height;
     bool depth_stencil;        // allocate a depth-stencil attachment
     BK_GfxFilter blit_filter;  // filter used when blitting to the swapchain (0 == NEAREST)
 } BK_GfxCanvasDesc;
@@ -73,7 +73,7 @@ void bk_gfx_canvas_destroy(BK_GfxCanvas *canvas);
 /// The canvas's color attachment, bindable via bk_gfx_bind_texture like any other
 /// sampled texture.
 BK_GfxTexture *bk_gfx_canvas_texture(BK_GfxCanvas *canvas);
-void bk_gfx_canvas_size(const BK_GfxCanvas *canvas, int *out_width, int *out_height);
+void bk_gfx_canvas_size(const BK_GfxCanvas *canvas, i32 *out_width, i32 *out_height);
 
 /// The depth-stencil format this device supports, probed D24_UNORM_S8_UINT ->
 /// D32_FLOAT_S8_UINT -> D16_UNORM. Pipelines drawing into a depth-enabled pass must
@@ -191,7 +191,7 @@ has no equivalent guard and can construct a canvas at 0×0). No `SDL_WaitForGPUI
 recreate: SDL_GPU defers a released texture's destruction past any command buffer
 still referencing it, same reasoning CF's own canvas-destroy relies on.
 
-`bk_window_size(int *out_w, int *out_h)` (new, `bk_app.h`) reports the window's
+`bk_window_size(i32 *out_w, i32 *out_h)` (new, `bk_app.h`) reports the window's
 drawable size in pixels — equal to its logical size today, since Bielik2D doesn't
 request a high-DPI window (`SDL_WINDOW_HIGH_PIXEL_DENSITY`), so DPI-aware scaling
 (CF's `pixel_scale` machinery) is out of scope. Cached in `BK_AppState`, seeded at

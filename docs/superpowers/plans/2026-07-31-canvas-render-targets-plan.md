@@ -154,7 +154,7 @@ committed `.spv`/`.msl`), `CMakeLists.txt`, `tests/test_gfx_canvas.c`,
 **Files:** `include/bielik/bk_app.h`, `src/bk_app.c`, `tests/test_gfx_resize.c` (new),
 `tests/CMakeLists.txt`, `samples/06_canvas/main.c`.
 
-- [x] `bk_window_size(int *out_w, int *out_h)`, cached in `BK_AppState`, seeded at
+- [x] `bk_window_size(i32 *out_w, i32 *out_h)`, cached in `BK_AppState`, seeded at
   boot, refreshed on `SDL_EVENT_WINDOW_RESIZED`/`SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED`
   (both, idempotently) at the top of `bk__event`, before any app `.event` handler —
   and without consuming the event.

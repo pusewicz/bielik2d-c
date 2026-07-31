@@ -1,10 +1,11 @@
 #pragma once
-#include <SDL3/SDL_gpu.h>
 #include <bielik/bk_gfx.h>
 #include <bielik/bk_gfx_buffer.h>
 #include <bielik/bk_gfx_canvas.h>
 #include <bielik/bk_gfx_pipeline.h>
 #include <bielik/bk_gfx_texture.h>
+
+#include <SDL3/SDL_gpu.h>
 
 /// Returns the color most recently set via bk_gfx_set_clear_color, or the
 /// default {0.1, 0.1, 0.12, 1.0} if it hasn't been called yet.

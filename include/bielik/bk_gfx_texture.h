@@ -1,23 +1,24 @@
 #pragma once
-#include <SDL3/SDL_gpu.h>
 #include <bielik/bk_types.h>
+
+#include <SDL3/SDL_gpu.h>
 
 /// What a texture is used for.
 typedef enum BK_GfxTextureUsage {
-    BK_GFX_TEXTURE_USAGE_SAMPLER,        // CPU-uploaded, sampled by a fragment shader
-    BK_GFX_TEXTURE_USAGE_COMPUTE_TARGET, // written by a compute shader, then sampled
-    BK_GFX_TEXTURE_USAGE_RENDER_TARGET,  // color render target, also sampled (canvases)
-    BK_GFX_TEXTURE_USAGE_DEPTH_STENCIL,  // depth-stencil render target, never sampled
+  BK_GFX_TEXTURE_USAGE_SAMPLER,        // CPU-uploaded, sampled by a fragment shader
+  BK_GFX_TEXTURE_USAGE_COMPUTE_TARGET, // written by a compute shader, then sampled
+  BK_GFX_TEXTURE_USAGE_RENDER_TARGET,  // color render target, also sampled (canvases)
+  BK_GFX_TEXTURE_USAGE_DEPTH_STENCIL,  // depth-stencil render target, never sampled
 } BK_GfxTextureUsage;
 
 typedef enum BK_GfxFilter {
-    BK_GFX_FILTER_NEAREST,
-    BK_GFX_FILTER_LINEAR,
+  BK_GFX_FILTER_NEAREST,
+  BK_GFX_FILTER_LINEAR,
 } BK_GfxFilter;
 
 typedef enum BK_GfxAddressMode {
-    BK_GFX_ADDRESS_CLAMP,
-    BK_GFX_ADDRESS_REPEAT,
+  BK_GFX_ADDRESS_CLAMP,
+  BK_GFX_ADDRESS_REPEAT,
 } BK_GfxAddressMode;
 
 /// A 2D texture. R8G8B8A8_UNORM for every usage except BK_GFX_TEXTURE_USAGE_DEPTH_STENCIL,

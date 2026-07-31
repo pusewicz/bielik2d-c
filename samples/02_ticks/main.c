@@ -35,12 +35,12 @@
 // exactly once per frame. Both counters are reset every time the once-a-
 // second stats line is printed.
 typedef struct AppState {
-    int tick_count;           // ticks since boot; used for --frames N termination
-    int frame_limit;          // 0 => no limit (the default; run until closed/ESC)
-    int ticks_this_second;    // ticks since the last stats line
-    int renders_this_second;  // frames rendered since the last stats line
-    f64 last_print_real_time; // frame->real_time as of the last stats line
-    bool hitch_requested;     // set by event() on SPACE, consumed by update()
+  int tick_count;           // ticks since boot; used for --frames N termination
+  int frame_limit;          // 0 => no limit (the default; run until closed/ESC)
+  int ticks_this_second;    // ticks since the last stats line
+  int renders_this_second;  // frames rendered since the last stats line
+  f64 last_print_real_time; // frame->real_time as of the last stats line
+  bool hitch_requested;     // set by event() on SPACE, consumed by update()
 } AppState;
 
 static AppState s_state;
@@ -49,16 +49,16 @@ static AppState s_state;
 // the window and GPU device by the time init runs. This is where you parse
 // command-line args and set up your own game state.
 static BK_Result app_init(void **state, int argc, char **argv) {
-    s_state = (AppState){0};
-    for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--frames") == 0 && i + 1 < argc) {
-            s_state.frame_limit = atoi(argv[i + 1]);
-            i++;
-        }
+  s_state = (AppState){0};
+  for (int i = 1; i < argc; i++) {
+    if (strcmp(argv[i], "--frames") == 0 && i + 1 < argc) {
+      s_state.frame_limit = atoi(argv[i + 1]);
+      i++;
     }
-    bk_gfx_set_clear_color((BK_Color){0.05f, 0.05f, 0.08f, 1.0f});
-    *state = &s_state;
-    return BK_CONTINUE;
+  }
+  bk_gfx_set_clear_color((BK_Color){0.05f, 0.05f, 0.08f, 1.0f});
+  *state = &s_state;
+  return BK_CONTINUE;
 }
 
 // update: runs once per fixed 60Hz tick — possibly several times in a single
@@ -70,31 +70,31 @@ static BK_Result app_init(void **state, int argc, char **argv) {
 // equivalent variable-dt check lives, just against the tick counter
 // instead of the frame counter.
 static BK_Result app_update(void *state, const BK_FrameInfo *frame) {
-    (void)frame;
-    AppState *app = state;
-    app->tick_count++;
-    app->ticks_this_second++;
+  (void)frame;
+  AppState *app = state;
+  app->tick_count++;
+  app->ticks_this_second++;
 
-    if (app->hitch_requested) {
-        app->hitch_requested = false;
-        // Deliberately naughty: never block inside update() in real game
-        // code — a real game would stall input, physics, and audio right
-        // along with this thread. Doing it here, once, on purpose, is the
-        // whole point of this sample: it manufactures the kind of stall
-        // bk_clock's hitch clamp (max_frame_dt) and spiral-of-death cap
-        // (max_ticks_per_frame) exist to survive. The very next frame after
-        // this delay runs the maximum 8 ticks at once (the cap engaging)
-        // and permanently drops whatever backlog is left beyond that —
-        // so the next printed stats line shows a *dip* in ticks/sec for
-        // that one-second window (not a climb toward hundreds of ticks),
-        // and settles back to ~60 right after.
-        SDL_Delay(300);
-    }
+  if (app->hitch_requested) {
+    app->hitch_requested = false;
+    // Deliberately naughty: never block inside update() in real game
+    // code — a real game would stall input, physics, and audio right
+    // along with this thread. Doing it here, once, on purpose, is the
+    // whole point of this sample: it manufactures the kind of stall
+    // bk_clock's hitch clamp (max_frame_dt) and spiral-of-death cap
+    // (max_ticks_per_frame) exist to survive. The very next frame after
+    // this delay runs the maximum 8 ticks at once (the cap engaging)
+    // and permanently drops whatever backlog is left beyond that —
+    // so the next printed stats line shows a *dip* in ticks/sec for
+    // that one-second window (not a climb toward hundreds of ticks),
+    // and settles back to ~60 right after.
+    SDL_Delay(300);
+  }
 
-    if (app->frame_limit > 0 && app->tick_count >= app->frame_limit) {
-        return BK_DONE;
-    }
-    return BK_CONTINUE;
+  if (app->frame_limit > 0 && app->tick_count >= app->frame_limit) {
+    return BK_DONE;
+  }
+  return BK_CONTINUE;
 }
 
 // render: runs once per frame (regardless of how many ticks ran this
@@ -103,22 +103,22 @@ static BK_Result app_update(void *state, const BK_FrameInfo *frame) {
 // per frame and gets the interpolation alpha / real_time / sim_time fields
 // the tick loop doesn't.
 static void app_render(void *state, const BK_FrameInfo *frame) {
-    AppState *app = state;
-    app->renders_this_second++;
+  AppState *app = state;
+  app->renders_this_second++;
 
-    if (frame->real_time - app->last_print_real_time >= 1.0) {
-        // drift = how far the fixed-tick simulation clock has diverged
-        // from the wall clock. It should stay small and bounded (well
-        // under a second) even across the hitch demo above — that's the
-        // clamp/cap combo doing its job instead of letting sim_time run
-        // away trying to fully "catch up" in one shot.
-        f64 drift = frame->sim_time - frame->real_time;
-        printf("renders/sec=%d ticks/sec=%d alpha=%.3f drift=%.4fs\n", app->renders_this_second,
-               app->ticks_this_second, frame->alpha, drift);
-        app->renders_this_second = 0;
-        app->ticks_this_second = 0;
-        app->last_print_real_time = frame->real_time;
-    }
+  if (frame->real_time - app->last_print_real_time >= 1.0) {
+    // drift = how far the fixed-tick simulation clock has diverged
+    // from the wall clock. It should stay small and bounded (well
+    // under a second) even across the hitch demo above — that's the
+    // clamp/cap combo doing its job instead of letting sim_time run
+    // away trying to fully "catch up" in one shot.
+    f64 drift = frame->sim_time - frame->real_time;
+    printf("renders/sec=%d ticks/sec=%d alpha=%.3f drift=%.4fs\n", app->renders_this_second,
+           app->ticks_this_second, frame->alpha, drift);
+    app->renders_this_second = 0;
+    app->ticks_this_second = 0;
+    app->last_print_real_time = frame->real_time;
+  }
 }
 
 // event: the framework forwards every SDL event here since this app sets
@@ -127,19 +127,19 @@ static void app_render(void *state, const BK_FrameInfo *frame) {
 // kicks in when .event is left NULL). SPACE just sets a flag; the actual
 // (deliberately bad) blocking happens in update(), never here.
 static BK_Result app_event(void *state, const SDL_Event *event) {
-    AppState *app = state;
-    if (event->type == SDL_EVENT_QUIT) {
-        return BK_DONE;
+  AppState *app = state;
+  if (event->type == SDL_EVENT_QUIT) {
+    return BK_DONE;
+  }
+  if (event->type == SDL_EVENT_KEY_DOWN) {
+    if (event->key.key == SDLK_ESCAPE) {
+      return BK_DONE;
     }
-    if (event->type == SDL_EVENT_KEY_DOWN) {
-        if (event->key.key == SDLK_ESCAPE) {
-            return BK_DONE;
-        }
-        if (event->key.key == SDLK_SPACE) {
-            app->hitch_requested = true;
-        }
+    if (event->key.key == SDLK_SPACE) {
+      app->hitch_requested = true;
     }
-    return BK_CONTINUE;
+  }
+  return BK_CONTINUE;
 }
 
 // Two ways to boot this app, picked at compile time — see 01_clear's main.c
@@ -149,14 +149,14 @@ static BK_Result app_event(void *state, const SDL_Event *event) {
 // point of the demo, not an incidental default.
 #ifdef BK_MAIN_HANDLED
 int main(int argc, char **argv) {
-    BK_AppDesc desc = {
-        .time = {.tick_hz = 60, .max_ticks_per_frame = 8},
-        .init = app_init,
-        .update = app_update,
-        .render = app_render,
-        .event = app_event,
-    };
-    return bk_run(&desc, argc, argv);
+  BK_AppDesc desc = {
+      .time = {.tick_hz = 60, .max_ticks_per_frame = 8},
+      .init = app_init,
+      .update = app_update,
+      .render = app_render,
+      .event = app_event,
+  };
+  return bk_run(&desc, argc, argv);
 }
 #else
 BK_APP(.time = {.tick_hz = 60, .max_ticks_per_frame = 8}, .init = app_init, .update = app_update,
