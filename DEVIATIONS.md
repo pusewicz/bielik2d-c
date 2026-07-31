@@ -357,3 +357,20 @@ verbatim `src/bk_gfx_pipeline.c` lists
 putting `bk_app_internal.h` first, and also reflows a few multi-line function
 signatures' continuation-line indentation. Ran `clang-format -i` on the file;
 no type, field, or function body changed.
+
+## bk_app.h trailing-comment column (fundamental-types-plan task-2-brief.md)
+
+Same category as the `bk_app.h`/`bk_app.c` hand-aligned-spacing entry above,
+recurring because the fundamental-types migration shortens several field
+types (`uint64_t tick` -> `u64 tick`, `double sim_time` -> `f64 sim_time`),
+which shifts where `clang-format`'s trailing-comment column lands.
+`clang-format --dry-run --Werror` flagged one line in `BK_FrameInfo`
+(`u64 tick;` needed two more spaces before its comment to match the
+realigned column). Ran `clang-format -i` on all four of this task's files;
+the only output change was that one whitespace-only comment-column shift in
+`bk_app.h` — no include reordering, and no type, field, or function body
+changed anywhere. Note the same conflict is not yet resolved upstream:
+`include/bielik/bk_time.h` and `include/bielik/bk_types.h`, both merged in
+the prior (Task 1) fundamental-types commit, still fail
+`clang-format --dry-run --Werror` for the same reason and were left as-is
+since they're outside this task's file list.
