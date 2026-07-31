@@ -14,27 +14,27 @@ void bk_gfx_set_clear_color(BK_Color color) { s_clear_color = color; }
 BK_Color bk__gfx_get_clear_color(void) { return s_clear_color; }
 
 static BK_GfxPipeline *s_pending_pipeline = nullptr;
-static int s_pending_vertex_count = 0;
+static i32 s_pending_vertex_count = 0;
 
 void bk_gfx_bind_pipeline(BK_GfxPipeline *pipeline) {
     BK_ASSERT(pipeline != nullptr);
     s_pending_pipeline = pipeline;
 }
 
-void bk_gfx_draw(int vertex_count) {
+void bk_gfx_draw(i32 vertex_count) {
     BK_ASSERT(vertex_count > 0);
     s_pending_vertex_count = vertex_count;
 }
 
 BK_GfxPipeline *bk__gfx_get_pending_pipeline(void) { return s_pending_pipeline; }
 
-int bk__gfx_get_pending_vertex_count(void) { return s_pending_vertex_count; }
+i32 bk__gfx_get_pending_vertex_count(void) { return s_pending_vertex_count; }
 
 static BK_GfxBuffer *s_pending_vertex_buffer = nullptr;
 static BK_GfxBuffer *s_pending_index_buffer = nullptr;
 static BK_GfxTexture *s_pending_texture = nullptr;
 static BK_GfxSampler *s_pending_sampler = nullptr;
-static int s_pending_index_count = 0;
+static i32 s_pending_index_count = 0;
 
 void bk_gfx_bind_vertex_buffer(BK_GfxBuffer *buffer) {
     BK_ASSERT(buffer != nullptr);
@@ -53,7 +53,7 @@ void bk_gfx_bind_texture(BK_GfxTexture *texture, BK_GfxSampler *sampler) {
     s_pending_sampler = sampler;
 }
 
-void bk_gfx_draw_indexed(int index_count) {
+void bk_gfx_draw_indexed(i32 index_count) {
     BK_ASSERT(index_count > 0);
     s_pending_index_count = index_count;
 }
@@ -66,7 +66,7 @@ BK_GfxTexture *bk__gfx_get_pending_texture(void) { return s_pending_texture; }
 
 BK_GfxSampler *bk__gfx_get_pending_sampler(void) { return s_pending_sampler; }
 
-int bk__gfx_get_pending_index_count(void) { return s_pending_index_count; }
+i32 bk__gfx_get_pending_index_count(void) { return s_pending_index_count; }
 
 static char s_pending_capture_path[512];
 
@@ -92,12 +92,12 @@ void bk__gfx_flush(void) {
     static bool s_logged_acquire_failure = false;
 
     BK_GfxPipeline *pending_pipeline = s_pending_pipeline;
-    int pending_vertex_count = s_pending_vertex_count;
+    i32 pending_vertex_count = s_pending_vertex_count;
     BK_GfxBuffer *pending_vertex_buffer = s_pending_vertex_buffer;
     BK_GfxBuffer *pending_index_buffer = s_pending_index_buffer;
     BK_GfxTexture *pending_texture = s_pending_texture;
     BK_GfxSampler *pending_sampler = s_pending_sampler;
-    int pending_index_count = s_pending_index_count;
+    i32 pending_index_count = s_pending_index_count;
     char pending_capture_path[sizeof s_pending_capture_path];
     SDL_memcpy(pending_capture_path, s_pending_capture_path, sizeof pending_capture_path);
     s_pending_pipeline = nullptr;
@@ -134,10 +134,10 @@ void bk__gfx_flush(void) {
         return;
     }
 
-    BK_Color c = bk__gfx_get_clear_color();
+    BK_Color clear_color = bk__gfx_get_clear_color();
     SDL_GPUColorTargetInfo target = {
         .texture = tex,
-        .clear_color = {c.r, c.g, c.b, c.a},
+        .clear_color = {clear_color.r, clear_color.g, clear_color.b, clear_color.a},
         .load_op = SDL_GPU_LOADOP_CLEAR,
         .store_op = SDL_GPU_STOREOP_STORE,
     };
@@ -244,7 +244,7 @@ void *bk__gfx_download_texture(SDL_GPUDevice *device, SDL_GPUCommandBuffer *cmd,
         return nullptr;
     }
 
-    size_t byte_size = (size_t)width * (size_t)height * 4;
+    usize byte_size = (usize)width * (usize)height * 4;
     void *pixels = bk__alloc(byte_size);
     if (pixels != nullptr) {
         SDL_memcpy(pixels, mapped, byte_size);
