@@ -395,3 +395,22 @@ changed anywhere. Note the same conflict is not yet resolved upstream:
 the prior (Task 1) fundamental-types commit, still fail
 `clang-format --dry-run --Werror` for the same reason and were left as-is
 since they're outside this task's file list.
+
+## PLAN.md §5's "4-space indent" is superseded by the expanded `.clang-format` (PLAN.md:78)
+
+`PLAN.md` §5 describes the Phase 0 `.clang-format` as "LLVM base, 4-space indent, 100
+columns, `PointerAlignment: Right` ... K&R attached braces." The clang-format
+modernization effort expanded that 5-line stub into a fuller config and switched to
+2-space indent, plus added `Language: C`, enforced include-block regrouping
+(`IncludeBlocks: Regroup`), always-expanded function bodies
+(`AllowShortFunctionsOnASingleLine: None`), and a handful of alignment/PP-directive
+options — none of which PLAN.md:78 mentions. Per this file's own convention (see the
+§6.1 entry above), `PLAN.md`'s text is left as the historical record of the Phase 0
+config rather than rewritten to match; `.clang-format` itself, `CLAUDE.md`'s Style
+section, and this entry are the source of truth for the current formatting rules.
+
+This also resolves the drift the `bk_app.h trailing-comment column` entry above left
+outstanding: `bk_time.h` and `bk_types.h` now pass `clang-format --dry-run --Werror`
+along with the rest of the tree, and CI's new `format` job blocks on it going forward
+— so the recurring per-task "clang-format overrode my hand-alignment" entries in this
+file should stop appearing.

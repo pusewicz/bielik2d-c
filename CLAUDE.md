@@ -164,8 +164,11 @@ C23 usage:
   prefer them over `stdint.h`'s verbose names in new code.
 
 Style:
-- `.clang-format`: LLVM base, 4-space indent, 100 columns,
-  `PointerAlignment: Right` (`char *p`), K&R attached braces. Run on everything.
+- `.clang-format`: LLVM base, 2-space indent, 100 columns,
+  `PointerAlignment: Right` (`char *p`), K&R attached braces, `Language: C` (so a future
+  ImGui C++ TU needs its own `Language: Cpp` section, not a bolt-on to this file). Run
+  `cmake --build build --target format` to apply it, `--target format-check` to check
+  without writing; CI's `format` job runs the same check and blocks the build.
 - `.clang-tidy`: `readability-identifier-length` only (min 2 chars, `i`/`x`/`y`/`r`/`g`/`b`/`a`
   exempt) — enforces the no-single-letter-identifiers rule from this sweep. Advisory in CI
   (`continue-on-error: true`) until proven quiet; not yet wired into the default build.
@@ -175,7 +178,8 @@ Style:
 - Errors: no silent failure. Boot-path failures log via `SDL_Log` with a
   `"BK: "` prefix and return `BK_FAIL`. Assertions: `BK_ASSERT` wraps
   `SDL_assert`.
-- Includes ordered: own header, then `<bielik/...>`, then SDL, then libc.
+- Includes ordered: quoted/internal headers, then `<bielik/...>`, then `<SDL3/...>`, then
+  system headers — enforced by `.clang-format`'s `IncludeBlocks: Regroup`, not just convention.
 
 Process:
 - Never reorganize the file layout beyond section 4 of `PLAN.md`.
