@@ -163,6 +163,9 @@ C23 usage:
 Style:
 - `.clang-format`: LLVM base, 4-space indent, 100 columns,
   `PointerAlignment: Right` (`char *p`), K&R attached braces. Run on everything.
+- `.clang-tidy`: `readability-identifier-length` only (min 2 chars, `i`/`x`/`y`/`r`/`g`/`b`/`a`
+  exempt) — enforces the no-single-letter-identifiers rule from this sweep. Advisory in CI
+  (`continue-on-error: true`) until proven quiet; not yet wired into the default build.
 - Every public symbol gets a doc comment: one-sentence summary, param notes,
   thread/lifetime notes where relevant. Terse; no boilerplate prose.
 - Public headers must each compile standalone (enforced by test).

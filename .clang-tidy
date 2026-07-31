@@ -1,0 +1,14 @@
+Checks: '-*,readability-identifier-length'
+CheckOptions:
+  - key: readability-identifier-length.MinimumVariableNameLength
+    value: '2'
+  - key: readability-identifier-length.MinimumParameterNameLength
+    value: '2'
+  - key: readability-identifier-length.MinimumLoopCounterNameLength
+    value: '2'
+  - key: readability-identifier-length.IgnoredVariableNames
+    value: '^(i|x|y|r|g|b|a)$'
+  - key: readability-identifier-length.IgnoredParameterNames
+    value: '^(i|x|y|r|g|b|a)$'
+  - key: readability-identifier-length.IgnoredLoopCounterNames
+    value: '^(i|x|y|r|g|b|a)$'
