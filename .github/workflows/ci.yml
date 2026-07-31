@@ -45,6 +45,13 @@ jobs:
       - name: Build
         run: cmake --build build --config Release
 
+      - name: clang-tidy (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        continue-on-error: true
+        run: |
+          cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+          find include src tests samples -name '*.h' -o -name '*.c' | xargs clang-tidy -p build
+
       - name: Test
         run: ctest --test-dir build --output-on-failure -C Release -E "test_app_lifecycle|test_app_init_failure|test_gfx_pipeline|test_gfx_capture|test_gfx_buffer|test_gfx_texture|test_gfx_compute"
 

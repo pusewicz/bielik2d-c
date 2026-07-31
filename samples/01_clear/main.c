@@ -44,11 +44,11 @@ static BK_Result app_init(void **state, int argc, char **argv) {
 // anything other than BK_CONTINUE ends the app — used here to support
 // `--frames N` for CI smoke testing, so the sample terminates on its own
 // instead of waiting for a window close.
-static BK_Result app_update(void *state, const BK_FrameInfo *f) {
-    (void)f;
-    AppState *s = state;
-    s->frame_count++;
-    if (s->frame_limit > 0 && s->frame_count >= s->frame_limit) {
+static BK_Result app_update(void *state, const BK_FrameInfo *frame) {
+    (void)frame;
+    AppState *app = state;
+    app->frame_count++;
+    if (app->frame_limit > 0 && app->frame_count >= app->frame_limit) {
         return BK_DONE;
     }
     return BK_CONTINUE;
@@ -58,13 +58,13 @@ static BK_Result app_update(void *state, const BK_FrameInfo *f) {
 // through a slow rainbow using sinf(real_time), phase-shifted per channel.
 // bk_gfx_set_clear_color just records the color; the framework's frame
 // pipeline calls bk__gfx_flush (clear + present) right after render returns.
-static void app_render(void *state, const BK_FrameInfo *f) {
+static void app_render(void *state, const BK_FrameInfo *frame) {
     (void)state;
-    float t = (float)f->real_time;
+    f32 elapsed = (f32)frame->real_time;
     BK_Color color = {
-        .r = 0.5f + 0.5f * sinf(t),
-        .g = 0.5f + 0.5f * sinf(t + 2.0943951f), // +2*pi/3
-        .b = 0.5f + 0.5f * sinf(t + 4.1887902f), // +4*pi/3
+        .r = 0.5f + 0.5f * sinf(elapsed),
+        .g = 0.5f + 0.5f * sinf(elapsed + 2.0943951f), // +2*pi/3
+        .b = 0.5f + 0.5f * sinf(elapsed + 4.1887902f), // +4*pi/3
         .a = 1.0f,
     };
     bk_gfx_set_clear_color(color);
@@ -74,12 +74,12 @@ static void app_render(void *state, const BK_FrameInfo *f) {
 // .event on its BK_AppDesc — with .event set, WE own quit handling
 // entirely (the framework's built-in SDL_EVENT_QUIT-only handling only
 // kicks in when .event is left NULL).
-static BK_Result app_event(void *state, const SDL_Event *e) {
+static BK_Result app_event(void *state, const SDL_Event *event) {
     (void)state;
-    if (e->type == SDL_EVENT_QUIT) {
+    if (event->type == SDL_EVENT_QUIT) {
         return BK_DONE;
     }
-    if (e->type == SDL_EVENT_KEY_DOWN && e->key.key == SDLK_ESCAPE) {
+    if (event->type == SDL_EVENT_KEY_DOWN && event->key.key == SDLK_ESCAPE) {
         return BK_DONE;
     }
     return BK_CONTINUE;

@@ -5,17 +5,17 @@
 typedef struct RangeSpy {
     int buf[64];
     int call_count;
-    int32_t last_start;
-    int32_t last_end;
+    i32 last_start;
+    i32 last_end;
 } RangeSpy;
 
-static void range_fn(int32_t start, int32_t end, uint32_t worker_index, void *arg) {
+static void range_fn(i32 start, i32 end, u32 worker_index, void *arg) {
     RangeSpy *spy = (RangeSpy *)arg;
     spy->call_count++;
     spy->last_start = start;
     spy->last_end = end;
     REQUIRE(worker_index == 0);
-    for (int32_t i = start; i < end; i++) {
+    for (i32 i = start; i < end; i++) {
         spy->buf[i]++;
     }
 }
@@ -24,21 +24,21 @@ static void test_serial_executor_covers_full_range_once(void) {
     bk__task_set_desc(nullptr);
 
     RangeSpy spy = {0};
-    const int32_t count = 32;
+    const i32 count = 32;
     bk_task_run(range_fn, count, 4, &spy);
 
     REQUIRE(spy.call_count == 1);
     REQUIRE(spy.last_start == 0);
     REQUIRE(spy.last_end == count);
-    for (int32_t i = 0; i < count; i++) {
+    for (i32 i = 0; i < count; i++) {
         REQUIRE(spy.buf[i] == 1);
     }
-    for (int32_t i = count; i < 64; i++) {
+    for (i32 i = count; i < 64; i++) {
         REQUIRE(spy.buf[i] == 0);
     }
 }
 
-static void counting_fn(int32_t start, int32_t end, uint32_t worker_index, void *arg) {
+static void counting_fn(i32 start, i32 end, u32 worker_index, void *arg) {
     (void)start;
     (void)end;
     (void)worker_index;
@@ -57,8 +57,8 @@ static void test_zero_and_negative_count_call_nothing(void) {
 
 typedef struct EnqueueCall {
     BK_TaskFn fn;
-    int32_t count;
-    int32_t min_range;
+    i32 count;
+    i32 min_range;
     void *arg;
     void *ctx;
     int calls;
@@ -77,7 +77,7 @@ typedef struct CustomTaskSystemSpy {
 
 static int s_task_token;
 
-static void *fake_enqueue(BK_TaskFn fn, int32_t count, int32_t min_range, void *arg, void *ctx) {
+static void *fake_enqueue(BK_TaskFn fn, i32 count, i32 min_range, void *arg, void *ctx) {
     CustomTaskSystemSpy *spy = (CustomTaskSystemSpy *)ctx;
     spy->enqueue.fn = fn;
     spy->enqueue.count = count;
@@ -95,7 +95,7 @@ static void fake_finish(void *task, void *ctx) {
     spy->finish.calls++;
 }
 
-static void unused_fn(int32_t start, int32_t end, uint32_t worker_index, void *arg) {
+static void unused_fn(i32 start, i32 end, u32 worker_index, void *arg) {
     (void)start;
     (void)end;
     (void)worker_index;

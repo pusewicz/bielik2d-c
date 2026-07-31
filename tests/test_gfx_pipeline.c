@@ -7,7 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-static void *s_load_shader_file(const char *relative_path, size_t *out_size) {
+static void *s_load_shader_file(const char *relative_path, usize *out_size) {
     const char *base_path = SDL_GetBasePath();
     REQUIRE(base_path != nullptr);
 
@@ -105,9 +105,9 @@ static void test_out_of_range_vertex_counts_return_null(void) {
 
 static void test_destroy_null_is_noop(void) { bk_gfx_pipeline_destroy(nullptr); }
 
-static void s_check_pixel(const uint8_t *pixels, int width, int x, int y, uint8_t r, uint8_t g,
-                          uint8_t b, uint8_t a, int tolerance) {
-    size_t i = ((size_t)y * (size_t)width + (size_t)x) * 4;
+static void s_check_pixel(const u8 *pixels, int width, int x, int y, u8 r, u8 g, u8 b, u8 a,
+                          int tolerance) {
+    usize i = ((usize)y * (usize)width + (usize)x) * 4;
     REQUIRE(abs((int)pixels[i + 0] - (int)r) <= tolerance);
     REQUIRE(abs((int)pixels[i + 1] - (int)g) <= tolerance);
     REQUIRE(abs((int)pixels[i + 2] - (int)b) <= tolerance);
@@ -170,7 +170,7 @@ static void test_draw_produces_expected_pixels(void) {
     void *pixels_buf = bk__gfx_download_texture(device, cmd, offscreen, size, size,
                                                 SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM);
     REQUIRE(pixels_buf != nullptr);
-    const uint8_t *pixels = (const uint8_t *)pixels_buf;
+    const u8 *pixels = (const u8 *)pixels_buf;
 
     // Center: well inside the triangle (NDC bbox [-0.5,0.5] on both axes covers the
     // middle half of the viewport) -> solid red.

@@ -19,7 +19,7 @@ typedef struct AppState {
 
 static AppState s_state;
 
-static void *s_load_shader_file(const char *relative_path, size_t *out_size) {
+static void *s_load_shader_file(const char *relative_path, usize *out_size) {
     const char *base_path = SDL_GetBasePath();
     if (base_path == nullptr) {
         SDL_Log("BK: SDL_GetBasePath failed: %s", SDL_GetError());
@@ -90,11 +90,11 @@ static BK_Result app_init(void **state, int argc, char **argv) {
 }
 
 // update: supports --frames N for CI smoke testing, same as 01_clear/02_ticks.
-static BK_Result app_update(void *state, const BK_FrameInfo *f) {
-    (void)f;
-    AppState *s = state;
-    s->frame_count++;
-    if (s->frame_limit > 0 && s->frame_count >= s->frame_limit) {
+static BK_Result app_update(void *state, const BK_FrameInfo *frame) {
+    (void)frame;
+    AppState *app = state;
+    app->frame_count++;
+    if (app->frame_limit > 0 && app->frame_count >= app->frame_limit) {
         return BK_DONE;
     }
     return BK_CONTINUE;
@@ -102,19 +102,19 @@ static BK_Result app_update(void *state, const BK_FrameInfo *f) {
 
 // render: bind the pipeline and draw 3 vertices. The framework's frame pipeline
 // calls bk__gfx_flush (clear + bind/draw + present) right after render returns.
-static void app_render(void *state, const BK_FrameInfo *f) {
-    (void)f;
-    AppState *s = state;
-    bk_gfx_bind_pipeline(s->pipeline);
+static void app_render(void *state, const BK_FrameInfo *frame) {
+    (void)frame;
+    AppState *app = state;
+    bk_gfx_bind_pipeline(app->pipeline);
     bk_gfx_draw(3);
 }
 
-static BK_Result app_event(void *state, const SDL_Event *e) {
+static BK_Result app_event(void *state, const SDL_Event *event) {
     (void)state;
-    if (e->type == SDL_EVENT_QUIT) {
+    if (event->type == SDL_EVENT_QUIT) {
         return BK_DONE;
     }
-    if (e->type == SDL_EVENT_KEY_DOWN && e->key.key == SDLK_ESCAPE) {
+    if (event->type == SDL_EVENT_KEY_DOWN && event->key.key == SDLK_ESCAPE) {
         return BK_DONE;
     }
     return BK_CONTINUE;
@@ -122,8 +122,8 @@ static BK_Result app_event(void *state, const SDL_Event *e) {
 
 static void app_quit(void *state, BK_Result result) {
     (void)result;
-    AppState *s = state;
-    bk_gfx_pipeline_destroy(s->pipeline);
+    AppState *app = state;
+    bk_gfx_pipeline_destroy(app->pipeline);
 }
 
 #ifdef BK_MAIN_HANDLED

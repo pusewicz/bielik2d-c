@@ -9,7 +9,6 @@
 #include <bielik/bk_gfx_pipeline.h>
 #include <bielik/bk_gfx_texture.h>
 #include <stddef.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -31,7 +30,7 @@ static void test_create_sampler_texture_and_upload_succeeds(void) {
     BK_GfxTexture *texture = bk_gfx_texture_create(device, BK_GFX_TEXTURE_USAGE_SAMPLER, 2, 2);
     REQUIRE(texture != nullptr);
 
-    uint32_t pixels[4] = {0xFF0000FFu, 0xFF00FF00u, 0xFFFF0000u, 0xFFFFFFFFu};
+    u32 pixels[4] = {0xFF0000FFu, 0xFF00FF00u, 0xFFFF0000u, 0xFFFFFFFFu};
     REQUIRE(bk_gfx_texture_upload(texture, pixels));
 
     bk_gfx_texture_destroy(texture);
@@ -81,12 +80,12 @@ static void test_destroy_null_is_noop(void) {
 // ---------------------------------------------------------------------------
 
 typedef struct Vertex {
-    float position[2];
-    float uv[2];
-    uint8_t color[4];
+    f32 position[2];
+    f32 uv[2];
+    u8 color[4];
 } Vertex;
 
-static void *s_load_shader_file(const char *relative_path, size_t *out_size) {
+static void *s_load_shader_file(const char *relative_path, usize *out_size) {
     const char *base_path = SDL_GetBasePath();
     REQUIRE(base_path != nullptr);
 
@@ -121,9 +120,9 @@ static void s_free_shader(BK_GfxShaderDesc *desc) {
     SDL_free((void *)desc->msl.code);
 }
 
-static void s_check_pixel(const uint8_t *pixels, int width, int x, int y, uint8_t r, uint8_t g,
-                          uint8_t b, uint8_t a, int tolerance) {
-    size_t i = ((size_t)y * (size_t)width + (size_t)x) * 4;
+static void s_check_pixel(const u8 *pixels, int width, int x, int y, u8 r, u8 g, u8 b, u8 a,
+                          int tolerance) {
+    usize i = ((usize)y * (usize)width + (usize)x) * 4;
     REQUIRE(abs((int)pixels[i + 0] - (int)r) <= tolerance);
     REQUIRE(abs((int)pixels[i + 1] - (int)g) <= tolerance);
     REQUIRE(abs((int)pixels[i + 2] - (int)b) <= tolerance);
@@ -199,7 +198,7 @@ static void test_draw_produces_expected_pixels_from_checkerboard(void) {
     REQUIRE(vertex_buffer != nullptr);
     REQUIRE(bk_gfx_buffer_upload(vertex_buffer, vertices, 0, sizeof vertices));
 
-    uint16_t indices[6] = {0, 1, 2, 2, 1, 3};
+    u16 indices[6] = {0, 1, 2, 2, 1, 3};
     BK_GfxBuffer *index_buffer =
         bk_gfx_buffer_create(device, BK_GFX_BUFFER_USAGE_INDEX, sizeof indices);
     REQUIRE(index_buffer != nullptr);
@@ -208,7 +207,7 @@ static void test_draw_produces_expected_pixels_from_checkerboard(void) {
     // 2x2 checkerboard, row-major top-to-bottom matching SDL_UploadToGPUTexture's
     // pixels_per_row/rows_per_layer convention: texel row 0 is the texture's top row
     // (uv v=0), so this lays out red/green on top, blue/yellow on the bottom.
-    uint8_t checkerboard[2][2][4] = {
+    u8 checkerboard[2][2][4] = {
         {{RED_R, RED_G, RED_B, 255}, {GREEN_R, GREEN_G, GREEN_B, 255}},
         {{BLUE_R, BLUE_G, BLUE_B, 255}, {YELLOW_R, YELLOW_G, YELLOW_B, 255}},
     };
@@ -257,7 +256,7 @@ static void test_draw_produces_expected_pixels_from_checkerboard(void) {
     void *pixels_buf = bk__gfx_download_texture(device, cmd, offscreen, size, size,
                                                 SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM);
     REQUIRE(pixels_buf != nullptr);
-    const uint8_t *pixels = (const uint8_t *)pixels_buf;
+    const u8 *pixels = (const u8 *)pixels_buf;
 
     // Quadrant centers. See the coordinate-system comment on `vertices` above for why
     // top-left of the downloaded image is texel (0,0), etc. -- this is fully

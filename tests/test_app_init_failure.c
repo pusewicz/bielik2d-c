@@ -22,7 +22,7 @@ static void test_quit(void *state, BK_Result result) {
 
 int main(int argc, char **argv) {
     BK_AppDesc desc = {
-        .window = {.title = "test_app_init_failure", .w = 64, .h = 64},
+        .window = {.title = "test_app_init_failure", .width = 64, .height = 64},
         .init = test_init,
         .quit = test_quit,
     };

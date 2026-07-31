@@ -21,7 +21,7 @@ BK_GfxPipeline *bk__gfx_get_pending_pipeline(void);
 
 /// Test-only accessor: returns the vertex count set via bk_gfx_draw this frame, or
 /// 0 if bk_gfx_draw hasn't been called since the last flush.
-int bk__gfx_get_pending_vertex_count(void);
+i32 bk__gfx_get_pending_vertex_count(void);
 
 /// Test-only accessor: returns the buffer bound via bk_gfx_bind_vertex_buffer this
 /// frame, or nullptr if none has been bound since the last flush.
@@ -41,7 +41,7 @@ BK_GfxSampler *bk__gfx_get_pending_sampler(void);
 
 /// Test-only accessor: returns the index count set via bk_gfx_draw_indexed this
 /// frame, or 0 if bk_gfx_draw_indexed hasn't been called since the last flush.
-int bk__gfx_get_pending_index_count(void);
+i32 bk__gfx_get_pending_index_count(void);
 
 /// Test-only accessor: returns the path set via bk_gfx_request_capture this frame, or
 /// an empty string if none has been requested since the last flush.

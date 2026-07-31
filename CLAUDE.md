@@ -159,10 +159,16 @@ C23 usage:
 - Avoid: VLAs (`-Wvla` enforces), `alloca`, `_Generic` unless clearly better,
   `auto` outside obvious initializers, bit-precise ints in public API.
 - `#embed` is reserved for later phases (needs Clang 19+/GCC 15); do not use yet.
+- Fixed-width numerics: `include/bielik/bk_types.h`'s short aliases (`i8`..`i64`,
+  `u8`..`u64`, `f32`/`f64`, `usize`/`isize`, `b32`) are the project convention now —
+  prefer them over `stdint.h`'s verbose names in new code.
 
 Style:
 - `.clang-format`: LLVM base, 4-space indent, 100 columns,
   `PointerAlignment: Right` (`char *p`), K&R attached braces. Run on everything.
+- `.clang-tidy`: `readability-identifier-length` only (min 2 chars, `i`/`x`/`y`/`r`/`g`/`b`/`a`
+  exempt) — enforces the no-single-letter-identifiers rule from this sweep. Advisory in CI
+  (`continue-on-error: true`) until proven quiet; not yet wired into the default build.
 - Every public symbol gets a doc comment: one-sentence summary, param notes,
   thread/lifetime notes where relevant. Terse; no boilerplate prose.
 - Public headers must each compile standalone (enforced by test).
