@@ -60,7 +60,7 @@ jobs:
         run: cmake --build build --config Release
 
       - name: clang-tidy (Ubuntu)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-26.04'
         continue-on-error: true
         run: |
           cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
