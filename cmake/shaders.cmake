@@ -48,13 +48,18 @@ function(bk_compile_shader)
     add_custom_target(bk_shader_${ARG_NAME}_${ARG_STAGE} DEPENDS "${spv}" "${msl}")
 endfunction()
 
-# Copies shaders/ next to TARGET's built binary (POST_BUILD) so it can load shader
-# bytecode with a path relative to its own executable (via SDL_GetBasePath) no
-# matter what working directory it's run from.
+# Mirrors shaders/ next to TARGET's built binary so it can load shader bytecode with
+# a path relative to its own executable (via SDL_GetBasePath) no matter what working
+# directory it's run from. This is a custom target -- always considered out of date --
+# rather than a POST_BUILD command, because POST_BUILD only fires when TARGET relinks:
+# regenerating bytecode alone would otherwise leave a stale copy staged.
+# Files deleted from shaders/ are not pruned from the staged copy.
 function(bk_stage_shaders TARGET)
-    add_custom_command(TARGET ${TARGET} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
+    add_custom_target(bk_stage_shaders_${TARGET}
+        COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different
                 "${PROJECT_SOURCE_DIR}/shaders" "$<TARGET_FILE_DIR:${TARGET}>/shaders"
         COMMENT "Staging shaders/ next to ${TARGET}"
+        VERBATIM
     )
+    add_dependencies(${TARGET} bk_stage_shaders_${TARGET})
 endfunction()
