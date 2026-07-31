@@ -1,5 +1,6 @@
 #pragma once
 #include <SDL3/SDL_gpu.h>
+#include <bielik/bk_types.h>
 
 /// What a texture is used for.
 typedef enum BK_GfxTextureUsage {
@@ -27,8 +28,8 @@ typedef struct BK_GfxSampler BK_GfxSampler;
 /// Creates a width x height R8G8B8A8_UNORM texture for the given usage. Logs via
 /// SDL_Log ("BK: " prefix) and returns nullptr on SDL_GPU failure. device is
 /// explicit, matching bk_gfx_pipeline_create's precedent.
-BK_GfxTexture *bk_gfx_texture_create(SDL_GPUDevice *device, BK_GfxTextureUsage usage, int width,
-                                     int height);
+BK_GfxTexture *bk_gfx_texture_create(SDL_GPUDevice *device, BK_GfxTextureUsage usage, i32 width,
+                                     i32 height);
 
 /// Uploads width*height RGBA8 pixels (tightly packed, 4 bytes/pixel) into texture.
 /// Only valid for a BK_GFX_TEXTURE_USAGE_SAMPLER texture -- BK_ASSERTs otherwise,
