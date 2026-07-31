@@ -387,8 +387,13 @@ the bottom of `bk_app.h`):
   - If `desc.event` is NULL: built-in handling returns `BK_DONE` on
     `SDL_EVENT_QUIT`; everything else ignored.
 - `void bk__shutdown(void *appstate, SDL_AppResult result)` — call `desc.quit`
-  if set, then release GPU swapchain claim, destroy device, destroy window.
-  (SDL calls `SDL_Quit` itself after `SDL_AppQuit` returns.)
+  if set **and** boot reached a point where `desc.init` had a chance to
+  populate `*appstate` (i.e. `bk__boot` didn't fail before or during `init`);
+  otherwise `appstate` is still whatever it was before `init` ran (typically
+  nullptr) and calling `quit` with it would violate every sample's assumption
+  that `state` is a valid pointer once `quit` runs. Then release GPU swapchain
+  claim, destroy device, destroy window. (SDL calls `SDL_Quit` itself after
+  `SDL_AppQuit` returns.)
 
 `bk_run(desc, argc, argv)`: store desc in a static, then
 `SDL_EnterAppMainCallbacks(argc, argv, <static trampolines in bk_app.c>)` that
