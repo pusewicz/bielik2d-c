@@ -92,6 +92,28 @@ static void test_bind_canvas_sets_pending_state(void) {
     REQUIRE(bk__gfx_get_pending_canvas() == fake_canvas);
 }
 
+static void test_swapchain_depth_size_is_zero_until_created(void) {
+    int w = -1, h = -1;
+    bk__gfx_get_swapchain_depth_size(&w, &h);
+    REQUIRE(w == 0);
+    REQUIRE(h == 0);
+}
+
+static void test_swapchain_depth_shutdown_is_noop_when_never_created(void) {
+    // No app has been booted in this test binary, so no flush ever ran and no
+    // texture was ever created -- bk__gfx_shutdown must not crash regardless of
+    // whether depth was configured enabled.
+    bk__gfx_configure_swapchain_depth(true);
+    bk__gfx_shutdown();
+
+    int w = -1, h = -1;
+    bk__gfx_get_swapchain_depth_size(&w, &h);
+    REQUIRE(w == 0);
+    REQUIRE(h == 0);
+
+    bk__gfx_configure_swapchain_depth(false); // restore the default for other tests
+}
+
 static void test_bind_buffers_texture_and_draw_indexed_sets_pending_state(void) {
     static int dummy;
     BK_GfxBuffer *fake_vertex_buffer = (BK_GfxBuffer *)&dummy;
@@ -118,6 +140,8 @@ int main(void) {
     test_request_capture_sets_pending_path();
     test_bind_pipeline_and_draw_sets_pending_state();
     test_bind_canvas_sets_pending_state();
+    test_swapchain_depth_size_is_zero_until_created();
+    test_swapchain_depth_shutdown_is_noop_when_never_created();
     test_bind_buffers_texture_and_draw_indexed_sets_pending_state();
     test_flush_early_return_clears_pending_state();
     printf("test_gfx: OK\n");

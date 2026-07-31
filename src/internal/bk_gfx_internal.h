@@ -52,6 +52,21 @@ const char *bk__gfx_get_pending_capture_path(void);
 /// nullptr if none has been bound since the last flush.
 BK_GfxCanvas *bk__gfx_get_pending_canvas(void);
 
+/// Enables or disables the framework-owned swapchain depth-stencil texture (mirrors
+/// BK_AppDesc.window.depth_stencil). Called once by bk__boot after the GPU device is
+/// created. When enabled, bk__gfx_flush creates/recreates this texture to match the
+/// drawable size on every frame that doesn't have a canvas bound.
+void bk__gfx_configure_swapchain_depth(bool enabled);
+
+/// Test-only accessor: writes the framework-owned swapchain depth texture's current
+/// size to *out_width/*out_height (both 0 if disabled or not created yet -- it's
+/// created lazily, on the first flush after boot).
+void bk__gfx_get_swapchain_depth_size(int *out_width, int *out_height);
+
+/// Releases the framework-owned swapchain depth texture, if one was created. Called
+/// once by bk__shutdown, before SDL_DestroyGPUDevice.
+void bk__gfx_shutdown(void);
+
 /// Downloads width*height pixels (4 bytes/pixel) from texture via a copy pass added
 /// to cmd, then submits cmd and waits for the GPU fence. cmd must not have been
 /// submitted yet, and must not be used for anything else afterward -- this call

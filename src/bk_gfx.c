@@ -76,6 +76,29 @@ void bk_gfx_bind_canvas(BK_GfxCanvas *canvas) { s_pending_canvas = canvas; }
 
 BK_GfxCanvas *bk__gfx_get_pending_canvas(void) { return s_pending_canvas; }
 
+static bool s_swapchain_depth_enabled = false;
+static BK_GfxTexture *s_swapchain_depth_texture = nullptr;
+static int s_swapchain_depth_w = 0;
+static int s_swapchain_depth_h = 0;
+
+void bk__gfx_configure_swapchain_depth(bool enabled) { s_swapchain_depth_enabled = enabled; }
+
+void bk__gfx_get_swapchain_depth_size(int *out_width, int *out_height) {
+    if (out_width != nullptr) {
+        *out_width = s_swapchain_depth_w;
+    }
+    if (out_height != nullptr) {
+        *out_height = s_swapchain_depth_h;
+    }
+}
+
+void bk__gfx_shutdown(void) {
+    bk_gfx_texture_destroy(s_swapchain_depth_texture);
+    s_swapchain_depth_texture = nullptr;
+    s_swapchain_depth_w = 0;
+    s_swapchain_depth_h = 0;
+}
+
 static char s_pending_capture_path[512];
 
 void bk_gfx_request_capture(const char *path) {
@@ -142,9 +165,9 @@ void bk__gfx_flush(void) {
     }
 
     // Render into the bound canvas (if any) instead of the swapchain, plus its depth
-    // attachment (if it has one). Rendering directly into the swapchain has no
-    // framework-owned depth attachment yet -- BK_WindowDesc.depth_stencil (added in a
-    // later task) is what makes depth_target_texture non-null on that path too.
+    // attachment (if it has one). With no canvas bound, the swapchain gets the
+    // framework-owned depth texture instead, if BK_WindowDesc.depth_stencil requested
+    // one (bk__gfx_configure_swapchain_depth, called once from bk__boot).
     SDL_GPUTexture *color_target_texture = tex;
     Uint32 target_w = swap_w;
     Uint32 target_h = swap_h;
@@ -158,6 +181,22 @@ void bk__gfx_flush(void) {
         target_h = (Uint32)canvas_h;
         depth_target_texture = bk__gfx_canvas_depth_handle(pending_canvas);
         depth_target_format = bk__gfx_canvas_depth_format(pending_canvas);
+    } else if (s_swapchain_depth_enabled) {
+        if (s_swapchain_depth_texture == nullptr || s_swapchain_depth_w != (int)swap_w ||
+            s_swapchain_depth_h != (int)swap_h) {
+            // SDL_GPU defers actual destruction past any command buffer still
+            // referencing the old texture, so no fence wait is needed before
+            // recreating at the new size -- same reasoning as a canvas destroy.
+            bk_gfx_texture_destroy(s_swapchain_depth_texture);
+            s_swapchain_depth_texture = bk_gfx_texture_create(
+                bk_gpu(), BK_GFX_TEXTURE_USAGE_DEPTH_STENCIL, (int)swap_w, (int)swap_h);
+            s_swapchain_depth_w = s_swapchain_depth_texture != nullptr ? (int)swap_w : 0;
+            s_swapchain_depth_h = s_swapchain_depth_texture != nullptr ? (int)swap_h : 0;
+        }
+        if (s_swapchain_depth_texture != nullptr) {
+            depth_target_texture = bk__gfx_texture_handle(s_swapchain_depth_texture);
+            depth_target_format = bk__gfx_texture_format(s_swapchain_depth_texture);
+        }
     }
 
     BK_Color c = bk__gfx_get_clear_color();

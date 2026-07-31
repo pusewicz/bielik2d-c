@@ -57,7 +57,10 @@ typedef struct BK_WindowDesc {
     int w, h;          // default 1280x720
     bool resizable;
     bool fullscreen;
-    bool vsync; // true => VSYNC present mode, false => IMMEDIATE (fallback VSYNC)
+    bool vsync;         // true => VSYNC present mode, false => IMMEDIATE (fallback VSYNC)
+    bool depth_stencil; // true => the swapchain render pass gets a depth-stencil
+                        // attachment sized to the drawable, recreated on resize. See
+                        // bk_gfx_pipeline.h's BK_GfxPipelineDesc.depth_stencil_format.
 } BK_WindowDesc;
 
 /// Fixed/variable timestep configuration.

@@ -179,6 +179,8 @@ SDL_AppResult bk__boot(BK_AppDesc (*get_desc)(void), void **appstate, int argc, 
         return s_boot_fail(msg);
     }
 
+    bk__gfx_configure_swapchain_depth(s_app.desc.window.depth_stencil);
+
     SDL_ShowWindow(s_app.window);
 
     s_app.boot_now_ns = SDL_GetTicksNS();
@@ -264,6 +266,7 @@ void bk__shutdown(void *appstate, SDL_AppResult result) {
         s_app.desc.quit(appstate, (BK_Result)result);
     }
     bk__arena_free();
+    bk__gfx_shutdown(); // must run before SDL_DestroyGPUDevice below
     if (s_app.gpu && s_app.window) {
         SDL_ReleaseWindowFromGPUDevice(s_app.gpu, s_app.window);
     }
