@@ -1,6 +1,7 @@
 #pragma once
-#include <SDL3/SDL_gpu.h>
 #include <bielik/bk_gfx_texture.h>
+
+#include <SDL3/SDL_gpu.h>
 
 /// Returns the best depth-stencil format this device supports, probed in preference
 /// order D24_UNORM_S8_UINT -> D32_FLOAT_S8_UINT -> D16_UNORM. SDL_gpu.h's
@@ -20,9 +21,9 @@ SDL_GPUTextureFormat bk_gfx_depth_stencil_format(SDL_GPUDevice *device);
 typedef struct BK_GfxCanvas BK_GfxCanvas;
 
 typedef struct BK_GfxCanvasDesc {
-    i32 width, height;
-    bool depth_stencil;       // allocate a depth-stencil attachment
-    BK_GfxFilter blit_filter; // filter used when blitting to the swapchain (0 == NEAREST)
+  i32 width, height;
+  bool depth_stencil;       // allocate a depth-stencil attachment
+  BK_GfxFilter blit_filter; // filter used when blitting to the swapchain (0 == NEAREST)
 } BK_GfxCanvasDesc;
 
 /// Creates a canvas: an R8G8B8A8_UNORM color texture sized width x height, plus (if

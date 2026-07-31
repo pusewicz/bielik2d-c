@@ -63,14 +63,14 @@ typedef enum BK_GfxBlendMode {
 /// BK_GfxPipelineDesc means "no depth test" -- the existing default for every
 /// pipeline created before this enum existed.
 typedef enum BK_GfxCompare {
-    BK_GFX_COMPARE_ALWAYS,
-    BK_GFX_COMPARE_NEVER,
-    BK_GFX_COMPARE_LESS,
-    BK_GFX_COMPARE_LESS_EQUAL,
-    BK_GFX_COMPARE_GREATER,
-    BK_GFX_COMPARE_GREATER_EQUAL,
-    BK_GFX_COMPARE_EQUAL,
-    BK_GFX_COMPARE_NOT_EQUAL,
+  BK_GFX_COMPARE_ALWAYS,
+  BK_GFX_COMPARE_NEVER,
+  BK_GFX_COMPARE_LESS,
+  BK_GFX_COMPARE_LESS_EQUAL,
+  BK_GFX_COMPARE_GREATER,
+  BK_GFX_COMPARE_GREATER_EQUAL,
+  BK_GFX_COMPARE_EQUAL,
+  BK_GFX_COMPARE_NOT_EQUAL,
 } BK_GfxCompare;
 
 /// Opaque graphics pipeline: compiled shaders + fixed-function state, bound in a

@@ -1,6 +1,7 @@
 #pragma once
-#include <SDL3/SDL_gpu.h>
 #include <bielik/bk_gfx_canvas.h>
+
+#include <SDL3/SDL_gpu.h>
 
 /// Returns the underlying SDL_GPU depth-stencil texture handle, or nullptr if the
 /// canvas has no depth-stencil attachment. Framework-internal; used by bk_gfx's frame

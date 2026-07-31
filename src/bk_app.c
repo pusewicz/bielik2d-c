@@ -122,10 +122,10 @@ static BK_AppState s_app;
 // SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED -- idempotent and cheap enough to run on
 // either event regardless of which one a given platform actually fires.
 static void s_refresh_window_size(void) {
-    i32 w = 0, h = 0;
-    SDL_GetWindowSizeInPixels(s_app.window, &w, &h);
-    s_app.window_w = w > 0 ? w : 1;
-    s_app.window_h = h > 0 ? h : 1;
+  i32 w = 0, h = 0;
+  SDL_GetWindowSizeInPixels(s_app.window, &w, &h);
+  s_app.window_w = w > 0 ? w : 1;
+  s_app.window_h = h > 0 ? h : 1;
 }
 
 static SDL_AppResult s_boot_fail(const char *msg) {
@@ -328,12 +328,12 @@ SDL_GPUDevice *bk_gpu(void) {
 }
 
 void bk_window_size(i32 *out_w, i32 *out_h) {
-    if (out_w != nullptr) {
-        *out_w = s_app.window_w;
-    }
-    if (out_h != nullptr) {
-        *out_h = s_app.window_h;
-    }
+  if (out_w != nullptr) {
+    *out_w = s_app.window_w;
+  }
+  if (out_h != nullptr) {
+    *out_h = s_app.window_h;
+  }
 }
 
 void bk_quit(void) {
