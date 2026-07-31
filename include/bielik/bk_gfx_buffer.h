@@ -1,15 +1,16 @@
 #pragma once
-#include <SDL3/SDL_gpu.h>
 #include <bielik/bk_types.h>
+
+#include <SDL3/SDL_gpu.h>
 
 /// What a buffer is used for. Exclusive, not a bitmask -- SDL_GPU itself rejects a
 /// buffer created with both VERTEX and INDEX usage, and nothing in 2D needs a buffer
 /// that is more than one thing at once.
 typedef enum BK_GfxBufferUsage {
-    BK_GFX_BUFFER_USAGE_VERTEX,
-    BK_GFX_BUFFER_USAGE_INDEX,        // 16-bit indices; bk_gfx_bind_index_buffer hardcodes
-                                      // the element size, see bk_gfx.h
-    BK_GFX_BUFFER_USAGE_STORAGE_READ, // read-only storage buffer in a compute shader
+  BK_GFX_BUFFER_USAGE_VERTEX,
+  BK_GFX_BUFFER_USAGE_INDEX,        // 16-bit indices; bk_gfx_bind_index_buffer hardcodes
+                                    // the element size, see bk_gfx.h
+  BK_GFX_BUFFER_USAGE_STORAGE_READ, // read-only storage buffer in a compute shader
 } BK_GfxBufferUsage;
 
 /// A GPU buffer: vertex data, index data, or compute storage input. Owns its device

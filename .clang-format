@@ -1,5 +1,38 @@
+# Formatted with clang-format 22.1.x; CI pins clang-format==22.1.8.
+# clang-format output differs across major versions -- bump CI and this
+# comment together, or local and CI will disagree.
+#
+# This file declares only `Language: C`. clang-format will hard-error
+# ("Unsuitable") on a .cpp file until a `Language: Cpp` section is appended
+# below a `---` separator. Relevant when the planned ImGui C++ TU lands.
+Language: C
 BasedOnStyle: LLVM
-IndentWidth: 4
+
 ColumnLimit: 100
+IndentWidth: 2
+ContinuationIndentWidth: 4
 PointerAlignment: Right
 BreakBeforeBraces: Attach
+
+AllowShortFunctionsOnASingleLine: None
+SeparateDefinitionBlocks: Always
+InsertNewlineAtEOF: true
+
+IndentPPDirectives: AfterHash
+AlignEscapedNewlines: Left
+AlignArrayOfStructures: Left
+AlignConsecutiveMacros:
+  Enabled: true
+  AcrossComments: true
+
+SortIncludes: CaseInsensitive
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex:    '^"'
+    Priority: 1
+  - Regex:    '^<bielik/'
+    Priority: 2
+  - Regex:    '^<SDL3'
+    Priority: 3
+  - Regex:    '.*'
+    Priority: 4

@@ -14,6 +14,7 @@ option(BK_BUILD_TESTS "Build tests" ON)
 
 include(cmake/warnings.cmake)
 include(cmake/shaders.cmake)
+include(cmake/format.cmake)
 
 include(FetchContent)
 

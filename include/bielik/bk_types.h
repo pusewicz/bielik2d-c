@@ -7,23 +7,23 @@
 // rationale and the collision risk this accepts.
 
 /// 8/16/32/64-bit signed integers.
-typedef int8_t  i8;
+typedef int8_t i8;
 typedef int16_t i16;
 typedef int32_t i32;
 typedef int64_t i64;
 
 /// 8/16/32/64-bit unsigned integers.
-typedef uint8_t  u8;
+typedef uint8_t u8;
 typedef uint16_t u16;
 typedef uint32_t u32;
 typedef uint64_t u64;
 
 /// IEEE-754 single/double precision floats.
-typedef float  f32;
+typedef float f32;
 typedef double f64;
 
 /// Pointer-width unsigned/signed sizes (aliases of size_t / ptrdiff_t).
-typedef size_t    usize;
+typedef size_t usize;
 typedef ptrdiff_t isize;
 
 /// 32-bit boolean for GPU/shader-layout structs (std140/std430 alignment rules
