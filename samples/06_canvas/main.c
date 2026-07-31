@@ -189,11 +189,11 @@ static BK_Result app_event(void *state, const SDL_Event *e) {
         return BK_DONE;
     }
     if (e->type == SDL_EVENT_WINDOW_RESIZED) {
-        // Stand-in for bk_window_size, which a later task in this same sub-project
-        // adds to bk_app.h -- switches over once that lands. The canvas stays pinned
-        // at CANVAS_W x CANVAS_H regardless; only the blit's destination changes.
+        // bk_window_size is already current here -- the framework refreshes it
+        // before any app .event handler runs. The canvas stays pinned at
+        // CANVAS_W x CANVAS_H regardless; only the blit's destination changes.
         int w = 0, h = 0;
-        SDL_GetWindowSizeInPixels(bk_window(), &w, &h);
+        bk_window_size(&w, &h);
         SDL_Log("BK: window resized to %dx%d", w, h);
     }
     return BK_CONTINUE;

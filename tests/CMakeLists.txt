@@ -86,3 +86,9 @@ bk_stage_shaders(test_gfx_canvas)
 
 add_library(test_header_bk_gfx_canvas OBJECT test_header_bk_gfx_canvas.c)
 target_link_libraries(test_header_bk_gfx_canvas PRIVATE bielik bk_warnings)
+
+add_executable(test_gfx_resize test_gfx_resize.c)
+target_link_libraries(test_gfx_resize PRIVATE bielik bk_warnings)
+target_include_directories(test_gfx_resize PRIVATE ${PROJECT_SOURCE_DIR}/src)
+add_test(NAME test_gfx_resize COMMAND test_gfx_resize)
+set_tests_properties(test_gfx_resize PROPERTIES TIMEOUT 30)
