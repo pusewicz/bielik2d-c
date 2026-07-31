@@ -100,6 +100,7 @@ typedef struct BK_AppState {
     SDL_Window *window;
     SDL_GPUDevice *gpu;
     uint64_t boot_now_ns;
+    bool booted; // true once bk__boot reaches a state desc.init had a chance to populate
 } BK_AppState;
 
 static BK_AppState s_app;
@@ -193,12 +194,14 @@ SDL_AppResult bk__boot(BK_AppDesc (*get_desc)(void), void **appstate, int argc, 
         r = s_app.desc.init(appstate, argc, argv);
     }
     if (r == BK_DONE) {
+        s_app.booted = true;
         return (SDL_AppResult)BK_DONE;
     }
     if (r != BK_CONTINUE) {
         return s_boot_fail("app init callback failed");
     }
 
+    s_app.booted = true;
     return SDL_APP_CONTINUE;
 }
 
@@ -260,7 +263,12 @@ SDL_AppResult bk__event(void *appstate, SDL_Event *event) {
 }
 
 void bk__shutdown(void *appstate, SDL_AppResult result) {
-    if (s_app.desc.quit) {
+    // Skip quit if boot never reached the point where desc.init could populate
+    // *appstate -- e.g. init itself returned BK_FAIL, or an earlier boot step
+    // (SDL_Init, window/GPU creation) failed. appstate is otherwise whatever
+    // it was left at (typically nullptr), which every sample's quit callback
+    // unconditionally dereferences.
+    if (s_app.booted && s_app.desc.quit) {
         s_app.desc.quit(appstate, (BK_Result)result);
     }
     bk__arena_free();

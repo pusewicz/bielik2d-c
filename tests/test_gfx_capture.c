@@ -1,4 +1,5 @@
 #include "bk_test.h"
+#include <SDL3/SDL.h>
 #include <bielik/bk_app.h>
 #include <bielik/bk_gfx.h>
 #include <stdio.h>

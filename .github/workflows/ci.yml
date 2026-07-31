@@ -46,17 +46,17 @@ jobs:
         run: cmake --build build --config Release
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure -C Release -E "test_app_lifecycle|test_gfx_pipeline|test_gfx_capture|test_gfx_buffer|test_gfx_texture|test_gfx_compute"
+        run: ctest --test-dir build --output-on-failure -C Release -E "test_app_lifecycle|test_app_init_failure|test_gfx_pipeline|test_gfx_capture|test_gfx_buffer|test_gfx_texture|test_gfx_compute"
 
       - name: Test (GPU-dependent, Ubuntu)
         if: matrix.os == 'ubuntu-26.04'
         continue-on-error: true
-        run: xvfb-run ctest --test-dir build --output-on-failure -C Release -R "test_app_lifecycle|test_gfx_pipeline|test_gfx_capture|test_gfx_buffer|test_gfx_texture|test_gfx_compute"
+        run: xvfb-run ctest --test-dir build --output-on-failure -C Release -R "test_app_lifecycle|test_app_init_failure|test_gfx_pipeline|test_gfx_capture|test_gfx_buffer|test_gfx_texture|test_gfx_compute"
 
       - name: Test (GPU-dependent, macOS/Windows)
         if: matrix.os != 'ubuntu-26.04'
         continue-on-error: true
-        run: ctest --test-dir build --output-on-failure -C Release -R "test_app_lifecycle|test_gfx_pipeline|test_gfx_capture|test_gfx_buffer|test_gfx_texture|test_gfx_compute"
+        run: ctest --test-dir build --output-on-failure -C Release -R "test_app_lifecycle|test_app_init_failure|test_gfx_pipeline|test_gfx_capture|test_gfx_buffer|test_gfx_texture|test_gfx_compute"
 
       - name: Smoke test sample (Ubuntu)
         if: matrix.os == 'ubuntu-26.04'
@@ -100,14 +100,14 @@ jobs:
         run: cmake --build build
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure -E "test_app_lifecycle|test_gfx_pipeline|test_gfx_capture|test_gfx_buffer|test_gfx_texture|test_gfx_compute"
+        run: ctest --test-dir build --output-on-failure -E "test_app_lifecycle|test_app_init_failure|test_gfx_pipeline|test_gfx_capture|test_gfx_buffer|test_gfx_texture|test_gfx_compute"
 
       - name: Test (GPU-dependent, Ubuntu)
         if: matrix.os == 'ubuntu-26.04'
         continue-on-error: true
-        run: xvfb-run ctest --test-dir build --output-on-failure -R "test_app_lifecycle|test_gfx_pipeline|test_gfx_capture|test_gfx_buffer|test_gfx_texture|test_gfx_compute"
+        run: xvfb-run ctest --test-dir build --output-on-failure -R "test_app_lifecycle|test_app_init_failure|test_gfx_pipeline|test_gfx_capture|test_gfx_buffer|test_gfx_texture|test_gfx_compute"
 
       - name: Test (GPU-dependent, macOS)
         if: matrix.os != 'ubuntu-26.04'
         continue-on-error: true
-        run: ctest --test-dir build --output-on-failure -R "test_app_lifecycle|test_gfx_pipeline|test_gfx_capture|test_gfx_buffer|test_gfx_texture|test_gfx_compute"
+        run: ctest --test-dir build --output-on-failure -R "test_app_lifecycle|test_app_init_failure|test_gfx_pipeline|test_gfx_capture|test_gfx_buffer|test_gfx_texture|test_gfx_compute"

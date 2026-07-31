@@ -127,6 +127,9 @@ void bk__gfx_flush(void) {
     }
     if (!tex) {
         // minimized/occluded — nothing to draw into this frame
+        if (pending_capture_path[0] != '\0') {
+            SDL_Log("BK: bk_gfx_request_capture: dropped, window minimized/occluded this frame");
+        }
         SDL_SubmitGPUCommandBuffer(cmd);
         return;
     }
@@ -245,6 +248,8 @@ void *bk__gfx_download_texture(SDL_GPUDevice *device, SDL_GPUCommandBuffer *cmd,
     void *pixels = bk__alloc(byte_size);
     if (pixels != nullptr) {
         SDL_memcpy(pixels, mapped, byte_size);
+    } else {
+        SDL_Log("BK: bk__gfx_download_texture: allocation of %zu bytes failed", byte_size);
     }
 
     SDL_UnmapGPUTransferBuffer(device, transfer);
