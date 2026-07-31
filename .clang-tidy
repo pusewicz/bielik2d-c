@@ -1,4 +1,5 @@
 Checks: '-*,readability-identifier-length'
+HeaderFilterRegex: '^.*/(include/bielik|src|tests|samples)/'
 CheckOptions:
   - key: readability-identifier-length.MinimumVariableNameLength
     value: '2'

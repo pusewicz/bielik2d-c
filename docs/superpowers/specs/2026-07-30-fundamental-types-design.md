@@ -235,10 +235,15 @@ compilation (`test_header_*.c`) fails on the first `u32`/`f32`/etc. it hits.
   ```
   Expected surviving matches, and only these: `Uint32` locals at direct SDL_GPU call
   boundaries (`bk_gfx.c`'s `swap_w`/`swap_h`, `bk__gfx_download_texture`'s
-  `width`/`height` params, `bk_gfx_texture.c`'s `struct BK_GfxTexture`'s
-  `width`/`height` fields) — all exempted by §5's "direct third-party API types at call
+  `width`/`height` params) — exempted by §5's "direct third-party API types at call
   sites" rule — and `<stdint.h>` retained solely for the `UINT32_MAX` macro in
   `tests/test_gfx_buffer.c`. Any other match is an incomplete migration.
+
+  (`bk_gfx_texture.c`'s `struct BK_GfxTexture`'s `width`/`height` fields were
+  originally expected to stay `Uint32` under the same exemption, but Task 7 shipped
+  them as `u32` instead — a deliberate, better call recorded in that task's report,
+  since those fields aren't a direct SDL_GPU call-site type the way `swap_w`/`swap_h`
+  and `bk__gfx_download_texture`'s params are. Not a `Uint32` exemption anymore.)
 
 ## 8. Explicitly out of scope
 
