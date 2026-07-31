@@ -2,12 +2,14 @@
 #include "internal/bk_gfx_texture_internal.h"
 #include <SDL3/SDL.h>
 #include <bielik/bk_app.h>
+#include <bielik/bk_gfx_canvas.h>
 #include <bielik/bk_gfx_texture.h>
 
 struct BK_GfxTexture {
     SDL_GPUDevice *device;
     SDL_GPUTexture *handle;
     BK_GfxTextureUsage usage;
+    SDL_GPUTextureFormat format;
     Uint32 width;
     Uint32 height;
 };
@@ -23,14 +25,27 @@ BK_GfxTexture *bk_gfx_texture_create(SDL_GPUDevice *device, BK_GfxTextureUsage u
     BK_ASSERT(width > 0);
     BK_ASSERT(height > 0);
 
-    SDL_GPUTextureUsageFlags usage_flags = SDL_GPU_TEXTUREUSAGE_SAMPLER;
-    if (usage == BK_GFX_TEXTURE_USAGE_COMPUTE_TARGET) {
-        usage_flags |= SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_WRITE;
+    SDL_GPUTextureUsageFlags usage_flags = 0;
+    SDL_GPUTextureFormat format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+    switch (usage) {
+    case BK_GFX_TEXTURE_USAGE_SAMPLER:
+        usage_flags = SDL_GPU_TEXTUREUSAGE_SAMPLER;
+        break;
+    case BK_GFX_TEXTURE_USAGE_COMPUTE_TARGET:
+        usage_flags = SDL_GPU_TEXTUREUSAGE_SAMPLER | SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_WRITE;
+        break;
+    case BK_GFX_TEXTURE_USAGE_RENDER_TARGET:
+        usage_flags = SDL_GPU_TEXTUREUSAGE_SAMPLER | SDL_GPU_TEXTUREUSAGE_COLOR_TARGET;
+        break;
+    case BK_GFX_TEXTURE_USAGE_DEPTH_STENCIL:
+        usage_flags = SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET;
+        format = bk_gfx_depth_stencil_format(device);
+        break;
     }
 
     SDL_GPUTextureCreateInfo info = {
         .type = SDL_GPU_TEXTURETYPE_2D,
-        .format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
+        .format = format,
         .usage = usage_flags,
         .width = (Uint32)width,
         .height = (Uint32)height,
@@ -52,6 +67,7 @@ BK_GfxTexture *bk_gfx_texture_create(SDL_GPUDevice *device, BK_GfxTextureUsage u
     texture->device = device;
     texture->handle = handle;
     texture->usage = usage;
+    texture->format = format;
     texture->width = (Uint32)width;
     texture->height = (Uint32)height;
     return texture;
@@ -165,4 +181,9 @@ SDL_GPUTexture *bk__gfx_texture_handle(const BK_GfxTexture *texture) {
 SDL_GPUSampler *bk__gfx_sampler_handle(const BK_GfxSampler *sampler) {
     BK_ASSERT(sampler != nullptr);
     return sampler->handle;
+}
+
+SDL_GPUTextureFormat bk__gfx_texture_format(const BK_GfxTexture *texture) {
+    BK_ASSERT(texture != nullptr);
+    return texture->format;
 }
