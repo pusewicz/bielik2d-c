@@ -1,24 +1,25 @@
 #pragma once
 #include <bielik/bk_types.h>
+
 #include <stdbool.h>
 
 /// Fixed/variable timestep accumulator state; owns no resources.
 typedef struct BK_Clock {
-    u64 fixed_dt_ns;    // 0 => variable mode
-    u64 max_frame_ns;   // hitch clamp
-    i32 max_ticks_per_frame; // spiral cap
-    u64 accumulator_ns;
-    u64 last_now_ns;
-    u64 tick; // total fixed ticks since init
-    bool started;
+  u64 fixed_dt_ns;         // 0 => variable mode
+  u64 max_frame_ns;        // hitch clamp
+  i32 max_ticks_per_frame; // spiral cap
+  u64 accumulator_ns;
+  u64 last_now_ns;
+  u64 tick; // total fixed ticks since init
+  bool started;
 } BK_Clock;
 
 /// Result of one bk_clock_advance call: ticks to run this frame and the
 /// render-interpolation alpha.
 typedef struct BK_ClockFrame {
-    i32 ticks;       // fixed updates to run this frame (always 1 in variable mode)
-    f64 frame_dt; // clamped wall delta, seconds
-    f64 alpha;    // accumulator / fixed_dt in [0,1); 1.0 in variable mode
+  i32 ticks;    // fixed updates to run this frame (always 1 in variable mode)
+  f64 frame_dt; // clamped wall delta, seconds
+  f64 alpha;    // accumulator / fixed_dt in [0,1); 1.0 in variable mode
 } BK_ClockFrame;
 
 /// Initializes a clock for either fixed-tick (tick_hz > 0) or variable-dt (tick_hz == 0) mode.

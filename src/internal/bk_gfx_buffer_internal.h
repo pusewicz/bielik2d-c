@@ -1,6 +1,7 @@
 #pragma once
-#include <SDL3/SDL_gpu.h>
 #include <bielik/bk_gfx_buffer.h>
+
+#include <SDL3/SDL_gpu.h>
 
 /// Returns the underlying SDL_GPU buffer handle. Framework-internal; used by bk_gfx's
 /// frame flush to bind the buffer pending from bk_gfx_bind_vertex_buffer/

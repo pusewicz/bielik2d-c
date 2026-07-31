@@ -8,7 +8,7 @@ typedef struct BK_GfxSampler BK_GfxSampler;
 
 /// RGBA color.
 typedef struct BK_Color {
-    f32 r, g, b, a;
+  f32 r, g, b, a;
 } BK_Color;
 
 /// Sets the color the swapchain is cleared to each frame.

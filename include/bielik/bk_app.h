@@ -1,6 +1,7 @@
 #pragma once
-#include <SDL3/SDL.h>
 #include <bielik/bk_types.h>
+
+#include <SDL3/SDL.h>
 
 #define BK_VERSION_MAJOR 0
 #define BK_VERSION_MINOR 1
@@ -16,9 +17,9 @@ typedef void (*BK_TaskFn)(i32 start, i32 end, u32 worker_index, void *arg);
 /// Describes a pluggable task system. All-zero (every field NULL) means: use
 /// the built-in single-threaded serial executor.
 typedef struct BK_TaskSystemDesc {
-    void *ctx;
-    void *(*enqueue)(BK_TaskFn fn, i32 count, i32 min_range, void *arg, void *ctx);
-    void (*finish)(void *task, void *ctx);
+  void *ctx;
+  void *(*enqueue)(BK_TaskFn fn, i32 count, i32 min_range, void *arg, void *ctx);
+  void (*finish)(void *task, void *ctx);
 } BK_TaskSystemDesc;
 
 /// Debug-build assertion; compiles to nothing meaningful in Release beyond
@@ -35,52 +36,53 @@ void *bk_frame_alloc(usize size, usize align);
 /// identical to SDL_AppResult so the entry-point trampolines can forward it
 /// as-is.
 typedef enum BK_Result {
-    BK_CONTINUE = 0, // == SDL_APP_CONTINUE
-    BK_DONE = 1,     // == SDL_APP_SUCCESS
-    BK_FAIL = 2,     // == SDL_APP_FAILURE
+  BK_CONTINUE = 0, // == SDL_APP_CONTINUE
+  BK_DONE = 1,     // == SDL_APP_SUCCESS
+  BK_FAIL = 2,     // == SDL_APP_FAILURE
 } BK_Result;
+
 // static_assert value-equality with SDL_AppResult lives in bk_app.c.
 
 /// Per-frame timing snapshot passed to update/post_update/render.
 typedef struct BK_FrameInfo {
-    u64 tick;      // fixed ticks since boot; determinism anchor
-    f64 sim_time;  // tick * fixed_dt (recomputed, never accumulated)
-    f64 real_time; // wall-clock seconds since bk boot
-    f64 dt;        // update/post_update: fixed_dt. render: frame delta
-    f64 alpha;     // render only: [0,1) interpolation factor (1.0 in variable mode)
+  u64 tick;      // fixed ticks since boot; determinism anchor
+  f64 sim_time;  // tick * fixed_dt (recomputed, never accumulated)
+  f64 real_time; // wall-clock seconds since bk boot
+  f64 dt;        // update/post_update: fixed_dt. render: frame delta
+  f64 alpha;     // render only: [0,1) interpolation factor (1.0 in variable mode)
 } BK_FrameInfo;
 
 /// Window creation parameters.
 typedef struct BK_WindowDesc {
-    const char *title; // default "Bielik2D"
-    i32 width, height; // default 1280x720
-    bool resizable;
-    bool fullscreen;
-    bool vsync; // true => VSYNC present mode, false => IMMEDIATE (fallback VSYNC)
+  const char *title; // default "Bielik2D"
+  i32 width, height; // default 1280x720
+  bool resizable;
+  bool fullscreen;
+  bool vsync; // true => VSYNC present mode, false => IMMEDIATE (fallback VSYNC)
 } BK_WindowDesc;
 
 /// Fixed/variable timestep configuration.
 typedef struct BK_TimeDesc {
-    i32 tick_hz;             // 0 => variable-dt mode (default)
-    i32 max_ticks_per_frame; // default 8; spiral-of-death cap
-    f64 max_frame_dt;        // default 0.25s; hitch clamp (debugger, window drag)
+  i32 tick_hz;             // 0 => variable-dt mode (default)
+  i32 max_ticks_per_frame; // default 8; spiral-of-death cap
+  f64 max_frame_dt;        // default 0.25s; hitch clamp (debugger, window drag)
 } BK_TimeDesc;
 
 /// Full app configuration: window/time/task setup and the callback set
 /// bk_run (or the BK_APP macro) drives the app lifecycle through.
 typedef struct BK_AppDesc {
-    BK_WindowDesc window;
-    BK_TimeDesc time;
-    BK_TaskSystemDesc tasks;
-    BK_Result (*init)(void **state, int argc, char **argv); // *state pre-seeded from .userdata
-    BK_Result (*update)(void *state,
-                        const BK_FrameInfo *frame); // fixed step (or once/frame in variable mode)
-    BK_Result (*post_update)(void *state,
-                             const BK_FrameInfo *frame);     // optional; runs after physics slot
-    void (*render)(void *state, const BK_FrameInfo *frame);  // once per frame
-    BK_Result (*event)(void *state, const SDL_Event *event); // optional; see quit rules below
-    void (*quit)(void *state, BK_Result result);             // optional
-    void *userdata;
+  BK_WindowDesc window;
+  BK_TimeDesc time;
+  BK_TaskSystemDesc tasks;
+  BK_Result (*init)(void **state, int argc, char **argv); // *state pre-seeded from .userdata
+  BK_Result (*update)(void *state,
+                      const BK_FrameInfo *frame); // fixed step (or once/frame in variable mode)
+  BK_Result (*post_update)(void *state,
+                           const BK_FrameInfo *frame);     // optional; runs after physics slot
+  void (*render)(void *state, const BK_FrameInfo *frame);  // once per frame
+  BK_Result (*event)(void *state, const SDL_Event *event); // optional; see quit rules below
+  void (*quit)(void *state, BK_Result result);             // optional
+  void *userdata;
 } BK_AppDesc;
 
 /// Runs the app. Blessed path is the BK_APP macro (bk_main.h). Calling this
