@@ -4,6 +4,7 @@ typedef struct BK_GfxPipeline BK_GfxPipeline;
 typedef struct BK_GfxBuffer BK_GfxBuffer;
 typedef struct BK_GfxTexture BK_GfxTexture;
 typedef struct BK_GfxSampler BK_GfxSampler;
+typedef struct BK_GfxCanvas BK_GfxCanvas;
 
 /// RGBA color.
 typedef struct BK_Color {
@@ -40,10 +41,22 @@ void bk_gfx_bind_texture(BK_GfxTexture *texture, BK_GfxSampler *sampler);
 /// same frame.
 void bk_gfx_draw_indexed(int index_count);
 
+/// Renders this frame into canvas instead of the swapchain, then blits the canvas
+/// onto the swapchain (stretched to fit, filtered per the canvas's blit_filter) once
+/// the render pass ends -- a canvas smaller than the window is the fixed-internal-
+/// resolution / pixel-art path. The binding is consumed (cleared) by the frame's
+/// flush; pass nullptr (or don't call this) to render into the swapchain directly, as
+/// before. A pipeline bound this frame must have been created with
+/// BK_GfxPipelineDesc.depth_stencil_format matching canvas's depth attachment (or
+/// SDL_GPU_TEXTUREFORMAT_INVALID if canvas has none) -- BK_ASSERTs otherwise.
+void bk_gfx_bind_canvas(BK_GfxCanvas *canvas);
+
 /// Requests that the frame currently being rendered be saved as a BMP to path once
 /// presented. path is copied internally (safe to pass a stack buffer built fresh each
 /// frame) -- the request is consumed after the frame it applies to, so call again
 /// each frame you want captured. Failures (bad path, unsupported swapchain
 /// composition) are logged via SDL_Log with a "BK: " prefix, not returned -- the
-/// actual capture happens later, inside the frame's flush.
+/// actual capture happens later, inside the frame's flush. If bk_gfx_bind_canvas was
+/// also called this frame, the capture happens after the canvas is blitted onto the
+/// swapchain, so it captures the canvas's contents, not a blank clear.
 void bk_gfx_request_capture(const char *path);

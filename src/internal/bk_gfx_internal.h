@@ -2,6 +2,7 @@
 #include <SDL3/SDL_gpu.h>
 #include <bielik/bk_gfx.h>
 #include <bielik/bk_gfx_buffer.h>
+#include <bielik/bk_gfx_canvas.h>
 #include <bielik/bk_gfx_pipeline.h>
 #include <bielik/bk_gfx_texture.h>
 
@@ -46,6 +47,10 @@ int bk__gfx_get_pending_index_count(void);
 /// Test-only accessor: returns the path set via bk_gfx_request_capture this frame, or
 /// an empty string if none has been requested since the last flush.
 const char *bk__gfx_get_pending_capture_path(void);
+
+/// Test-only accessor: returns the canvas bound via bk_gfx_bind_canvas this frame, or
+/// nullptr if none has been bound since the last flush.
+BK_GfxCanvas *bk__gfx_get_pending_canvas(void);
 
 /// Downloads width*height pixels (4 bytes/pixel) from texture via a copy pass added
 /// to cmd, then submits cmd and waits for the GPU fence. cmd must not have been

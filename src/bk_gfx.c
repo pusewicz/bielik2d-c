@@ -1,11 +1,13 @@
 #include "internal/bk_app_internal.h"
 #include "internal/bk_gfx_buffer_internal.h"
+#include "internal/bk_gfx_canvas_internal.h"
 #include "internal/bk_gfx_internal.h"
 #include "internal/bk_gfx_pipeline_internal.h"
 #include "internal/bk_gfx_texture_internal.h"
 #include <SDL3/SDL.h>
 #include <bielik/bk_app.h>
 #include <bielik/bk_gfx.h>
+#include <bielik/bk_gfx_canvas.h>
 
 static BK_Color s_clear_color = {0.1f, 0.1f, 0.12f, 1.0f};
 
@@ -68,6 +70,12 @@ BK_GfxSampler *bk__gfx_get_pending_sampler(void) { return s_pending_sampler; }
 
 int bk__gfx_get_pending_index_count(void) { return s_pending_index_count; }
 
+static BK_GfxCanvas *s_pending_canvas = nullptr;
+
+void bk_gfx_bind_canvas(BK_GfxCanvas *canvas) { s_pending_canvas = canvas; }
+
+BK_GfxCanvas *bk__gfx_get_pending_canvas(void) { return s_pending_canvas; }
+
 static char s_pending_capture_path[512];
 
 void bk_gfx_request_capture(const char *path) {
@@ -98,6 +106,7 @@ void bk__gfx_flush(void) {
     BK_GfxTexture *pending_texture = s_pending_texture;
     BK_GfxSampler *pending_sampler = s_pending_sampler;
     int pending_index_count = s_pending_index_count;
+    BK_GfxCanvas *pending_canvas = s_pending_canvas;
     char pending_capture_path[sizeof s_pending_capture_path];
     SDL_memcpy(pending_capture_path, s_pending_capture_path, sizeof pending_capture_path);
     s_pending_pipeline = nullptr;
@@ -107,6 +116,7 @@ void bk__gfx_flush(void) {
     s_pending_texture = nullptr;
     s_pending_sampler = nullptr;
     s_pending_index_count = 0;
+    s_pending_canvas = nullptr;
     s_pending_capture_path[0] = '\0';
 
     SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(bk_gpu());
@@ -131,15 +141,53 @@ void bk__gfx_flush(void) {
         return;
     }
 
+    // Render into the bound canvas (if any) instead of the swapchain, plus its depth
+    // attachment (if it has one). Rendering directly into the swapchain has no
+    // framework-owned depth attachment yet -- BK_WindowDesc.depth_stencil (added in a
+    // later task) is what makes depth_target_texture non-null on that path too.
+    SDL_GPUTexture *color_target_texture = tex;
+    Uint32 target_w = swap_w;
+    Uint32 target_h = swap_h;
+    SDL_GPUTexture *depth_target_texture = nullptr;
+    SDL_GPUTextureFormat depth_target_format = SDL_GPU_TEXTUREFORMAT_INVALID;
+    if (pending_canvas != nullptr) {
+        color_target_texture = bk__gfx_texture_handle(bk_gfx_canvas_texture(pending_canvas));
+        int canvas_w = 0, canvas_h = 0;
+        bk_gfx_canvas_size(pending_canvas, &canvas_w, &canvas_h);
+        target_w = (Uint32)canvas_w;
+        target_h = (Uint32)canvas_h;
+        depth_target_texture = bk__gfx_canvas_depth_handle(pending_canvas);
+        depth_target_format = bk__gfx_canvas_depth_format(pending_canvas);
+    }
+
     BK_Color c = bk__gfx_get_clear_color();
     SDL_GPUColorTargetInfo target = {
-        .texture = tex,
+        .texture = color_target_texture,
         .clear_color = {c.r, c.g, c.b, c.a},
         .load_op = SDL_GPU_LOADOP_CLEAR,
         .store_op = SDL_GPU_STOREOP_STORE,
     };
-    SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(cmd, &target, 1, nullptr);
+    SDL_GPUDepthStencilTargetInfo depth_target = {0};
+    SDL_GPUDepthStencilTargetInfo *depth_target_ptr = nullptr;
+    if (depth_target_texture != nullptr) {
+        depth_target = (SDL_GPUDepthStencilTargetInfo){
+            .texture = depth_target_texture,
+            .clear_depth = 1.0f,
+            .load_op = SDL_GPU_LOADOP_CLEAR,
+            .store_op = SDL_GPU_STOREOP_STORE,
+            .stencil_load_op = SDL_GPU_LOADOP_CLEAR,
+            .stencil_store_op = SDL_GPU_STOREOP_STORE,
+            .cycle = true,
+        };
+        depth_target_ptr = &depth_target;
+    }
+    SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(cmd, &target, 1, depth_target_ptr);
     if (pending_pipeline != nullptr) {
+        // Catches a depth-attachment/pipeline mismatch (canvas has depth but the
+        // pipeline was created without it, or vice versa, or the formats differ) as a
+        // named assertion here instead of SDL_GPU's opaque "pipeline incompatible with
+        // render pass" validation failure.
+        BK_ASSERT(bk__gfx_pipeline_depth_format(pending_pipeline) == depth_target_format);
         SDL_BindGPUGraphicsPipeline(pass, bk__gfx_pipeline_handle(pending_pipeline));
         if (pending_vertex_buffer != nullptr) {
             SDL_GPUBufferBinding vertex_binding = {
@@ -165,6 +213,23 @@ void bk__gfx_flush(void) {
         }
     }
     SDL_EndGPURenderPass(pass);
+
+    if (pending_canvas != nullptr) {
+        // Stretch the canvas onto the swapchain -- a canvas smaller (or larger) than
+        // the window is the fixed-internal-resolution / pixel-art path. Must run after
+        // SDL_EndGPURenderPass: a texture can't be blit from/to while it's bound as an
+        // active render pass target.
+        SDL_GPUBlitInfo blit_info = {
+            .source = {.texture = color_target_texture, .w = target_w, .h = target_h},
+            .destination = {.texture = tex, .w = swap_w, .h = swap_h},
+            .load_op = SDL_GPU_LOADOP_CLEAR,
+            .clear_color = {c.r, c.g, c.b, c.a},
+            .flip_mode = SDL_FLIP_NONE,
+            .filter = bk__gfx_canvas_blit_filter(pending_canvas),
+            .cycle = true,
+        };
+        SDL_BlitGPUTexture(cmd, &blit_info);
+    }
 
     if (pending_capture_path[0] != '\0') {
         SDL_GPUTextureFormat format = SDL_GetGPUSwapchainTextureFormat(bk_gpu(), bk_window());
