@@ -82,6 +82,7 @@ add_executable(test_gfx_canvas test_gfx_canvas.c)
 target_link_libraries(test_gfx_canvas PRIVATE bielik bk_warnings)
 target_include_directories(test_gfx_canvas PRIVATE ${PROJECT_SOURCE_DIR}/src)
 add_test(NAME test_gfx_canvas COMMAND test_gfx_canvas)
+bk_stage_shaders(test_gfx_canvas)
 
 add_library(test_header_bk_gfx_canvas OBJECT test_header_bk_gfx_canvas.c)
 target_link_libraries(test_header_bk_gfx_canvas PRIVATE bielik bk_warnings)

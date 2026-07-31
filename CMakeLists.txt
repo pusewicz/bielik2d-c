@@ -42,6 +42,8 @@ bk_compile_shader(NAME triangle STAGE fragment)
 bk_compile_shader(NAME textured STAGE vertex)
 bk_compile_shader(NAME textured STAGE fragment)
 bk_compile_shader(NAME gradient STAGE compute)
+bk_compile_shader(NAME depth_tri STAGE vertex)
+bk_compile_shader(NAME depth_tri STAGE fragment)
 
 if(BK_BUILD_TESTS)
     enable_testing()

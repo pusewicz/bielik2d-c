@@ -9,6 +9,7 @@
 struct BK_GfxPipeline {
     SDL_GPUDevice *device;
     SDL_GPUGraphicsPipeline *handle;
+    SDL_GPUTextureFormat depth_stencil_format;
 };
 
 // Picks the variant matching the device's supported shader formats, trying
@@ -90,6 +91,29 @@ static SDL_GPUPrimitiveType s_primitive_type(BK_GfxPrimitiveType type) {
     return SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
 }
 
+static SDL_GPUCompareOp s_compare_op(BK_GfxCompare compare) {
+    switch (compare) {
+    case BK_GFX_COMPARE_ALWAYS:
+        return SDL_GPU_COMPAREOP_ALWAYS;
+    case BK_GFX_COMPARE_NEVER:
+        return SDL_GPU_COMPAREOP_NEVER;
+    case BK_GFX_COMPARE_LESS:
+        return SDL_GPU_COMPAREOP_LESS;
+    case BK_GFX_COMPARE_LESS_EQUAL:
+        return SDL_GPU_COMPAREOP_LESS_OR_EQUAL;
+    case BK_GFX_COMPARE_GREATER:
+        return SDL_GPU_COMPAREOP_GREATER;
+    case BK_GFX_COMPARE_GREATER_EQUAL:
+        return SDL_GPU_COMPAREOP_GREATER_OR_EQUAL;
+    case BK_GFX_COMPARE_EQUAL:
+        return SDL_GPU_COMPAREOP_EQUAL;
+    case BK_GFX_COMPARE_NOT_EQUAL:
+        return SDL_GPU_COMPAREOP_NOT_EQUAL;
+    }
+    BK_ASSERT(false);
+    return SDL_GPU_COMPAREOP_ALWAYS;
+}
+
 BK_GfxPipeline *bk_gfx_pipeline_create(SDL_GPUDevice *device, const BK_GfxPipelineDesc *desc) {
     BK_ASSERT(device != nullptr);
     BK_ASSERT(desc != nullptr);
@@ -169,7 +193,21 @@ BK_GfxPipeline *bk_gfx_pipeline_create(SDL_GPUDevice *device, const BK_GfxPipeli
             {
                 .color_target_descriptions = &color_target,
                 .num_color_targets = 1,
+                .depth_stencil_format = desc->depth_stencil_format,
+                .has_depth_stencil_target =
+                    desc->depth_stencil_format != SDL_GPU_TEXTUREFORMAT_INVALID,
             },
+    };
+
+    // A pipeline can depth-test without depth-writing (e.g. an overlay that reads but
+    // never occludes), so the test is enabled whenever either is requested -- not
+    // gated on depth_write alone.
+    bool has_depth = desc->depth_stencil_format != SDL_GPU_TEXTUREFORMAT_INVALID;
+    info.depth_stencil_state = (SDL_GPUDepthStencilState){
+        .compare_op = s_compare_op(desc->depth_compare),
+        .enable_depth_test =
+            has_depth && (desc->depth_write || desc->depth_compare != BK_GFX_COMPARE_ALWAYS),
+        .enable_depth_write = has_depth && desc->depth_write,
     };
 
     SDL_GPUGraphicsPipeline *handle = SDL_CreateGPUGraphicsPipeline(device, &info);
@@ -189,6 +227,7 @@ BK_GfxPipeline *bk_gfx_pipeline_create(SDL_GPUDevice *device, const BK_GfxPipeli
     }
     pipeline->device = device;
     pipeline->handle = handle;
+    pipeline->depth_stencil_format = desc->depth_stencil_format;
     return pipeline;
 }
 
@@ -203,6 +242,11 @@ void bk_gfx_pipeline_destroy(BK_GfxPipeline *pipeline) {
 SDL_GPUGraphicsPipeline *bk__gfx_pipeline_handle(const BK_GfxPipeline *pipeline) {
     BK_ASSERT(pipeline != nullptr);
     return pipeline->handle;
+}
+
+SDL_GPUTextureFormat bk__gfx_pipeline_depth_format(const BK_GfxPipeline *pipeline) {
+    BK_ASSERT(pipeline != nullptr);
+    return pipeline->depth_stencil_format;
 }
 
 struct BK_GfxComputePipeline {
