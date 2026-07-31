@@ -109,10 +109,24 @@ typedef struct BK_AppState {
   SDL_Window *window;
   SDL_GPUDevice *gpu;
   u64 boot_now_ns;
+  i32 window_w;
+  i32 window_h;
   bool booted; // true once bk__boot reaches a state desc.init had a chance to populate
 } BK_AppState;
 
 static BK_AppState s_app;
+
+// Re-queries the window's drawable size in pixels and clamps to >= 1 (a 0-sized
+// drawable during minimize would otherwise propagate into GPU texture creation
+// downstream). Called once at boot and again on every SDL_EVENT_WINDOW_RESIZED/
+// SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED -- idempotent and cheap enough to run on
+// either event regardless of which one a given platform actually fires.
+static void s_refresh_window_size(void) {
+  i32 w = 0, h = 0;
+  SDL_GetWindowSizeInPixels(s_app.window, &w, &h);
+  s_app.window_w = w > 0 ? w : 1;
+  s_app.window_h = h > 0 ? h : 1;
+}
 
 static SDL_AppResult s_boot_fail(const char *msg) {
   SDL_Log("BK: %s", msg);
@@ -161,6 +175,7 @@ SDL_AppResult bk__boot(BK_AppDesc (*get_desc)(void), void **appstate, int argc, 
     SDL_snprintf(msg, sizeof msg, "SDL_CreateWindow failed: %s", SDL_GetError());
     return s_boot_fail(msg);
   }
+  s_refresh_window_size();
 
   s_app.gpu = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL |
                                       SDL_GPU_SHADERFORMAT_MSL,
@@ -188,6 +203,8 @@ SDL_AppResult bk__boot(BK_AppDesc (*get_desc)(void), void **appstate, int argc, 
     SDL_snprintf(msg, sizeof msg, "SDL_SetGPUSwapchainParameters failed: %s", SDL_GetError());
     return s_boot_fail(msg);
   }
+
+  bk__gfx_configure_swapchain_depth(s_app.desc.window.depth_stencil);
 
   SDL_ShowWindow(s_app.window);
 
@@ -261,6 +278,15 @@ SDL_AppResult bk__iterate(void *appstate) {
 }
 
 SDL_AppResult bk__event(void *appstate, SDL_Event *event) {
+  // Runs before any app .event handler (and isn't skipped by one returning early)
+  // so bk_window_size is always current by the time app code can observe a resize.
+  // Handles both events, idempotently: which one a given platform actually fires
+  // for a given resize isn't guaranteed to be just one of the two.
+  if (event->type == SDL_EVENT_WINDOW_RESIZED ||
+      event->type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) {
+    s_refresh_window_size();
+  }
+
   if (s_app.desc.event) {
     BK_Result result = s_app.desc.event(appstate, event);
     return (SDL_AppResult)result;
@@ -281,6 +307,7 @@ void bk__shutdown(void *appstate, SDL_AppResult result) {
     s_app.desc.quit(appstate, (BK_Result)result);
   }
   bk__arena_free();
+  bk__gfx_shutdown(); // must run before SDL_DestroyGPUDevice below
   if (s_app.gpu && s_app.window) {
     SDL_ReleaseWindowFromGPUDevice(s_app.gpu, s_app.window);
   }
@@ -298,6 +325,15 @@ SDL_Window *bk_window(void) {
 
 SDL_GPUDevice *bk_gpu(void) {
   return s_app.gpu;
+}
+
+void bk_window_size(i32 *out_w, i32 *out_h) {
+  if (out_w != nullptr) {
+    *out_w = s_app.window_w;
+  }
+  if (out_h != nullptr) {
+    *out_h = s_app.window_h;
+  }
 }
 
 void bk_quit(void) {

@@ -59,6 +59,20 @@ typedef enum BK_GfxBlendMode {
   BK_GFX_BLEND_ALPHA,
 } BK_GfxBlendMode;
 
+/// Depth-test comparison function. ALWAYS is first (== 0) so a zero-initialized
+/// BK_GfxPipelineDesc means "no depth test" -- the existing default for every
+/// pipeline created before this enum existed.
+typedef enum BK_GfxCompare {
+  BK_GFX_COMPARE_ALWAYS,
+  BK_GFX_COMPARE_NEVER,
+  BK_GFX_COMPARE_LESS,
+  BK_GFX_COMPARE_LESS_EQUAL,
+  BK_GFX_COMPARE_GREATER,
+  BK_GFX_COMPARE_GREATER_EQUAL,
+  BK_GFX_COMPARE_EQUAL,
+  BK_GFX_COMPARE_NOT_EQUAL,
+} BK_GfxCompare;
+
 /// Opaque graphics pipeline: compiled shaders + fixed-function state, bound in a
 /// render pass before a draw call. Owns no per-frame resources.
 typedef struct BK_GfxPipeline BK_GfxPipeline;
@@ -82,6 +96,15 @@ typedef struct BK_GfxPipelineDesc {
   // use. No bk_ wrapper needed.
   SDL_GPUTextureFormat color_target_format;
   BK_GfxBlendMode blend_mode;
+
+  // SDL_GPU_TEXTUREFORMAT_INVALID (0) => the render pass this pipeline draws into
+  // has no depth-stencil attachment. Set to bk_gfx_depth_stencil_format(device) (see
+  // bk_gfx_canvas.h) to match a canvas's or the swapchain's depth texture -- SDL_GPU
+  // requires a pipeline's declared depth_stencil_format to equal the render pass's
+  // attachment format exactly, or pipeline binding fails validation.
+  SDL_GPUTextureFormat depth_stencil_format;
+  BK_GfxCompare depth_compare;
+  bool depth_write;
 } BK_GfxPipelineDesc;
 
 /// Creates a graphics pipeline against the given device. Logs via SDL_Log ("BK: "

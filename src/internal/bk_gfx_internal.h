@@ -1,6 +1,7 @@
 #pragma once
 #include <bielik/bk_gfx.h>
 #include <bielik/bk_gfx_buffer.h>
+#include <bielik/bk_gfx_canvas.h>
 #include <bielik/bk_gfx_pipeline.h>
 #include <bielik/bk_gfx_texture.h>
 
@@ -47,6 +48,25 @@ i32 bk__gfx_get_pending_index_count(void);
 /// Test-only accessor: returns the path set via bk_gfx_request_capture this frame, or
 /// an empty string if none has been requested since the last flush.
 const char *bk__gfx_get_pending_capture_path(void);
+
+/// Test-only accessor: returns the canvas bound via bk_gfx_bind_canvas this frame, or
+/// nullptr if none has been bound since the last flush.
+BK_GfxCanvas *bk__gfx_get_pending_canvas(void);
+
+/// Enables or disables the framework-owned swapchain depth-stencil texture (mirrors
+/// BK_AppDesc.window.depth_stencil). Called once by bk__boot after the GPU device is
+/// created. When enabled, bk__gfx_flush creates/recreates this texture to match the
+/// drawable size on every frame that doesn't have a canvas bound.
+void bk__gfx_configure_swapchain_depth(bool enabled);
+
+/// Test-only accessor: writes the framework-owned swapchain depth texture's current
+/// size to *out_width/*out_height (both 0 if disabled or not created yet -- it's
+/// created lazily, on the first flush after boot).
+void bk__gfx_get_swapchain_depth_size(i32 *out_width, i32 *out_height);
+
+/// Releases the framework-owned swapchain depth texture, if one was created. Called
+/// once by bk__shutdown, before SDL_DestroyGPUDevice.
+void bk__gfx_shutdown(void);
 
 /// Downloads width*height pixels (4 bytes/pixel) from texture via a copy pass added
 /// to cmd, then submits cmd and waits for the GPU fence. cmd must not have been

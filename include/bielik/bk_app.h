@@ -58,7 +58,10 @@ typedef struct BK_WindowDesc {
   i32 width, height; // default 1280x720
   bool resizable;
   bool fullscreen;
-  bool vsync; // true => VSYNC present mode, false => IMMEDIATE (fallback VSYNC)
+  bool vsync;         // true => VSYNC present mode, false => IMMEDIATE (fallback VSYNC)
+  bool depth_stencil; // true => the swapchain render pass gets a depth-stencil
+                      // attachment sized to the drawable, recreated on resize. See
+                      // bk_gfx_pipeline.h's BK_GfxPipelineDesc.depth_stencil_format.
 } BK_WindowDesc;
 
 /// Fixed/variable timestep configuration.
@@ -96,6 +99,14 @@ SDL_Window *bk_window(void);
 
 /// Valid between init and quit.
 SDL_GPUDevice *bk_gpu(void);
+
+/// Writes the window's current drawable size in pixels to *out_w/*out_h. Equal to
+/// its logical size today -- Bielik2D doesn't request a high-DPI window, so points
+/// == pixels (DPI-aware scaling is deferred). Refreshed on SDL_EVENT_WINDOW_RESIZED
+/// and SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED, before any app .event handler runs, so
+/// it's always current by the time app code observes a resize. Valid between init
+/// and quit.
+void bk_window_size(i32 *out_w, i32 *out_h);
 
 /// Convenience: pushes SDL_EVENT_QUIT. With no custom .event handler, this
 /// is equivalent to returning BK_DONE; with a custom handler, the app

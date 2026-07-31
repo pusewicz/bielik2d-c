@@ -6,6 +6,7 @@
 #include "internal/bk_gfx_texture_internal.h"
 
 #include <bielik/bk_gfx_buffer.h>
+#include <bielik/bk_gfx_canvas.h>
 #include <bielik/bk_gfx_pipeline.h>
 #include <bielik/bk_gfx_texture.h>
 
@@ -49,6 +50,38 @@ static void test_create_compute_target_texture_succeeds(void) {
   BK_GfxTexture *texture =
       bk_gfx_texture_create(device, BK_GFX_TEXTURE_USAGE_COMPUTE_TARGET, 16, 16);
   REQUIRE(texture != nullptr);
+
+  bk_gfx_texture_destroy(texture);
+  SDL_DestroyGPUDevice(device);
+}
+
+static void test_create_render_target_texture_succeeds(void) {
+  SDL_GPUDevice *device = s_create_device();
+
+  BK_GfxTexture *texture =
+      bk_gfx_texture_create(device, BK_GFX_TEXTURE_USAGE_RENDER_TARGET, 64, 64);
+  REQUIRE(texture != nullptr);
+  REQUIRE(bk__gfx_texture_format(texture) == SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM);
+
+  bk_gfx_texture_destroy(texture);
+  SDL_DestroyGPUDevice(device);
+}
+
+// bk_gfx_depth_stencil_format's probe order (D24_UNORM_S8_UINT -> D32_FLOAT_S8_UINT ->
+// D16_UNORM) is guaranteed to land on a real depth-stencil-capable format --
+// SDL_gpu.h's DEPTH_STENCIL_TARGET usage docs promise D16_UNORM plus one of the
+// two S8 formats on every backend. A depth-usage texture created at that format
+// must then actually succeed.
+static void test_create_depth_stencil_texture_succeeds(void) {
+  SDL_GPUDevice *device = s_create_device();
+
+  SDL_GPUTextureFormat format = bk_gfx_depth_stencil_format(device);
+  REQUIRE(format != SDL_GPU_TEXTUREFORMAT_INVALID);
+
+  BK_GfxTexture *texture =
+      bk_gfx_texture_create(device, BK_GFX_TEXTURE_USAGE_DEPTH_STENCIL, 64, 64);
+  REQUIRE(texture != nullptr);
+  REQUIRE(bk__gfx_texture_format(texture) == format);
 
   bk_gfx_texture_destroy(texture);
   SDL_DestroyGPUDevice(device);
@@ -289,6 +322,8 @@ static void test_draw_produces_expected_pixels_from_checkerboard(void) {
 int main(void) {
   test_create_sampler_texture_and_upload_succeeds();
   test_create_compute_target_texture_succeeds();
+  test_create_render_target_texture_succeeds();
+  test_create_depth_stencil_texture_succeeds();
   test_create_samplers_succeeds();
   test_destroy_null_is_noop();
   test_draw_produces_expected_pixels_from_checkerboard();

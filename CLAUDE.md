@@ -15,9 +15,10 @@ Phase 0 (scaffold) and Phase 1 (app core) are implemented: the CMake build syste
 6 all exist. Check the actual directory contents (`PLAN.md` section 4 has the current
 layout) before assuming a command exists beyond what's listed here.
 
-Phase 2 (gfx core) is underway as sub-projects, each with its own spec
+Phase 2 (gfx core) is complete, landed as three sub-projects, each with its own spec
 (`docs/superpowers/specs/`) and implementation plan (`docs/superpowers/plans/`) —
-`PLAN.md` only covers Phase 0/1.
+`PLAN.md` only covers Phase 0/1. Phase 3 (draw2d: draw-list recording, sprite batch,
+atlas, SDF shapes) is next; see `PLAN.md` §7 for its scope.
 
 Build: `cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBK_WERROR=ON && cmake --build build`.
 Test: `ctest --test-dir build --output-on-failure` (or run a single test
@@ -140,6 +141,16 @@ infrastructure into a bounded, checkable deliverable.
   what makes a compute-shader-filled, later-sampled texture (`BK_GFX_TEXTURE_USAGE_
   COMPUTE_TARGET`) a single texture rather than a render-then-copy-into-a-second-
   texture dance.
+- For `DEPTH_STENCIL_TARGET` usage, SDL_gpu.h guarantees `D16_UNORM` plus *one, not
+  necessarily both*, of `D24_UNORM_S8_UINT`/`D32_FLOAT_S8_UINT` on every backend
+  (Metal has no D24S8). Probe with `SDL_GPUTextureSupportsFormat` in that preference
+  order and fall back to D16 — `bk_gfx_depth_stencil_format` does this; don't
+  hardcode a depth format.
+- `SDL_BlitGPUTexture` works directly against the swapchain texture as the
+  destination, including `load_op = SDL_GPU_LOADOP_CLEAR` — confirmed end-to-end
+  (`bk_gfx_bind_canvas`'s canvas-to-swapchain blit runs every frame `06_canvas` is
+  alive). Must run after `SDL_EndGPURenderPass`, not during an open pass — a texture
+  can't be blit from/to while bound as an active render target.
 
 ## Conventions
 

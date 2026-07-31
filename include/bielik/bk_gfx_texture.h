@@ -7,6 +7,8 @@
 typedef enum BK_GfxTextureUsage {
   BK_GFX_TEXTURE_USAGE_SAMPLER,        // CPU-uploaded, sampled by a fragment shader
   BK_GFX_TEXTURE_USAGE_COMPUTE_TARGET, // written by a compute shader, then sampled
+  BK_GFX_TEXTURE_USAGE_RENDER_TARGET,  // color render target, also sampled (canvases)
+  BK_GFX_TEXTURE_USAGE_DEPTH_STENCIL,  // depth-stencil render target, never sampled
 } BK_GfxTextureUsage;
 
 typedef enum BK_GfxFilter {
@@ -19,16 +21,19 @@ typedef enum BK_GfxAddressMode {
   BK_GFX_ADDRESS_REPEAT,
 } BK_GfxAddressMode;
 
-/// An R8G8B8A8_UNORM 2D texture -- the only format this module supports (a
-/// sprite/atlas path). More formats get added when a real use case demands them.
+/// A 2D texture. R8G8B8A8_UNORM for every usage except BK_GFX_TEXTURE_USAGE_DEPTH_STENCIL,
+/// which uses bk_gfx_depth_stencil_format(device) -- the only two formats this module
+/// supports (a sprite/atlas path plus canvases). More formats get added when a real
+/// use case demands them.
 typedef struct BK_GfxTexture BK_GfxTexture;
 
 /// A sampler: filtering + addressing state, bound alongside a texture at draw time.
 typedef struct BK_GfxSampler BK_GfxSampler;
 
-/// Creates a width x height R8G8B8A8_UNORM texture for the given usage. Logs via
-/// SDL_Log ("BK: " prefix) and returns nullptr on SDL_GPU failure. device is
-/// explicit, matching bk_gfx_pipeline_create's precedent.
+/// Creates a width x height texture for the given usage -- R8G8B8A8_UNORM, except
+/// BK_GFX_TEXTURE_USAGE_DEPTH_STENCIL, which uses bk_gfx_depth_stencil_format(device)
+/// (see bk_gfx_canvas.h). Logs via SDL_Log ("BK: " prefix) and returns nullptr on
+/// SDL_GPU failure. device is explicit, matching bk_gfx_pipeline_create's precedent.
 BK_GfxTexture *bk_gfx_texture_create(SDL_GPUDevice *device, BK_GfxTextureUsage usage, i32 width,
                                      i32 height);
 
