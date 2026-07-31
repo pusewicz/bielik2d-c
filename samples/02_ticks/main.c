@@ -35,12 +35,12 @@
 // exactly once per frame. Both counters are reset every time the once-a-
 // second stats line is printed.
 typedef struct AppState {
-    int tick_count;              // ticks since boot; used for --frames N termination
-    int frame_limit;             // 0 => no limit (the default; run until closed/ESC)
-    int ticks_this_second;       // ticks since the last stats line
-    int renders_this_second;     // frames rendered since the last stats line
-    f64 last_print_real_time;    // frame->real_time as of the last stats line
-    bool hitch_requested;        // set by event() on SPACE, consumed by update()
+    int tick_count;           // ticks since boot; used for --frames N termination
+    int frame_limit;          // 0 => no limit (the default; run until closed/ESC)
+    int ticks_this_second;    // ticks since the last stats line
+    int renders_this_second;  // frames rendered since the last stats line
+    f64 last_print_real_time; // frame->real_time as of the last stats line
+    bool hitch_requested;     // set by event() on SPACE, consumed by update()
 } AppState;
 
 static AppState s_state;
