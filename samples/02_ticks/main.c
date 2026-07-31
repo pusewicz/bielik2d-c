@@ -39,7 +39,7 @@ typedef struct AppState {
     int frame_limit;             // 0 => no limit (the default; run until closed/ESC)
     int ticks_this_second;       // ticks since the last stats line
     int renders_this_second;     // frames rendered since the last stats line
-    double last_print_real_time; // f->real_time as of the last stats line
+    f64 last_print_real_time;    // frame->real_time as of the last stats line
     bool hitch_requested;        // set by event() on SPACE, consumed by update()
 } AppState;
 
@@ -69,14 +69,14 @@ static BK_Result app_init(void **state, int argc, char **argv) {
 // unit in this mode — checking the limit here is exactly where 01_clear's
 // equivalent variable-dt check lives, just against the tick counter
 // instead of the frame counter.
-static BK_Result app_update(void *state, const BK_FrameInfo *f) {
-    (void)f;
-    AppState *s = state;
-    s->tick_count++;
-    s->ticks_this_second++;
+static BK_Result app_update(void *state, const BK_FrameInfo *frame) {
+    (void)frame;
+    AppState *app = state;
+    app->tick_count++;
+    app->ticks_this_second++;
 
-    if (s->hitch_requested) {
-        s->hitch_requested = false;
+    if (app->hitch_requested) {
+        app->hitch_requested = false;
         // Deliberately naughty: never block inside update() in real game
         // code — a real game would stall input, physics, and audio right
         // along with this thread. Doing it here, once, on purpose, is the
@@ -91,7 +91,7 @@ static BK_Result app_update(void *state, const BK_FrameInfo *f) {
         SDL_Delay(300);
     }
 
-    if (s->frame_limit > 0 && s->tick_count >= s->frame_limit) {
+    if (app->frame_limit > 0 && app->tick_count >= app->frame_limit) {
         return BK_DONE;
     }
     return BK_CONTINUE;
@@ -102,22 +102,22 @@ static BK_Result app_update(void *state, const BK_FrameInfo *f) {
 // once-a-second stats line live, since render always has exactly one call
 // per frame and gets the interpolation alpha / real_time / sim_time fields
 // the tick loop doesn't.
-static void app_render(void *state, const BK_FrameInfo *f) {
-    AppState *s = state;
-    s->renders_this_second++;
+static void app_render(void *state, const BK_FrameInfo *frame) {
+    AppState *app = state;
+    app->renders_this_second++;
 
-    if (f->real_time - s->last_print_real_time >= 1.0) {
+    if (frame->real_time - app->last_print_real_time >= 1.0) {
         // drift = how far the fixed-tick simulation clock has diverged
         // from the wall clock. It should stay small and bounded (well
         // under a second) even across the hitch demo above — that's the
         // clamp/cap combo doing its job instead of letting sim_time run
         // away trying to fully "catch up" in one shot.
-        double drift = f->sim_time - f->real_time;
-        printf("renders/sec=%d ticks/sec=%d alpha=%.3f drift=%.4fs\n", s->renders_this_second,
-               s->ticks_this_second, f->alpha, drift);
-        s->renders_this_second = 0;
-        s->ticks_this_second = 0;
-        s->last_print_real_time = f->real_time;
+        f64 drift = frame->sim_time - frame->real_time;
+        printf("renders/sec=%d ticks/sec=%d alpha=%.3f drift=%.4fs\n", app->renders_this_second,
+               app->ticks_this_second, frame->alpha, drift);
+        app->renders_this_second = 0;
+        app->ticks_this_second = 0;
+        app->last_print_real_time = frame->real_time;
     }
 }
 
@@ -126,17 +126,17 @@ static void app_render(void *state, const BK_FrameInfo *f) {
 // entirely (the framework's built-in SDL_EVENT_QUIT-only handling only
 // kicks in when .event is left NULL). SPACE just sets a flag; the actual
 // (deliberately bad) blocking happens in update(), never here.
-static BK_Result app_event(void *state, const SDL_Event *e) {
-    AppState *s = state;
-    if (e->type == SDL_EVENT_QUIT) {
+static BK_Result app_event(void *state, const SDL_Event *event) {
+    AppState *app = state;
+    if (event->type == SDL_EVENT_QUIT) {
         return BK_DONE;
     }
-    if (e->type == SDL_EVENT_KEY_DOWN) {
-        if (e->key.key == SDLK_ESCAPE) {
+    if (event->type == SDL_EVENT_KEY_DOWN) {
+        if (event->key.key == SDLK_ESCAPE) {
             return BK_DONE;
         }
-        if (e->key.key == SDLK_SPACE) {
-            s->hitch_requested = true;
+        if (event->key.key == SDLK_SPACE) {
+            app->hitch_requested = true;
         }
     }
     return BK_CONTINUE;
