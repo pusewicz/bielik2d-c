@@ -1,0 +1,4 @@
+# Mechanical clang-format sweep -- see the commit message for context.
+# `git config blame.ignoreRevsFile .git-blame-ignore-revs` to use locally;
+# GitHub's blame view honors this file automatically.
+1ff48379c4fbd64909d660298992f06f3ce01447
