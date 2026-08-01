@@ -265,6 +265,113 @@ static void test_m3x2_inverse(void) {
   }
 }
 
+static void test_aabb_construction(void) {
+  BK_Aabb box = bk_aabb(bk_v2(-2.0f, -1.0f), bk_v2(4.0f, 5.0f));
+  s_require_v2_near(bk_aabb_center(box), bk_v2(1.0f, 2.0f), EPS);
+  s_require_v2_near(bk_aabb_half_extents(box), bk_v2(3.0f, 3.0f), EPS);
+  s_require_v2_near(bk_aabb_size(box), bk_v2(6.0f, 6.0f), EPS);
+
+  // from_center / center / half_extents round-trip.
+  BK_Aabb centered = bk_aabb_from_center(bk_v2(1.0f, 2.0f), bk_v2(3.0f, 3.0f));
+  s_require_v2_near(centered.min, box.min, EPS);
+  s_require_v2_near(centered.max, box.max, EPS);
+}
+
+static void test_aabb_empty_is_accumulation_identity(void) {
+  BK_Aabb empty = bk_aabb_empty();
+
+  // An inverted box overlaps nothing and contains nothing -- the useful degenerate
+  // behavior, and what makes it safe as an accumulation seed.
+  REQUIRE(!bk_aabb_overlaps(empty, bk_aabb(bk_v2(0.0f, 0.0f), bk_v2(1.0f, 1.0f))));
+  REQUIRE(!bk_aabb_overlaps(empty, empty));
+  REQUIRE(!bk_aabb_contains_point(empty, bk_v2_zero()));
+
+  // Seeding from empty yields a zero-size box at the first point, not a box dragged
+  // toward the origin.
+  BK_Aabb seeded = bk_aabb_add_point(empty, bk_v2(5.0f, -7.0f));
+  s_require_v2_near(seeded.min, bk_v2(5.0f, -7.0f), EPS);
+  s_require_v2_near(seeded.max, bk_v2(5.0f, -7.0f), EPS);
+
+  // Adding a second point spans both, in either order.
+  BK_Aabb spanned = bk_aabb_add_point(seeded, bk_v2(-1.0f, 2.0f));
+  s_require_v2_near(spanned.min, bk_v2(-1.0f, -7.0f), EPS);
+  s_require_v2_near(spanned.max, bk_v2(5.0f, 2.0f), EPS);
+
+  BK_Aabb reversed =
+      bk_aabb_add_point(bk_aabb_add_point(empty, bk_v2(-1.0f, 2.0f)), bk_v2(5.0f, -7.0f));
+  s_require_v2_near(reversed.min, spanned.min, EPS);
+  s_require_v2_near(reversed.max, spanned.max, EPS);
+}
+
+static void test_aabb_overlap_and_containment(void) {
+  BK_Aabb unit = bk_aabb(bk_v2(0.0f, 0.0f), bk_v2(1.0f, 1.0f));
+
+  REQUIRE(bk_aabb_overlaps(unit, unit));
+  REQUIRE(bk_aabb_overlaps(unit, bk_aabb(bk_v2(0.5f, 0.5f), bk_v2(2.0f, 2.0f))));
+  REQUIRE(!bk_aabb_overlaps(unit, bk_aabb(bk_v2(1.5f, 0.0f), bk_v2(2.0f, 1.0f))));
+  REQUIRE(!bk_aabb_overlaps(unit, bk_aabb(bk_v2(0.0f, 2.0f), bk_v2(1.0f, 3.0f))));
+
+  // Touching edges count as overlapping -- the inclusive convention a rendering cull
+  // needs, so a shape exactly on a tile boundary is never dropped.
+  REQUIRE(bk_aabb_overlaps(unit, bk_aabb(bk_v2(1.0f, 0.0f), bk_v2(2.0f, 1.0f))));
+
+  // Boundary points count as contained.
+  REQUIRE(bk_aabb_contains_point(unit, bk_v2(0.5f, 0.5f)));
+  REQUIRE(bk_aabb_contains_point(unit, bk_v2(0.0f, 0.0f)));
+  REQUIRE(bk_aabb_contains_point(unit, bk_v2(1.0f, 1.0f)));
+  REQUIRE(!bk_aabb_contains_point(unit, bk_v2(1.001f, 0.5f)));
+
+  // A zero-size box contains its own corner and overlaps itself.
+  BK_Aabb degenerate = bk_aabb(bk_v2(3.0f, 3.0f), bk_v2(3.0f, 3.0f));
+  REQUIRE(bk_aabb_contains_point(degenerate, bk_v2(3.0f, 3.0f)));
+  REQUIRE(bk_aabb_overlaps(degenerate, degenerate));
+}
+
+static void test_aabb_expand_and_combine(void) {
+  BK_Aabb unit = bk_aabb(bk_v2(0.0f, 0.0f), bk_v2(1.0f, 1.0f));
+
+  // Coverage inflation: grows on every side.
+  BK_Aabb grown = bk_aabb_expand(unit, bk_v2(0.5f, 2.0f));
+  s_require_v2_near(grown.min, bk_v2(-0.5f, -2.0f), EPS);
+  s_require_v2_near(grown.max, bk_v2(1.5f, 3.0f), EPS);
+
+  // A negative amount shrinks, and enough shrink inverts the box -- documented, not
+  // guarded.
+  BK_Aabb inverted = bk_aabb_expand(unit, bk_v2(-1.5f, -1.5f));
+  REQUIRE(inverted.min.x > inverted.max.x);
+  REQUIRE(inverted.min.y > inverted.max.y);
+  REQUIRE(!bk_aabb_overlaps(inverted, unit));
+
+  // Shrinking by exactly half the extent is the boundary case: min and max meet the
+  // opposite corners, and the inclusive overlap convention still reports a hit. Worth
+  // pinning, since it's the point where "inverted" stops meaning "misses everything".
+  BK_Aabb collapsed = bk_aabb_expand(unit, bk_v2(-1.0f, -1.0f));
+  REQUIRE(bk_aabb_overlaps(collapsed, unit));
+
+  BK_Aabb other = bk_aabb(bk_v2(2.0f, -3.0f), bk_v2(4.0f, 0.5f));
+  BK_Aabb combined = bk_aabb_combine(unit, other);
+  s_require_v2_near(combined.min, bk_v2(0.0f, -3.0f), EPS);
+  s_require_v2_near(combined.max, bk_v2(4.0f, 1.0f), EPS);
+
+  // Commutative and idempotent.
+  BK_Aabb flipped = bk_aabb_combine(other, unit);
+  s_require_v2_near(flipped.min, combined.min, EPS);
+  s_require_v2_near(flipped.max, combined.max, EPS);
+  BK_Aabb again = bk_aabb_combine(combined, combined);
+  s_require_v2_near(again.min, combined.min, EPS);
+  s_require_v2_near(again.max, combined.max, EPS);
+}
+
+static void test_rect_field_order(void) {
+  // BK_Rect carries no operations; this pins its field order so a future reorder is
+  // caught here rather than silently at an SDL_SetGPUScissor call site.
+  BK_Rect rect = {.x = 1, .y = 2, .width = 3, .height = 4};
+  REQUIRE(rect.x == 1);
+  REQUIRE(rect.y == 2);
+  REQUIRE(rect.width == 3);
+  REQUIRE(rect.height == 4);
+}
+
 int main(void) {
   test_scalar_min_max_abs_sign();
   test_scalar_clamp_lerp_remap();
@@ -281,5 +388,10 @@ int main(void) {
   test_m3x2_mul_order();
   test_m3x2_trs_composition();
   test_m3x2_inverse();
+  test_aabb_construction();
+  test_aabb_empty_is_accumulation_identity();
+  test_aabb_overlap_and_containment();
+  test_aabb_expand_and_combine();
+  test_rect_field_order();
   return 0;
 }

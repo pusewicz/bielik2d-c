@@ -310,3 +310,83 @@ typedef struct BK_M3x2 {
 }
 
 static_assert(sizeof(BK_M3x2) == 24, "BK_M3x2 must be six tightly packed f32");
+
+/// An axis-aligned bounding box. min <= max on both axes is the caller's invariant;
+/// nothing here enforces it, and an inverted box reports no overlap and contains no
+/// point, which is the useful degenerate behavior.
+typedef struct BK_Aabb {
+  BK_V2 min, max;
+} BK_Aabb;
+
+/// Constructs a box from its corners.
+[[nodiscard]] static inline BK_Aabb bk_aabb(BK_V2 min, BK_V2 max) {
+  return (BK_Aabb){min, max};
+}
+
+/// Constructs a box from its center and half-extents.
+[[nodiscard]] static inline BK_Aabb bk_aabb_from_center(BK_V2 center, BK_V2 half_extents) {
+  return (BK_Aabb){bk_v2_sub(center, half_extents), bk_v2_add(center, half_extents)};
+}
+
+/// An inverted box (min at +inf, max at -inf) -- the identity for bk_aabb_add_point, so
+/// bounds accumulation starts here. A zero box at the origin would instead drag every
+/// accumulated bound toward (0, 0).
+[[nodiscard]] static inline BK_Aabb bk_aabb_empty(void) {
+  return (BK_Aabb){
+      {INFINITY,  INFINITY },
+      {-INFINITY, -INFINITY}
+  };
+}
+
+/// The box's midpoint.
+[[nodiscard]] static inline BK_V2 bk_aabb_center(BK_Aabb box) {
+  return bk_v2_scale(bk_v2_add(box.min, box.max), 0.5f);
+}
+
+/// Half the box's width and height.
+[[nodiscard]] static inline BK_V2 bk_aabb_half_extents(BK_Aabb box) {
+  return bk_v2_scale(bk_v2_sub(box.max, box.min), 0.5f);
+}
+
+/// The box's full width and height.
+[[nodiscard]] static inline BK_V2 bk_aabb_size(BK_Aabb box) {
+  return bk_v2_sub(box.max, box.min);
+}
+
+/// Grows the box by amount on every side. The draw layer's coverage inflation (radius +
+/// stroke + antialias band) is exactly this. A negative amount shrinks, and enough
+/// shrink inverts the box.
+[[nodiscard]] static inline BK_Aabb bk_aabb_expand(BK_Aabb box, BK_V2 amount) {
+  return (BK_Aabb){bk_v2_sub(box.min, amount), bk_v2_add(box.max, amount)};
+}
+
+/// The box grown to contain point. Accumulates polygon and path bounds.
+[[nodiscard]] static inline BK_Aabb bk_aabb_add_point(BK_Aabb box, BK_V2 point) {
+  return (BK_Aabb){bk_v2_min(box.min, point), bk_v2_max(box.max, point)};
+}
+
+/// The smallest box containing both inputs.
+[[nodiscard]] static inline BK_Aabb bk_aabb_combine(BK_Aabb lhs, BK_Aabb rhs) {
+  return (BK_Aabb){bk_v2_min(lhs.min, rhs.min), bk_v2_max(lhs.max, rhs.max)};
+}
+
+/// Whether two boxes intersect. Touching edges count as overlapping -- the inclusive
+/// convention a rendering cull needs, so a shape exactly on a tile boundary is never
+/// dropped.
+[[nodiscard]] static inline bool bk_aabb_overlaps(BK_Aabb lhs, BK_Aabb rhs) {
+  return lhs.min.x <= rhs.max.x && rhs.min.x <= lhs.max.x && lhs.min.y <= rhs.max.y &&
+         rhs.min.y <= lhs.max.y;
+}
+
+/// Whether the box contains point. Points on the boundary count as contained.
+[[nodiscard]] static inline bool bk_aabb_contains_point(BK_Aabb box, BK_V2 point) {
+  return point.x >= box.min.x && point.x <= box.max.x && point.y >= box.min.y &&
+         point.y <= box.max.y;
+}
+
+/// An integer pixel rectangle. Carries no operations: it exists so the scissor and
+/// viewport API has one type instead of four loose ints, and both are handed to SDL_GPU
+/// field by field.
+typedef struct BK_Rect {
+  i32 x, y, width, height;
+} BK_Rect;
