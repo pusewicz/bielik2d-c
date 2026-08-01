@@ -71,6 +71,39 @@ static void test_create_and_destroy_pipeline_succeeds(void) {
   SDL_DestroyGPUDevice(device);
 }
 
+static void test_every_blend_mode_creates_a_pipeline(void) {
+  // Defensive, independent of test-function call order: see the identical call in
+  // test_create_and_destroy_pipeline_succeeds above for why this is required.
+  SDL_Init(SDL_INIT_VIDEO);
+  SDL_GPUDevice *device = SDL_CreateGPUDevice(
+      SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_MSL, false,
+      nullptr);
+  REQUIRE(device != nullptr);
+
+  const BK_GfxBlendMode modes[] = {
+      BK_GFX_BLEND_NONE,     BK_GFX_BLEND_ALPHA,    BK_GFX_BLEND_PREMULTIPLIED,
+      BK_GFX_BLEND_ADDITIVE, BK_GFX_BLEND_MULTIPLY, BK_GFX_BLEND_SCREEN,
+  };
+  for (usize i = 0; i < sizeof modes / sizeof modes[0]; ++i) {
+    BK_GfxShaderDesc vertex = s_load_triangle_shader("vertex");
+    BK_GfxShaderDesc fragment = s_load_triangle_shader("fragment");
+    BK_GfxPipelineDesc desc = {
+        .vertex_shader = vertex,
+        .fragment_shader = fragment,
+        .primitive_type = BK_GFX_PRIMITIVE_TRIANGLE_LIST,
+        .color_target_format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
+        .blend_mode = modes[i],
+    };
+    BK_GfxPipeline *pipeline = bk_gfx_pipeline_create(device, &desc);
+    REQUIRE(pipeline != nullptr);
+    bk_gfx_pipeline_destroy(pipeline);
+    s_free_shader(&vertex);
+    s_free_shader(&fragment);
+  }
+
+  SDL_DestroyGPUDevice(device);
+}
+
 static void test_out_of_range_vertex_counts_return_null(void) {
   // Defensive, independent of test-function call order: see the identical call
   // in test_create_and_destroy_pipeline_succeeds above for why this is required.
@@ -198,6 +231,7 @@ static void test_draw_produces_expected_pixels(void) {
 
 int main(void) {
   test_create_and_destroy_pipeline_succeeds();
+  test_every_blend_mode_creates_a_pipeline();
   test_out_of_range_vertex_counts_return_null();
   test_draw_produces_expected_pixels();
   test_destroy_null_is_noop();

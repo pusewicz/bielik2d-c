@@ -12,14 +12,20 @@ typedef struct BK_GfxShaderVariant {
 
 /// One shader stage, precompiled to all three backend formats; bk_gfx_pipeline_create
 /// selects the variant matching the device's supported shader formats
-/// (SDL_GetGPUShaderFormats). Resource counts must match what the shader binary
-/// declares (SDL_GPU validates this at creation). A variant with code == nullptr is
-/// treated as unavailable.
+/// (SDL_GetGPUShaderFormats). A variant with code == nullptr is treated as unavailable.
+///
+/// Every resource count below must match what the shader binary actually declares, and
+/// getting one wrong fails *silently*: not at SDL_CreateGPUShader, not at pipeline
+/// creation, but later at draw/dispatch time, where the whole command buffer is dropped
+/// with no SDL_Log output and no error return. The symptom is a target that reads back
+/// as all-zero bytes -- not even the clear color. Check these first when that happens.
 typedef struct BK_GfxShaderDesc {
   BK_GfxShaderVariant spirv;
   BK_GfxShaderVariant dxil;
   BK_GfxShaderVariant msl;
   i32 num_samplers;
+  i32 num_storage_buffers; // storage buffers this stage reads; see
+                           // bk_gfx_bind_vertex_storage_buffer / _fragment_
   i32 num_uniform_buffers;
 } BK_GfxShaderDesc;
 
@@ -52,11 +58,18 @@ typedef enum BK_GfxPrimitiveType {
   BK_GFX_PRIMITIVE_LINE_LIST,
 } BK_GfxPrimitiveType;
 
-/// Fixed-function blend state. Two modes cover 2D's needs; more get added when a
-/// real use case needs SDL_GPU's full blend-factor/op matrix.
+/// Fixed-function blend state. Each mode names its exact source/destination color
+/// factors rather than a prose label, because "alpha blending" is ambiguous about
+/// premultiplication. BK_GFX_BLEND_ALPHA takes a straight-alpha source; the other four
+/// blended modes take a premultiplied one (what bk_color_premultiply produces). Alpha
+/// channel blending is ONE / ONE_MINUS_SRC_ALPHA for every blended mode.
 typedef enum BK_GfxBlendMode {
-  BK_GFX_BLEND_NONE,
-  BK_GFX_BLEND_ALPHA,
+  BK_GFX_BLEND_NONE,          // blending disabled
+  BK_GFX_BLEND_ALPHA,         // SRC_ALPHA, ONE_MINUS_SRC_ALPHA -- straight alpha
+  BK_GFX_BLEND_PREMULTIPLIED, // ONE, ONE_MINUS_SRC_ALPHA
+  BK_GFX_BLEND_ADDITIVE,      // ONE, ONE                 -- glows, particles
+  BK_GFX_BLEND_MULTIPLY,      // DST_COLOR, ZERO          -- shadows, tints
+  BK_GFX_BLEND_SCREEN,        // ONE, ONE_MINUS_SRC_COLOR -- light accumulation
 } BK_GfxBlendMode;
 
 /// Depth-test comparison function. ALWAYS is first (== 0) so a zero-initialized
