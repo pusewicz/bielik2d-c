@@ -56,6 +56,22 @@ void bk_gfx_push_vertex_uniform(const void *data, u32 size);
 /// Fragment-stage equivalent of bk_gfx_push_vertex_uniform, at fragment uniform slot 0.
 void bk_gfx_push_fragment_uniform(const void *data, u32 size);
 
+/// Records an instanced draw: instance_count copies of vertex_count vertices. The
+/// vertex shader reads gl_InstanceIndex (SV_InstanceID) to pick per-instance data,
+/// typically out of a bound vertex storage buffer.
+void bk_gfx_draw_instanced(i32 vertex_count, i32 instance_count);
+
+/// Clips every subsequent draw this frame to rect, in pixels of the render target with
+/// a top-left origin -- the bound canvas's dimensions when one is bound, the
+/// swapchain's otherwise, NOT the window's. A width or height <= 0 means "no scissor"
+/// (the full target), which is also the default, so passing a zero rect resets it.
+void bk_gfx_set_scissor(BK_Rect rect);
+
+/// Maps every subsequent draw this frame onto rect, in pixels of the render target with
+/// a top-left origin -- same canvas-relative meaning as bk_gfx_set_scissor. A width or
+/// height <= 0 means "full target", which is also the default.
+void bk_gfx_set_viewport(BK_Rect rect);
+
 /// Renders this frame into canvas instead of the swapchain, then blits the canvas
 /// onto the swapchain (stretched to fit, filtered per the canvas's blit_filter) once
 /// the render pass ends -- a canvas smaller than the window is the fixed-internal-

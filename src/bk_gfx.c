@@ -167,6 +167,20 @@ void bk_gfx_push_fragment_uniform(const void *data, u32 size) {
   s_state.fragment_uniform_size = size;
 }
 
+void bk_gfx_draw_instanced(i32 vertex_count, i32 instance_count) {
+  BK_ASSERT(vertex_count > 0);
+  BK_ASSERT(instance_count > 0);
+  s_record_draw(vertex_count, 0, instance_count);
+}
+
+void bk_gfx_set_scissor(BK_Rect rect) {
+  s_state.scissor = rect;
+}
+
+void bk_gfx_set_viewport(BK_Rect rect) {
+  s_state.viewport = rect;
+}
+
 // Frame-level, not a record field: see BK_GfxDrawCmd's comment and spec section 5.
 static BK_GfxCanvas *s_pending_canvas = nullptr;
 
@@ -387,6 +401,27 @@ void bk__gfx_flush(void) {
     if (draw->fragment_uniform != nullptr) {
       SDL_PushGPUFragmentUniformData(cmd, 0, draw->fragment_uniform, draw->fragment_uniform_size);
     }
+    // Set explicitly on every record rather than only when non-default: SDL has no
+    // "reset scissor" call, so skipping would leak the previous record's rect into a
+    // record that never set one.
+    SDL_Rect scissor = {0, 0, (int)target_w, (int)target_h};
+    if (draw->scissor.width > 0 && draw->scissor.height > 0) {
+      scissor =
+          (SDL_Rect){draw->scissor.x, draw->scissor.y, draw->scissor.width, draw->scissor.height};
+    }
+    SDL_SetGPUScissor(pass, &scissor);
+
+    SDL_GPUViewport viewport = {0.0f, 0.0f, (float)target_w, (float)target_h, 0.0f, 1.0f};
+    if (draw->viewport.width > 0 && draw->viewport.height > 0) {
+      viewport = (SDL_GPUViewport){(float)draw->viewport.x,
+                                   (float)draw->viewport.y,
+                                   (float)draw->viewport.width,
+                                   (float)draw->viewport.height,
+                                   0.0f,
+                                   1.0f};
+    }
+    SDL_SetGPUViewport(pass, &viewport);
+
     if (draw->index_count > 0) {
       SDL_DrawGPUIndexedPrimitives(pass, (Uint32)draw->index_count, (Uint32)draw->instance_count, 0,
                                    0, 0);

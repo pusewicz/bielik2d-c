@@ -198,6 +198,38 @@ static void test_uniform_pushes_are_per_stage(void) {
   bk__gfx_flush();
 }
 
+static void test_scissor_viewport_and_instance_count_are_recorded(void) {
+  static int dummy;
+  bk__gfx_flush();
+
+  bk_gfx_bind_pipeline((BK_GfxPipeline *)&dummy);
+  bk_gfx_set_scissor((BK_Rect){.x = 4, .y = 8, .width = 16, .height = 32});
+  bk_gfx_set_viewport((BK_Rect){.x = 1, .y = 2, .width = 3, .height = 4});
+  bk_gfx_draw_instanced(4, 7);
+
+  const BK_GfxDrawCmd *draw = bk__gfx_get_draw_cmd(0);
+  REQUIRE(draw != nullptr);
+  REQUIRE(draw->scissor.x == 4);
+  REQUIRE(draw->scissor.y == 8);
+  REQUIRE(draw->scissor.width == 16);
+  REQUIRE(draw->scissor.height == 32);
+  REQUIRE(draw->viewport.width == 3);
+  REQUIRE(draw->viewport.height == 4);
+  REQUIRE(draw->vertex_count == 4);
+  REQUIRE(draw->instance_count == 7);
+
+  // A zero rect resets to "full target" -- the documented way to clear a scissor,
+  // rather than a separate clear function.
+  bk_gfx_set_scissor((BK_Rect){0});
+  bk_gfx_draw(3);
+  const BK_GfxDrawCmd *reset = bk__gfx_get_draw_cmd(1);
+  REQUIRE(reset != nullptr);
+  REQUIRE(reset->scissor.width == 0);
+  REQUIRE(reset->scissor.height == 0);
+
+  bk__gfx_flush();
+}
+
 // Part 2: end-to-end replay through a real window and GPU device. Two overlapping
 // full-screen quads are drawn in one frame; the second must win at the overlap. The
 // frame is captured to a BMP and read back, and the whole thing runs twice with the
@@ -213,6 +245,7 @@ constexpr u8 FIRST_R = 200, FIRST_G = 40, FIRST_B = 40;
 constexpr u8 SECOND_R = 40, SECOND_G = 60, SECOND_B = 200;
 
 static bool s_second_drawn_last = true; // which color should win
+static bool s_scissor_mode = false;     // draw one clipped quad instead of two
 static char s_capture_path[512];
 static int s_frames = 0;
 
@@ -312,16 +345,24 @@ static void test_render(void *state, const BK_FrameInfo *frame) {
   bk_gfx_set_clear_color((BK_Color){0.0f, 0.0f, 0.0f, 1.0f});
   bk_gfx_bind_pipeline(s_pipeline);
 
-  // Two draws, one frame -- the whole point. Both cover the full target, so the one
-  // recorded second must be the one visible.
-  BK_GfxBuffer *first = s_second_drawn_last ? s_first_quad : s_second_quad;
-  BK_GfxBuffer *second = s_second_drawn_last ? s_second_quad : s_first_quad;
-  bk_gfx_bind_vertex_buffer(first);
-  bk_gfx_draw(6);
-  bk_gfx_bind_vertex_buffer(second);
-  bk_gfx_draw(6);
-
-  REQUIRE(bk__gfx_get_draw_count() == 2);
+  if (s_scissor_mode) {
+    // One full-target quad, clipped to the left half. The right half must keep the
+    // clear color -- proving the scissor was applied, not ignored.
+    bk_gfx_set_scissor((BK_Rect){.x = 0, .y = 0, .width = 32, .height = 64});
+    bk_gfx_bind_vertex_buffer(s_first_quad);
+    bk_gfx_draw(6);
+    REQUIRE(bk__gfx_get_draw_count() == 1);
+  } else {
+    // Two draws, one frame -- the whole point. Both cover the full target, so the one
+    // recorded second must be the one visible.
+    BK_GfxBuffer *first = s_second_drawn_last ? s_first_quad : s_second_quad;
+    BK_GfxBuffer *second = s_second_drawn_last ? s_second_quad : s_first_quad;
+    bk_gfx_bind_vertex_buffer(first);
+    bk_gfx_draw(6);
+    bk_gfx_bind_vertex_buffer(second);
+    bk_gfx_draw(6);
+    REQUIRE(bk__gfx_get_draw_count() == 2);
+  }
   bk_gfx_request_capture(s_capture_path);
 }
 
@@ -381,11 +422,64 @@ static bool s_run_and_check(bool second_last, u8 red, u8 green, u8 blue) {
 }
 
 static void test_replay_order_matches_record_order(void) {
+  s_scissor_mode = false;
   // Both directions. Asserting only one would pass against a backwards replay.
   if (!s_run_and_check(true, SECOND_R, SECOND_G, SECOND_B)) {
     return;
   }
   REQUIRE(s_run_and_check(false, FIRST_R, FIRST_G, FIRST_B));
+}
+
+// Runs the app in scissor mode and checks a pixel inside the scissored region and one
+// outside it. Same skip-on-no-capture contract as s_run_and_check.
+static void test_scissor_clips_the_rendered_frame(void) {
+  s_scissor_mode = true;
+  s_frames = 0;
+
+  const char *base_path = SDL_GetBasePath();
+  REQUIRE(base_path != nullptr);
+  SDL_snprintf(s_capture_path, sizeof s_capture_path, "%stest_gfx_drawlist_scissor.bmp", base_path);
+  SDL_RemovePath(s_capture_path);
+
+  BK_AppDesc desc = {
+      .window = {.title = "test_gfx_drawlist_scissor", .width = 64, .height = 64},
+      .time = {.tick_hz = 60},
+      .init = test_init,
+      .update = test_update,
+      .render = test_render,
+      .quit = test_quit,
+  };
+  bk_run(&desc, 0, nullptr);
+
+  SDL_Surface *surface = SDL_LoadBMP(s_capture_path);
+  if (surface == nullptr) {
+    printf("test_gfx_drawlist: no scissor capture produced, skipping pixel check\n");
+    s_scissor_mode = false;
+    return;
+  }
+  SDL_Surface *rgba = SDL_ConvertSurface(surface, SDL_PIXELFORMAT_RGBA32);
+  SDL_DestroySurface(surface);
+  REQUIRE(rgba != nullptr);
+
+  const u8 *pixels = (const u8 *)rgba->pixels;
+  constexpr int tolerance = 8;
+
+  // Inside the scissor (left quarter): the quad's color.
+  const u8 *inside = pixels + ((rgba->h / 2) * rgba->pitch) + (rgba->w / 4) * 4;
+  REQUIRE(SDL_abs((int)inside[0] - (int)FIRST_R) <= tolerance);
+  REQUIRE(SDL_abs((int)inside[1] - (int)FIRST_G) <= tolerance);
+  REQUIRE(SDL_abs((int)inside[2] - (int)FIRST_B) <= tolerance);
+
+  // Outside it (right quarter): untouched clear color. Without this half the test
+  // would pass against a scissor that was silently ignored.
+  const u8 *outside = pixels + ((rgba->h / 2) * rgba->pitch) + (rgba->w * 3 / 4) * 4;
+  REQUIRE(outside[0] <= tolerance);
+  REQUIRE(outside[1] <= tolerance);
+  REQUIRE(outside[2] <= tolerance);
+
+  SDL_DestroySurface(rgba);
+  SDL_RemovePath(s_capture_path);
+  s_scissor_mode = false;
 }
 
 int main(void) {
@@ -396,7 +490,9 @@ int main(void) {
   test_storage_buffer_slots_are_recorded();
   test_uniform_data_is_copied_not_referenced();
   test_uniform_pushes_are_per_stage();
+  test_scissor_viewport_and_instance_count_are_recorded();
   test_replay_order_matches_record_order();
+  test_scissor_clips_the_rendered_frame();
   printf("test_gfx_drawlist: OK\n");
   return 0;
 }
