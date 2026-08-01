@@ -326,12 +326,26 @@ The properties worth proving, each chosen because it fails differently:
   bind, not fall through to an SDL_GPU validation failure. Without this the assert PR #18
   added silently covers only the frame's first pipeline.
 
-Existing tests are the other half of the suite: `test_gfx.c`, `test_gfx_pipeline.c`,
-`test_gfx_texture.c`, `test_gfx_canvas.c`, `test_gfx_capture.c` and `test_gfx_resize.c`
-must pass **unmodified**, which is what proves §3's compatibility claim. Two tests do
-change, but only for the §6 enum rename — `test_gfx_buffer.c` and `test_gfx_compute.c`
-each swap one identifier, with no change to what they assert. If any *other* existing
-test needs touching, the draw list broke compatibility and §3's claim is wrong.
+The compatibility claim in §3 is what the existing suite proves, but it has to be stated
+precisely — checked against the tree rather than asserted:
+
+- **All four samples stay unedited.** `03_triangle`, `04_textured_quad`, `05_compute`,
+  `06_canvas` — this is the real proof that the call shape is unchanged for users.
+- **`test_gfx_pipeline.c`, `test_gfx_texture.c`, `test_gfx_canvas.c`,
+  `test_gfx_capture.c`, `test_gfx_resize.c` pass unmodified.** These are the
+  golden-image and behavior tests; if any needs touching, the draw list changed rendering
+  behavior and §3 is wrong.
+- **`test_gfx_buffer.c` and `test_gfx_compute.c` change one identifier each**, for the §6
+  enum rename only, with no change to what they assert.
+- **`test_gfx.c` changes**, unavoidably. It asserts on the internal accessors
+  `bk__gfx_get_pending_vertex_count()` and `..._index_count()`, and a "pending count" has
+  no meaning once a draw appends a record instead of setting a slot. Those two accessors
+  are replaced by draw-list accessors (`bk__gfx_get_draw_count()`, and a
+  `bk__gfx_get_draw_cmd(i32 index)` returning a record for inspection), and the affected
+  assertions are rewritten against them. The bind accessors
+  (`..._pending_pipeline/_vertex_buffer/_index_buffer/_texture/_sampler/_canvas`) keep
+  their meaning as "currently bound state" and their assertions stand. This is a strictly
+  internal change — `src/internal/bk_gfx_internal.h` is not a public header.
 
 ## 8. Sample — `07_instanced`
 
