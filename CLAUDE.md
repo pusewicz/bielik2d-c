@@ -195,8 +195,5 @@ Style:
 Process:
 - Never reorganize the file layout beyond section 4 of `PLAN.md`.
 - Keep functions small; no premature abstraction; no speculative options.
-- Regenerating shader bytecode alone doesn't restage it next to already-built
-  binaries unless something forces a relink of the consuming target (tracked in
-  bielik2d-c#2) — touch a source file of the sample/test to force it meanwhile.
 - Deferred/non-blocking findings (bugs, follow-ups, feature ideas) get filed as
   GitHub issues on `pusewicz/bielik2d-c`, not left as code comments or session notes.
