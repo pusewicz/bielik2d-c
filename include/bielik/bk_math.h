@@ -330,7 +330,9 @@ typedef struct BK_Aabb {
 
 /// An inverted box (min at +inf, max at -inf) -- the identity for bk_aabb_add_point, so
 /// bounds accumulation starts here. A zero box at the origin would instead drag every
-/// accumulated bound toward (0, 0).
+/// accumulated bound toward (0, 0). Only add_point/combine/overlaps/contains_point are
+/// meaningful on a box that hasn't accumulated anything yet: center reads back NaN and
+/// size -inf, since there are no bounds to describe.
 [[nodiscard]] static inline BK_Aabb bk_aabb_empty(void) {
   return (BK_Aabb){
       {INFINITY,  INFINITY },
