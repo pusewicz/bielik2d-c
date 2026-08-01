@@ -1,4 +1,5 @@
 #pragma once
+#include <bielik/bk_math.h> // BK_Color
 #include <bielik/bk_types.h>
 
 typedef struct BK_GfxPipeline BK_GfxPipeline;
@@ -6,11 +7,6 @@ typedef struct BK_GfxBuffer BK_GfxBuffer;
 typedef struct BK_GfxTexture BK_GfxTexture;
 typedef struct BK_GfxSampler BK_GfxSampler;
 typedef struct BK_GfxCanvas BK_GfxCanvas;
-
-/// RGBA color.
-typedef struct BK_Color {
-  f32 r, g, b, a;
-} BK_Color;
 
 /// Sets the color the swapchain is cleared to each frame.
 void bk_gfx_set_clear_color(BK_Color color);
