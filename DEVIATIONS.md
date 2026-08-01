@@ -414,3 +414,45 @@ outstanding: `bk_time.h` and `bk_types.h` now pass `clang-format --dry-run --Wer
 along with the rest of the tree, and CI's new `format` job blocks on it going forward
 — so the recurring per-task "clang-format overrode my hand-alignment" entries in this
 file should stop appearing.
+
+## `bk_math` ships header-only, with no `src/bk_math.c` (CLAUDE.md Conventions, docs/superpowers/specs/2026-08-01-bk-math-design.md §2)
+
+`CLAUDE.md` states the module rule as "One module = `include/bielik/bk_<name>.h` +
+`src/bk_<name>.c` (+ optional `src/internal/bk_<name>_internal.h`)". `bk_math` has no
+`.c` file: every function is `static inline` in the header. Each one is between one and
+eight arithmetic operations, and Phase 3's draw layer calls them in per-sprite,
+per-vertex loops — the batch transform path is the hot loop of the whole framework, so a
+translation-unit boundary would mean either eating the call overhead or depending on LTO
+to undo it. `CLAUDE.md` also commits the project to writing SoA scalar code and checking
+clang's autovectorization before reaching for SIMD, which only works if the arithmetic is
+visible at the call site. Checked for an exception: the largest function is `bk_m3x2_inv`
+(a 2x2 determinant, a reciprocal, four multiplies, and a transformed translation), still
+well inside inlining range — a `.c` file holding one function would be worse than the
+deviation. Two properties this depends on were verified empirically rather than assumed,
+by compiling a two-translation-unit probe under the project's exact flags (`-std=c23
+-Wno-everything -Wall -Wextra -Wshadow -Wstrict-prototypes -Wvla -Werror`, AppleClang
+21.0.0): (1) an unused `static inline` in an included header does not trip
+`-Wunused-function`; (2) a file-scope `constexpr f32` in a header included by two TUs
+does not collide at link time — taking its address in both yielded *different* pointers,
+confirming C23 gives `constexpr` objects internal linkage (one copy per TU, like `static
+const`), so `BK_PI` can be a `constexpr` as `CLAUDE.md` prefers for constants rather than
+falling back to a macro. The root `CMakeLists.txt` needed no change at all, since
+`target_include_directories(bielik PUBLIC include)` already exports the whole tree;
+`tests/test_header_bk_math.c` still enforces standalone compilation like every other
+public header.
+
+## `BK_Color` moved from `bk_gfx.h` to `bk_math.h` (PLAN.md §6.1, docs/superpowers/specs/2026-08-01-bk-math-design.md §3)
+
+`PLAN.md` §6.1 defines `BK_Color` in `include/bielik/bk_gfx.h`. It now lives in
+`include/bielik/bk_math.h`, and `bk_gfx.h` includes that header. The move is right on the
+merits rather than merely convenient: color arithmetic (premultiply, lerp, hex and rgba8
+conversion) is math, and Phase 3's command format stores premultiplied color as two
+`packHalf2x16` words, so those operations run per-command inside the batcher, not in the
+gfx layer — leaving the type in `bk_gfx.h` while its operations lived in `bk_math.h`
+would have been the worse split. Source compatibility was verified rather than assumed:
+`grep -rn "BK_Color" include src samples tests` found 17 use sites across `bk_gfx.h`,
+`src/bk_gfx.c`, `src/internal/bk_gfx_internal.h`, `samples/01_clear`, `samples/02_ticks`,
+`tests/test_gfx.c`, and `tests/test_gfx_capture.c`, and every one already includes
+`bk_gfx.h` directly or transitively. The type name is unchanged, so no use site needed
+editing, and the full tree (library, all six samples, all 15 tests) builds clean under
+`-DBK_WERROR=ON` after the move with no other edits.

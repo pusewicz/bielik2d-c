@@ -390,3 +390,63 @@ typedef struct BK_Aabb {
 typedef struct BK_Rect {
   i32 x, y, width, height;
 } BK_Rect;
+
+/// RGBA color, one float per channel, nominally [0, 1] -- values above 1 are legal and
+/// survive to the GPU, since the draw layer's command format carries color as halves.
+typedef struct BK_Color {
+  f32 r, g, b, a;
+} BK_Color;
+
+/// Constructs a color from four channels.
+[[nodiscard]] static inline BK_Color bk_color(f32 r, f32 g, f32 b, f32 a) {
+  return (BK_Color){r, g, b, a};
+}
+
+/// From four 8-bit channels.
+[[nodiscard]] static inline BK_Color bk_color_rgba8(u8 r, u8 g, u8 b, u8 a) {
+  return (BK_Color){(f32)r / 255.0f, (f32)g / 255.0f, (f32)b / 255.0f, (f32)a / 255.0f};
+}
+
+/// From 0xRRGGBBAA.
+[[nodiscard]] static inline BK_Color bk_color_hex(u32 hex) {
+  return bk_color_rgba8((u8)((hex >> 24) & 0xFFu), (u8)((hex >> 16) & 0xFFu),
+                        (u8)((hex >> 8) & 0xFFu), (u8)(hex & 0xFFu));
+}
+
+/// To 0xRRGGBBAA, clamping each channel to [0, 1] and rounding.
+[[nodiscard]] static inline u32 bk_color_to_rgba8(BK_Color color) {
+  u32 r = (u32)(bk_clamp01f(color.r) * 255.0f + 0.5f);
+  u32 g = (u32)(bk_clamp01f(color.g) * 255.0f + 0.5f);
+  u32 b = (u32)(bk_clamp01f(color.b) * 255.0f + 0.5f);
+  u32 a = (u32)(bk_clamp01f(color.a) * 255.0f + 0.5f);
+  return (r << 24) | (g << 16) | (b << 8) | a;
+}
+
+/// Multiplies rgb by a, leaving a alone. The draw layer's command format stores
+/// premultiplied color, so this runs once per recorded command.
+[[nodiscard]] static inline BK_Color bk_color_premultiply(BK_Color color) {
+  return (BK_Color){color.r * color.a, color.g * color.a, color.b * color.a, color.a};
+}
+
+/// Component-wise linear interpolation, alpha included. t is not clamped.
+[[nodiscard]] static inline BK_Color bk_color_lerp(BK_Color lhs, BK_Color rhs, f32 t) {
+  return (BK_Color){bk_lerpf(lhs.r, rhs.r, t), bk_lerpf(lhs.g, rhs.g, t), bk_lerpf(lhs.b, rhs.b, t),
+                    bk_lerpf(lhs.a, rhs.a, t)};
+}
+
+/// Opaque white.
+[[nodiscard]] static inline BK_Color bk_color_white(void) {
+  return (BK_Color){1.0f, 1.0f, 1.0f, 1.0f};
+}
+
+/// Opaque black.
+[[nodiscard]] static inline BK_Color bk_color_black(void) {
+  return (BK_Color){0.0f, 0.0f, 0.0f, 1.0f};
+}
+
+/// Transparent black -- the accumulation identity, not "no color".
+[[nodiscard]] static inline BK_Color bk_color_clear(void) {
+  return (BK_Color){0.0f, 0.0f, 0.0f, 0.0f};
+}
+
+static_assert(sizeof(BK_Color) == 16, "BK_Color must be four tightly packed f32");

@@ -372,6 +372,65 @@ static void test_rect_field_order(void) {
   REQUIRE(rect.height == 4);
 }
 
+static void s_require_color_near(BK_Color actual, BK_Color expected, f32 eps) {
+  REQUIRE_NEAR(actual.r, expected.r, eps);
+  REQUIRE_NEAR(actual.g, expected.g, eps);
+  REQUIRE_NEAR(actual.b, expected.b, eps);
+  REQUIRE_NEAR(actual.a, expected.a, eps);
+}
+
+static void test_color_hex_round_trip(void) {
+  // 0x12345678 is deliberately asymmetric: a channel-order bug round-trips a
+  // palindrome like 0xFFFFFFFF cleanly and would slip past.
+  const u32 values[] = {0x00000000u, 0xFFFFFFFFu, 0x12345678u, 0xFF0000FFu, 0x0080FF40u};
+  for (usize i = 0; i < sizeof values / sizeof values[0]; ++i) {
+    REQUIRE_EQ_U64(bk_color_to_rgba8(bk_color_hex(values[i])), values[i]);
+  }
+
+  // Channel order is RGBA, most significant byte first.
+  BK_Color red = bk_color_hex(0xFF0000FFu);
+  s_require_color_near(red, bk_color(1.0f, 0.0f, 0.0f, 1.0f), EPS);
+}
+
+static void test_color_rgba8(void) {
+  s_require_color_near(bk_color_rgba8(255, 128, 0, 255),
+                       bk_color(1.0f, 128.0f / 255.0f, 0.0f, 1.0f), EPS);
+  s_require_color_near(bk_color_rgba8(0, 0, 0, 0), bk_color(0.0f, 0.0f, 0.0f, 0.0f), EPS);
+
+  // Out-of-range channels clamp rather than wrap.
+  REQUIRE_EQ_U64(bk_color_to_rgba8(bk_color(2.0f, -1.0f, 0.5f, 1.0f)), 0xFF0080FFu & 0xFFFFFFFFu);
+}
+
+static void test_color_premultiply(void) {
+  // At alpha 1 it's the identity; at alpha 0 everything collapses.
+  BK_Color opaque = bk_color(0.4f, 0.6f, 0.8f, 1.0f);
+  s_require_color_near(bk_color_premultiply(opaque), opaque, EPS);
+
+  BK_Color transparent = bk_color_premultiply(bk_color(0.4f, 0.6f, 0.8f, 0.0f));
+  s_require_color_near(transparent, bk_color(0.0f, 0.0f, 0.0f, 0.0f), EPS);
+
+  // Alpha itself is never scaled -- only rgb.
+  s_require_color_near(bk_color_premultiply(bk_color(1.0f, 0.5f, 0.0f, 0.5f)),
+                       bk_color(0.5f, 0.25f, 0.0f, 0.5f), EPS);
+}
+
+static void test_color_lerp_and_constants(void) {
+  BK_Color black = bk_color_black();
+  BK_Color white = bk_color_white();
+
+  s_require_color_near(bk_color_lerp(black, white, 0.0f), black, EPS);
+  s_require_color_near(bk_color_lerp(black, white, 1.0f), white, EPS);
+  s_require_color_near(bk_color_lerp(black, white, 0.5f), bk_color(0.5f, 0.5f, 0.5f, 1.0f), EPS);
+  // Alpha interpolates too.
+  s_require_color_near(bk_color_lerp(bk_color_clear(), white, 0.5f),
+                       bk_color(0.5f, 0.5f, 0.5f, 0.5f), EPS);
+
+  s_require_color_near(white, bk_color(1.0f, 1.0f, 1.0f, 1.0f), EPS);
+  s_require_color_near(black, bk_color(0.0f, 0.0f, 0.0f, 1.0f), EPS);
+  // Transparent black: the accumulation identity, alpha 0 -- not opaque black.
+  s_require_color_near(bk_color_clear(), bk_color(0.0f, 0.0f, 0.0f, 0.0f), EPS);
+}
+
 int main(void) {
   test_scalar_min_max_abs_sign();
   test_scalar_clamp_lerp_remap();
@@ -393,5 +452,9 @@ int main(void) {
   test_aabb_overlap_and_containment();
   test_aabb_expand_and_combine();
   test_rect_field_order();
+  test_color_hex_round_trip();
+  test_color_rgba8();
+  test_color_premultiply();
+  test_color_lerp_and_constants();
   return 0;
 }
