@@ -30,12 +30,20 @@ static void test_create_each_usage_succeeds(void) {
   BK_GfxBuffer *index = bk_gfx_buffer_create(device, BK_GFX_BUFFER_USAGE_INDEX, 128);
   REQUIRE(index != nullptr);
 
-  BK_GfxBuffer *storage = bk_gfx_buffer_create(device, BK_GFX_BUFFER_USAGE_STORAGE_READ, 64);
+  BK_GfxBuffer *storage = bk_gfx_buffer_create(device, BK_GFX_BUFFER_USAGE_STORAGE_COMPUTE, 64);
   REQUIRE(storage != nullptr);
+
+  // Graphics-stage storage: one SDL creation flag serves both the vertex and fragment
+  // stages, so there's a single usage here and the stage distinction lives at bind time.
+  BK_GfxBuffer *graphics_storage =
+      bk_gfx_buffer_create(device, BK_GFX_BUFFER_USAGE_STORAGE_GRAPHICS, 64);
+  REQUIRE(graphics_storage != nullptr);
+  REQUIRE(bk__gfx_buffer_size(graphics_storage) == 64);
 
   bk_gfx_buffer_destroy(vertex);
   bk_gfx_buffer_destroy(index);
   bk_gfx_buffer_destroy(storage);
+  bk_gfx_buffer_destroy(graphics_storage);
   SDL_DestroyGPUDevice(device);
 }
 
