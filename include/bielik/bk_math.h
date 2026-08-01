@@ -182,3 +182,131 @@ typedef struct BK_V2 {
 }
 
 static_assert(sizeof(BK_V2) == 8, "BK_V2 must be two tightly packed f32");
+
+/// A rotation carried as its sine and cosine rather than an angle, so rotating N points
+/// costs no trigonometry per point. Members are spelled out because .clang-tidy's
+/// readability-identifier-length requires at least two characters, and because sin/cos
+/// risk colliding with math.h's names.
+typedef struct BK_SinCos {
+  f32 sine, cosine;
+} BK_SinCos;
+
+/// Computes the sine/cosine pair for an angle in radians.
+[[nodiscard]] static inline BK_SinCos bk_sincos(f32 radians) {
+  return (BK_SinCos){sinf(radians), cosf(radians)};
+}
+
+/// The identity rotation.
+[[nodiscard]] static inline BK_SinCos bk_sincos_identity(void) {
+  return (BK_SinCos){0.0f, 1.0f};
+}
+
+/// Rotates a vector counter-clockwise by a rotation.
+[[nodiscard]] static inline BK_V2 bk_v2_rotate(BK_V2 vec, BK_SinCos rotation) {
+  return (BK_V2){vec.x * rotation.cosine - vec.y * rotation.sine,
+                 vec.x * rotation.sine + vec.y * rotation.cosine};
+}
+
+/// A 2D affine transform stored as the images of the basis vectors plus a translation.
+/// Transforming a point p yields x * p.x + y * p.y + origin.
+typedef struct BK_M3x2 {
+  BK_V2 x;      // image of (1, 0)
+  BK_V2 y;      // image of (0, 1)
+  BK_V2 origin; // translation
+} BK_M3x2;
+
+/// The identity transform.
+[[nodiscard]] static inline BK_M3x2 bk_m3x2_identity(void) {
+  return (BK_M3x2){
+      {1.0f, 0.0f},
+      {0.0f, 1.0f},
+      {0.0f, 0.0f}
+  };
+}
+
+/// Pure translation.
+[[nodiscard]] static inline BK_M3x2 bk_m3x2_translation(BK_V2 translation) {
+  return (BK_M3x2){
+      {1.0f, 0.0f},
+      {0.0f, 1.0f},
+      translation
+  };
+}
+
+/// Pure (possibly non-uniform) scale about the origin.
+[[nodiscard]] static inline BK_M3x2 bk_m3x2_scale(BK_V2 scale) {
+  return (BK_M3x2){
+      {scale.x, 0.0f   },
+      {0.0f,    scale.y},
+      {0.0f,    0.0f   }
+  };
+}
+
+/// Pure rotation about the origin, counter-clockwise, in radians.
+[[nodiscard]] static inline BK_M3x2 bk_m3x2_rotation(f32 radians) {
+  BK_SinCos rotation = bk_sincos(radians);
+  return (BK_M3x2){
+      {rotation.cosine, rotation.sine  },
+      {-rotation.sine,  rotation.cosine},
+      {0.0f,            0.0f           }
+  };
+}
+
+/// Scale, then rotate, then translate -- the sprite transform, composed once instead of
+/// by three bk_m3x2_mul calls.
+[[nodiscard]] static inline BK_M3x2 bk_m3x2_trs(BK_V2 translation, BK_V2 scale, f32 radians) {
+  BK_SinCos rotation = bk_sincos(radians);
+  return (BK_M3x2){
+      {rotation.cosine * scale.x, rotation.sine * scale.x  },
+      {-rotation.sine * scale.y,  rotation.cosine * scale.y},
+      translation
+  };
+}
+
+/// An orthographic projection mapping a width x height box centered on the origin onto
+/// normalized device coordinates ([-1, 1] on both axes, y up). Composed with the inverse
+/// of a camera transform to build the draw layer's MVP.
+[[nodiscard]] static inline BK_M3x2 bk_m3x2_ortho(f32 width, f32 height) {
+  return (BK_M3x2){
+      {2.0f / width, 0.0f         },
+      {0.0f,         2.0f / height},
+      {0.0f,         0.0f         }
+  };
+}
+
+/// Applies the full transform, translation included -- for positions.
+[[nodiscard]] static inline BK_V2 bk_m3x2_transform_point(BK_M3x2 transform, BK_V2 point) {
+  return (BK_V2){transform.x.x * point.x + transform.y.x * point.y + transform.origin.x,
+                 transform.x.y * point.x + transform.y.y * point.y + transform.origin.y};
+}
+
+/// Applies the linear part only, skipping translation -- for directions, normals, and
+/// extents.
+[[nodiscard]] static inline BK_V2 bk_m3x2_transform_vector(BK_M3x2 transform, BK_V2 vec) {
+  return (BK_V2){transform.x.x * vec.x + transform.y.x * vec.y,
+                 transform.x.y * vec.x + transform.y.y * vec.y};
+}
+
+/// Composition: the transform applying rhs first, then lhs.
+[[nodiscard]] static inline BK_M3x2 bk_m3x2_mul(BK_M3x2 lhs, BK_M3x2 rhs) {
+  return (BK_M3x2){bk_m3x2_transform_vector(lhs, rhs.x), bk_m3x2_transform_vector(lhs, rhs.y),
+                   bk_m3x2_transform_point(lhs, rhs.origin)};
+}
+
+/// The inverse transform. Undefined for a singular transform (zero determinant, e.g. a
+/// zero scale on either axis). The draw layer uploads this into the GPU payload so the
+/// fragment shader can recover world space per pixel for SDF evaluation, which is why
+/// it is core API rather than a convenience.
+[[nodiscard]] static inline BK_M3x2 bk_m3x2_inv(BK_M3x2 transform) {
+  f32 det = transform.x.x * transform.y.y - transform.y.x * transform.x.y;
+  f32 inv_det = 1.0f / det;
+  BK_M3x2 result = {
+      {transform.y.y * inv_det,  -transform.x.y * inv_det},
+      {-transform.y.x * inv_det, transform.x.x * inv_det },
+      {0.0f,                     0.0f                    }
+  };
+  result.origin = bk_v2_neg(bk_m3x2_transform_vector(result, transform.origin));
+  return result;
+}
+
+static_assert(sizeof(BK_M3x2) == 24, "BK_M3x2 must be six tightly packed f32");
