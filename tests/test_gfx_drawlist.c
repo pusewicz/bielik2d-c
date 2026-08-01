@@ -5,6 +5,7 @@
 #include <bielik/bk_gfx.h>
 #include <bielik/bk_gfx_buffer.h>
 #include <bielik/bk_gfx_pipeline.h>
+#include <bielik/bk_math.h>
 
 #include <SDL3/SDL.h>
 
@@ -482,6 +483,152 @@ static void test_scissor_clips_the_rendered_frame(void) {
   s_scissor_mode = false;
 }
 
+// Part 3: storage buffer + uniform + instancing, end to end on the GPU. This is the
+// only check that the MSL binding remap (see cmake/shaders.cmake) is actually right:
+// a wrong [[buffer]] index doesn't fail at pipeline creation, it drops the command
+// buffer at draw time and the capture reads back as the clear color.
+
+typedef struct InstQuad {
+  f32 center[2];
+  f32 half_size[2];
+  f32 color[4];
+} InstQuad;
+
+typedef struct InstCamera {
+  f32 basis[4];
+  f32 origin[4];
+} InstCamera;
+
+static BK_GfxPipeline *s_inst_pipeline = nullptr;
+static BK_GfxBuffer *s_inst_quads = nullptr;
+
+static BK_GfxShaderDesc s_load_named_shader(const char *name, const char *stage) {
+  char spv[64], msl[64];
+  SDL_snprintf(spv, sizeof spv, "%s.%s.spv", name, stage);
+  SDL_snprintf(msl, sizeof msl, "%s.%s.msl", name, stage);
+  BK_GfxShaderDesc desc = {0};
+  desc.spirv.code = s_load_shader_file(spv, &desc.spirv.code_size);
+  desc.spirv.entry_point = "main";
+  desc.msl.code = s_load_shader_file(msl, &desc.msl.code_size);
+  desc.msl.entry_point = "main0";
+  return desc;
+}
+
+static BK_Result inst_init(void **state, int argc, char **argv) {
+  (void)state;
+  (void)argc;
+  (void)argv;
+
+  BK_GfxShaderDesc vertex = s_load_named_shader("instanced", "vertex");
+  BK_GfxShaderDesc fragment = s_load_named_shader("instanced", "fragment");
+  vertex.num_storage_buffers = 1;
+  vertex.num_uniform_buffers = 1;
+
+  BK_GfxPipelineDesc desc = {
+      .vertex_shader = vertex,
+      .fragment_shader = fragment,
+      .primitive_type = BK_GFX_PRIMITIVE_TRIANGLE_STRIP,
+      .color_target_format = SDL_GetGPUSwapchainTextureFormat(bk_gpu(), bk_window()),
+      .blend_mode = BK_GFX_BLEND_NONE,
+  };
+  s_inst_pipeline = bk_gfx_pipeline_create(bk_gpu(), &desc);
+  REQUIRE(s_inst_pipeline != nullptr);
+  SDL_free((void *)vertex.spirv.code);
+  SDL_free((void *)vertex.msl.code);
+  SDL_free((void *)fragment.spirv.code);
+  SDL_free((void *)fragment.msl.code);
+
+  // Three small quads at the left, center, and right thirds of a 64-unit world, with
+  // gaps between them. The gaps are what make this test discriminating: a shader that
+  // ignored gl_InstanceIndex would stack all three at one spot and leave them empty.
+  InstQuad quads[3] = {
+      {.center = {-21.0f, 0.0f}, .half_size = {6.0f, 24.0f}, .color = {1, 0, 0, 1}},
+      {.center = {0.0f, 0.0f},   .half_size = {6.0f, 24.0f}, .color = {0, 1, 0, 1}},
+      {.center = {21.0f, 0.0f},  .half_size = {6.0f, 24.0f}, .color = {0, 0, 1, 1}},
+  };
+  s_inst_quads = bk_gfx_buffer_create(bk_gpu(), BK_GFX_BUFFER_USAGE_STORAGE_GRAPHICS, sizeof quads);
+  REQUIRE(s_inst_quads != nullptr);
+  REQUIRE(bk_gfx_buffer_upload(s_inst_quads, quads, 0, sizeof quads));
+  return BK_CONTINUE;
+}
+
+static void inst_render(void *state, const BK_FrameInfo *frame) {
+  (void)state;
+  (void)frame;
+  bk_gfx_set_clear_color((BK_Color){0.0f, 0.0f, 0.0f, 1.0f});
+
+  BK_M3x2 mvp = bk_m3x2_ortho(64.0f, 64.0f);
+  InstCamera camera = {
+      .basis = {mvp.x.x,      mvp.x.y,      mvp.y.x, mvp.y.y},
+      .origin = {mvp.origin.x, mvp.origin.y, 0.0f,    0.0f   },
+  };
+
+  bk_gfx_bind_pipeline(s_inst_pipeline);
+  bk_gfx_bind_vertex_storage_buffer(s_inst_quads, 0);
+  bk_gfx_push_vertex_uniform(&camera, sizeof camera);
+  bk_gfx_draw_instanced(4, 3);
+  bk_gfx_request_capture(s_capture_path);
+}
+
+static void inst_quit(void *state, BK_Result result) {
+  (void)state;
+  (void)result;
+  bk_gfx_buffer_destroy(s_inst_quads);
+  bk_gfx_pipeline_destroy(s_inst_pipeline);
+  s_inst_quads = nullptr;
+  s_inst_pipeline = nullptr;
+}
+
+static void test_instancing_places_each_instance_separately(void) {
+  s_frames = 0;
+  const char *base_path = SDL_GetBasePath();
+  REQUIRE(base_path != nullptr);
+  SDL_snprintf(s_capture_path, sizeof s_capture_path, "%stest_gfx_drawlist_instanced.bmp",
+               base_path);
+  SDL_RemovePath(s_capture_path);
+
+  BK_AppDesc desc = {
+      .window = {.title = "test_gfx_drawlist_instanced", .width = 64, .height = 64},
+      .time = {.tick_hz = 60},
+      .init = inst_init,
+      .update = test_update,
+      .render = inst_render,
+      .quit = inst_quit,
+  };
+  bk_run(&desc, 0, nullptr);
+
+  SDL_Surface *surface = SDL_LoadBMP(s_capture_path);
+  if (surface == nullptr) {
+    printf("test_gfx_drawlist: no instanced capture produced, skipping pixel check\n");
+    return;
+  }
+  SDL_Surface *rgba = SDL_ConvertSurface(surface, SDL_PIXELFORMAT_RGBA32);
+  SDL_DestroySurface(surface);
+  REQUIRE(rgba != nullptr);
+
+  const u8 *pixels = (const u8 *)rgba->pixels;
+  const int mid_row = rgba->h / 2;
+  constexpr int tolerance = 12;
+
+  // World x maps to pixels via the 64-wide ortho: -21 -> ~11px, 0 -> 32px, +21 -> ~53px.
+  const u8 *left = pixels + mid_row * rgba->pitch + 11 * 4;
+  const u8 *center = pixels + mid_row * rgba->pitch + 32 * 4;
+  const u8 *right = pixels + mid_row * rgba->pitch + 53 * 4;
+  REQUIRE(left[0] > 255 - tolerance && left[1] < tolerance);     // red instance
+  REQUIRE(center[1] > 255 - tolerance && center[0] < tolerance); // green instance
+  REQUIRE(right[2] > 255 - tolerance && right[0] < tolerance);   // blue instance
+
+  // The gaps stay background. Without these, three quads stacked at one spot -- a
+  // shader ignoring gl_InstanceIndex -- would still pass the three checks above.
+  const u8 *gap_left = pixels + mid_row * rgba->pitch + 22 * 4;
+  const u8 *gap_right = pixels + mid_row * rgba->pitch + 43 * 4;
+  REQUIRE(gap_left[0] <= tolerance && gap_left[1] <= tolerance && gap_left[2] <= tolerance);
+  REQUIRE(gap_right[0] <= tolerance && gap_right[1] <= tolerance && gap_right[2] <= tolerance);
+
+  SDL_DestroySurface(rgba);
+  SDL_RemovePath(s_capture_path);
+}
+
 int main(void) {
   test_each_draw_snapshots_its_own_state();
   test_flush_resets_the_chain();
@@ -493,6 +640,7 @@ int main(void) {
   test_scissor_viewport_and_instance_count_are_recorded();
   test_replay_order_matches_record_order();
   test_scissor_clips_the_rendered_frame();
+  test_instancing_places_each_instance_separately();
   printf("test_gfx_drawlist: OK\n");
   return 0;
 }

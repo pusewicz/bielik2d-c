@@ -45,6 +45,10 @@ bk_compile_shader(NAME textured STAGE fragment)
 bk_compile_shader(NAME gradient STAGE compute)
 bk_compile_shader(NAME depth_tri STAGE vertex)
 bk_compile_shader(NAME depth_tri STAGE fragment)
+# Declares both a storage buffer and a uniform buffer in the vertex stage, so its MSL
+# needs the binding remap -- see bk_compile_shader's comment in cmake/shaders.cmake.
+bk_compile_shader(NAME instanced STAGE vertex MSL_DECORATION_BINDING)
+bk_compile_shader(NAME instanced STAGE fragment)
 
 if(BK_BUILD_TESTS)
     enable_testing()

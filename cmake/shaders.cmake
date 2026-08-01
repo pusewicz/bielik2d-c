@@ -5,9 +5,18 @@ find_program(BK_SPIRV_CROSS_EXE spirv-cross)
 # glslc + spirv-cross. The regenerated files are committed to the repo, not produced
 # fresh by every build -- this is a no-op (just logs) if the tools aren't installed,
 # so shader authoring stays an occasional opt-in step, not a build-time requirement.
+# MSL_DECORATION_BINDING: translate MSL from a second SPIR-V built with
+# -DBK_MSL_BINDINGS, using spirv-cross's --msl-decoration-binding (binding number used
+# directly as the [[buffer]]/[[texture]] index). Needed when a shader declares both a
+# storage buffer and a uniform buffer in the same stage: SDL_GPU's SPIR-V convention
+# puts storage in the lower-numbered set, but its MSL convention wants uniforms at the
+# lower [[buffer]] index, and spirv-cross's default (set, binding) sort produces the
+# opposite pairing. That mismatch does not fail at pipeline creation -- it drops the
+# command buffer at draw time with nothing logged. See DEVIATIONS.md.
 function(bk_compile_shader)
+    set(options MSL_DECORATION_BINDING)
     set(one_value_args NAME STAGE)
-    cmake_parse_arguments(ARG "" "${one_value_args}" "" ${ARGN})
+    cmake_parse_arguments(ARG "${options}" "${one_value_args}" "" ${ARGN})
 
     if(NOT BK_GLSLC_EXE OR NOT BK_SPIRV_CROSS_EXE)
         message(STATUS "glslc/spirv-cross not found -- using committed shader bytecode for ${ARG_NAME}.${ARG_STAGE}")
@@ -38,13 +47,35 @@ function(bk_compile_shader)
         COMMENT "glslc: ${ARG_NAME}.${src_ext} -> ${ARG_NAME}.${ARG_STAGE}.spv"
         VERBATIM
     )
-    add_custom_command(
-        OUTPUT "${msl}"
-        COMMAND "${BK_SPIRV_CROSS_EXE}" --msl "${spv}" --output "${msl}"
-        DEPENDS "${spv}"
-        COMMENT "spirv-cross: ${ARG_NAME}.${ARG_STAGE}.spv -> ${ARG_NAME}.${ARG_STAGE}.msl"
-        VERBATIM
-    )
+    if(ARG_MSL_DECORATION_BINDING)
+        # The MSL-binding SPIR-V is an intermediate, not shipped bytecode, so it lives
+        # in the build tree rather than beside the committed .spv/.msl files.
+        set(msl_spv "${CMAKE_CURRENT_BINARY_DIR}/${ARG_NAME}.${ARG_STAGE}.mslbindings.spv")
+        add_custom_command(
+            OUTPUT "${msl_spv}"
+            COMMAND "${BK_GLSLC_EXE}" -fshader-stage=${glslc_stage} -DBK_MSL_BINDINGS=1
+                    "${src}" -o "${msl_spv}"
+            DEPENDS "${src}"
+            COMMENT "glslc: ${ARG_NAME}.${src_ext} -> ${ARG_NAME}.${ARG_STAGE} MSL-binding SPIR-V"
+            VERBATIM
+        )
+        add_custom_command(
+            OUTPUT "${msl}"
+            COMMAND "${BK_SPIRV_CROSS_EXE}" --msl --msl-decoration-binding "${msl_spv}"
+                    --output "${msl}"
+            DEPENDS "${msl_spv}"
+            COMMENT "spirv-cross: ${ARG_NAME}.${ARG_STAGE} -> ${ARG_NAME}.${ARG_STAGE}.msl"
+            VERBATIM
+        )
+    else()
+        add_custom_command(
+            OUTPUT "${msl}"
+            COMMAND "${BK_SPIRV_CROSS_EXE}" --msl "${spv}" --output "${msl}"
+            DEPENDS "${spv}"
+            COMMENT "spirv-cross: ${ARG_NAME}.${ARG_STAGE}.spv -> ${ARG_NAME}.${ARG_STAGE}.msl"
+            VERBATIM
+        )
+    endif()
     add_custom_target(bk_shader_${ARG_NAME}_${ARG_STAGE} DEPENDS "${spv}" "${msl}")
 endfunction()
 
