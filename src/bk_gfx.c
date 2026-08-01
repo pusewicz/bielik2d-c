@@ -21,75 +21,104 @@ BK_Color bk__gfx_get_clear_color(void) {
   return s_clear_color;
 }
 
-static BK_GfxPipeline *s_pending_pipeline = nullptr;
-static i32 s_pending_vertex_count = 0;
+// Currently bound state, plus this frame's chain of recorded draws. s_state is the same
+// type as a record, so appending a draw is one struct copy -- a record snapshots the
+// state at call time rather than referencing it. Without that, every draw in a frame
+// would replay with the frame's *final* state instead of its own.
+static BK_GfxDrawCmd s_state;
+static BK_GfxDrawCmd *s_draw_head = nullptr;
+static BK_GfxDrawCmd *s_draw_tail = nullptr;
+static i32 s_draw_count = 0;
+
+static void s_record_draw(i32 vertex_count, i32 index_count, i32 instance_count) {
+  BK_GfxDrawCmd *cmd = bk_frame_alloc(sizeof *cmd, alignof(BK_GfxDrawCmd));
+  if (cmd == nullptr) {
+    // Arena exhaustion is already logged and asserted by bk_frame_alloc. Dropping the
+    // draw beats dereferencing null, and the frame still clears and presents.
+    return;
+  }
+  *cmd = s_state;
+  cmd->vertex_count = vertex_count;
+  cmd->index_count = index_count;
+  cmd->instance_count = instance_count;
+  cmd->next = nullptr;
+  if (s_draw_tail == nullptr) {
+    s_draw_head = cmd;
+  } else {
+    s_draw_tail->next = cmd;
+  }
+  s_draw_tail = cmd;
+  s_draw_count++;
+}
 
 void bk_gfx_bind_pipeline(BK_GfxPipeline *pipeline) {
   BK_ASSERT(pipeline != nullptr);
-  s_pending_pipeline = pipeline;
+  s_state.pipeline = pipeline;
 }
 
 void bk_gfx_draw(i32 vertex_count) {
   BK_ASSERT(vertex_count > 0);
-  s_pending_vertex_count = vertex_count;
+  s_record_draw(vertex_count, 0, 1);
 }
 
 BK_GfxPipeline *bk__gfx_get_pending_pipeline(void) {
-  return s_pending_pipeline;
+  return s_state.pipeline;
 }
 
-i32 bk__gfx_get_pending_vertex_count(void) {
-  return s_pending_vertex_count;
+i32 bk__gfx_get_draw_count(void) {
+  return s_draw_count;
 }
 
-static BK_GfxBuffer *s_pending_vertex_buffer = nullptr;
-static BK_GfxBuffer *s_pending_index_buffer = nullptr;
-static BK_GfxTexture *s_pending_texture = nullptr;
-static BK_GfxSampler *s_pending_sampler = nullptr;
-static i32 s_pending_index_count = 0;
+const BK_GfxDrawCmd *bk__gfx_get_draw_cmd(i32 index) {
+  if (index < 0) {
+    return nullptr;
+  }
+  const BK_GfxDrawCmd *cmd = s_draw_head;
+  for (i32 i = 0; i < index && cmd != nullptr; ++i) {
+    cmd = cmd->next;
+  }
+  return cmd;
+}
 
 void bk_gfx_bind_vertex_buffer(BK_GfxBuffer *buffer) {
   BK_ASSERT(buffer != nullptr);
-  s_pending_vertex_buffer = buffer;
+  s_state.vertex_buffer = buffer;
 }
 
 void bk_gfx_bind_index_buffer(BK_GfxBuffer *buffer) {
   BK_ASSERT(buffer != nullptr);
-  s_pending_index_buffer = buffer;
+  s_state.index_buffer = buffer;
 }
 
 void bk_gfx_bind_texture(BK_GfxTexture *texture, BK_GfxSampler *sampler) {
   BK_ASSERT(texture != nullptr);
   BK_ASSERT(sampler != nullptr);
-  s_pending_texture = texture;
-  s_pending_sampler = sampler;
+  s_state.texture = texture;
+  s_state.sampler = sampler;
 }
 
 void bk_gfx_draw_indexed(i32 index_count) {
   BK_ASSERT(index_count > 0);
-  s_pending_index_count = index_count;
+  s_record_draw(0, index_count, 1);
 }
 
 BK_GfxBuffer *bk__gfx_get_pending_vertex_buffer(void) {
-  return s_pending_vertex_buffer;
+  return s_state.vertex_buffer;
 }
 
 BK_GfxBuffer *bk__gfx_get_pending_index_buffer(void) {
-  return s_pending_index_buffer;
+  return s_state.index_buffer;
 }
 
 BK_GfxTexture *bk__gfx_get_pending_texture(void) {
-  return s_pending_texture;
+  return s_state.texture;
 }
 
 BK_GfxSampler *bk__gfx_get_pending_sampler(void) {
-  return s_pending_sampler;
+  return s_state.sampler;
 }
 
-i32 bk__gfx_get_pending_index_count(void) {
-  return s_pending_index_count;
-}
-
+// Frame-level, not a record field: see BK_GfxDrawCmd's comment and spec section 5.
 static BK_GfxCanvas *s_pending_canvas = nullptr;
 
 void bk_gfx_bind_canvas(BK_GfxCanvas *canvas) {
@@ -150,23 +179,21 @@ static SDL_PixelFormat s_pixel_format_for_gpu_format(SDL_GPUTextureFormat format
 void bk__gfx_flush(void) {
   static bool s_logged_acquire_failure = false;
 
-  BK_GfxPipeline *pending_pipeline = s_pending_pipeline;
-  i32 pending_vertex_count = s_pending_vertex_count;
-  BK_GfxBuffer *pending_vertex_buffer = s_pending_vertex_buffer;
-  BK_GfxBuffer *pending_index_buffer = s_pending_index_buffer;
-  BK_GfxTexture *pending_texture = s_pending_texture;
-  BK_GfxSampler *pending_sampler = s_pending_sampler;
-  i32 pending_index_count = s_pending_index_count;
+  // Snapshot and clear everything up front, before any early return below. This is
+  // load-bearing, not stylistic: bk__iterate calls bk__gfx_flush() then
+  // bk__arena_reset() unconditionally, and this function returns early on a failed
+  // command-buffer acquire and on a null swapchain texture (minimized/occluded window).
+  // Clearing at the end would leave the draw chain pointing into arena memory that
+  // bk__arena_reset then recycles -- and if the arena grew via bk__realloc meanwhile,
+  // the block moved and those are freed pointers.
+  BK_GfxDrawCmd *draw_head = s_draw_head;
   BK_GfxCanvas *pending_canvas = s_pending_canvas;
   char pending_capture_path[sizeof s_pending_capture_path];
   SDL_memcpy(pending_capture_path, s_pending_capture_path, sizeof pending_capture_path);
-  s_pending_pipeline = nullptr;
-  s_pending_vertex_count = 0;
-  s_pending_vertex_buffer = nullptr;
-  s_pending_index_buffer = nullptr;
-  s_pending_texture = nullptr;
-  s_pending_sampler = nullptr;
-  s_pending_index_count = 0;
+  s_state = (BK_GfxDrawCmd){0};
+  s_draw_head = nullptr;
+  s_draw_tail = nullptr;
+  s_draw_count = 0;
   s_pending_canvas = nullptr;
   s_pending_capture_path[0] = '\0';
 
@@ -252,33 +279,44 @@ void bk__gfx_flush(void) {
     depth_target_ptr = &depth_target;
   }
   SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(cmd, &target, 1, depth_target_ptr);
-  if (pending_pipeline != nullptr) {
-    // Catches a depth-attachment/pipeline mismatch (canvas has depth but the
-    // pipeline was created without it, or vice versa, or the formats differ) as a
-    // named assertion here instead of SDL_GPU's opaque "pipeline incompatible with
-    // render pass" validation failure.
-    BK_ASSERT(bk__gfx_pipeline_depth_format(pending_pipeline) == depth_target_format);
-    SDL_BindGPUGraphicsPipeline(pass, bk__gfx_pipeline_handle(pending_pipeline));
-    if (pending_vertex_buffer != nullptr) {
-      SDL_GPUBufferBinding vertex_binding = {.buffer =
-                                                 bk__gfx_buffer_handle(pending_vertex_buffer)};
+
+  // Replay the frame's draws in record order. Only the pipeline bind is elided when
+  // unchanged between consecutive records; buffers and textures rebind each time.
+  // Eliding those too is a measurable-win optimization with no consumer yet, and
+  // correctness first keeps the P3.3 batch's behavior easy to reason about.
+  const BK_GfxPipeline *bound_pipeline = nullptr;
+  for (const BK_GfxDrawCmd *draw = draw_head; draw != nullptr; draw = draw->next) {
+    if (draw->pipeline == nullptr) {
+      continue; // a draw recorded with no pipeline bound has nothing to draw with
+    }
+    if (draw->pipeline != bound_pipeline) {
+      // Per record, not once per frame: a frame mixing a depth-enabled and a
+      // depth-disabled pipeline must keep this named diagnostic for both. Catches a
+      // depth-attachment/pipeline mismatch here instead of as SDL_GPU's opaque
+      // "pipeline incompatible with render pass" validation failure.
+      BK_ASSERT(bk__gfx_pipeline_depth_format(draw->pipeline) == depth_target_format);
+      SDL_BindGPUGraphicsPipeline(pass, bk__gfx_pipeline_handle(draw->pipeline));
+      bound_pipeline = draw->pipeline;
+    }
+    if (draw->vertex_buffer != nullptr) {
+      SDL_GPUBufferBinding vertex_binding = {.buffer = bk__gfx_buffer_handle(draw->vertex_buffer)};
       SDL_BindGPUVertexBuffers(pass, 0, &vertex_binding, 1);
     }
-    if (pending_index_buffer != nullptr) {
-      SDL_GPUBufferBinding index_binding = {.buffer = bk__gfx_buffer_handle(pending_index_buffer)};
+    if (draw->index_buffer != nullptr) {
+      SDL_GPUBufferBinding index_binding = {.buffer = bk__gfx_buffer_handle(draw->index_buffer)};
       SDL_BindGPUIndexBuffer(pass, &index_binding, SDL_GPU_INDEXELEMENTSIZE_16BIT);
     }
-    if (pending_texture != nullptr && pending_sampler != nullptr) {
+    if (draw->texture != nullptr && draw->sampler != nullptr) {
       SDL_GPUTextureSamplerBinding sampler_binding = {
-          .texture = bk__gfx_texture_handle(pending_texture),
-          .sampler = bk__gfx_sampler_handle(pending_sampler)};
+          .texture = bk__gfx_texture_handle(draw->texture),
+          .sampler = bk__gfx_sampler_handle(draw->sampler)};
       SDL_BindGPUFragmentSamplers(pass, 0, &sampler_binding, 1);
     }
-    if (pending_vertex_count > 0) {
-      SDL_DrawGPUPrimitives(pass, (Uint32)pending_vertex_count, 1, 0, 0);
-    }
-    if (pending_index_count > 0) {
-      SDL_DrawGPUIndexedPrimitives(pass, (Uint32)pending_index_count, 1, 0, 0, 0);
+    if (draw->index_count > 0) {
+      SDL_DrawGPUIndexedPrimitives(pass, (Uint32)draw->index_count, (Uint32)draw->instance_count, 0,
+                                   0, 0);
+    } else if (draw->vertex_count > 0) {
+      SDL_DrawGPUPrimitives(pass, (Uint32)draw->vertex_count, (Uint32)draw->instance_count, 0, 0);
     }
   }
   SDL_EndGPURenderPass(pass);
