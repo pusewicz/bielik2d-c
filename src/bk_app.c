@@ -131,7 +131,14 @@ static void s_refresh_window_size(void) {
 static SDL_AppResult s_boot_fail(const char *msg) {
   SDL_Log("BK: %s", msg);
 #ifdef NDEBUG
-  SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Bielik2D", msg, s_app.window);
+  // Release builds surface boot failures in a dialog so a double-clicked game explains
+  // itself instead of silently vanishing. That dialog is modal, though, so anything
+  // with no user to dismiss it -- tests, CI, headless runs -- hangs until it's killed.
+  // BK_HINT_NO_ERROR_DIALOG opts out; it resolves from the environment as well as from
+  // SDL_SetHint, so CI can set it without a code change.
+  if (!SDL_GetHintBoolean(BK_HINT_NO_ERROR_DIALOG, false)) {
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Bielik2D", msg, s_app.window);
+  }
 #endif
   return SDL_APP_FAILURE;
 }

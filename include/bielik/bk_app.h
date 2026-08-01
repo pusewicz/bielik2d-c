@@ -88,6 +88,15 @@ typedef struct BK_AppDesc {
   void *userdata;
 } BK_AppDesc;
 
+/// An SDL hint: set to "1" to suppress the error dialog a Release build shows when
+/// boot fails, leaving only the SDL_Log message. Release builds pop that dialog so a
+/// double-clicked game explains itself instead of vanishing, but it blocks forever
+/// with nobody to dismiss it in automated tests, CI, and headless runs. Settable
+/// programmatically via SDL_SetHint before bk_run, or as an environment variable of
+/// the same name -- SDL hints resolve from the environment too. No effect in Debug
+/// builds, which never show the dialog.
+#define BK_HINT_NO_ERROR_DIALOG "BK_NO_ERROR_DIALOG"
+
 /// Runs the app. Blessed path is the BK_APP macro (bk_main.h). Calling this
 /// directly is supported on native only in v1 (tools/tests). Returns a
 /// process exit code (0 on clean termination, 1 on failure), not a
