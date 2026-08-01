@@ -434,12 +434,34 @@ by compiling a two-translation-unit probe under the project's exact flags (`-std
 21.0.0): (1) an unused `static inline` in an included header does not trip
 `-Wunused-function`; (2) a file-scope `constexpr f32` in a header included by two TUs
 does not collide at link time — taking its address in both yielded *different* pointers,
-confirming C23 gives `constexpr` objects internal linkage (one copy per TU, like `static
+i.e. clang gives `constexpr` objects internal linkage here (one copy per TU, like `static
 const`), so `BK_PI` can be a `constexpr` as `CLAUDE.md` prefers for constants rather than
-falling back to a macro. The root `CMakeLists.txt` needed no change at all, since
+falling back to a macro. Phrased as clang's observed behavior deliberately: the probe
+demonstrates it empirically on this project's clang-everywhere toolchain, but C23's
+wording on file-scope objects was not audited to confirm the standard *mandates* it.
+Moot in practice — clang emits no symbol at all unless something takes the address, and
+nothing in the tree does. The root `CMakeLists.txt` needed no change at all, since
 `target_include_directories(bielik PUBLIC include)` already exports the whole tree;
 `tests/test_header_bk_math.c` still enforces standalone compilation like every other
 public header.
+
+## `bk_math` uses libc `assert`, not `BK_ASSERT` (CLAUDE.md Conventions)
+
+`CLAUDE.md` specifies "Assertions: `BK_ASSERT` wraps `SDL_assert`". `bk_m3x2_inv` uses
+plain `assert` from `<assert.h>` instead, because `BK_ASSERT` is declared in `bk_app.h`
+and expands to `SDL_assert` — using it would pull SDL into `bk_math.h` and destroy the
+module's deliberate SDL-free property (design spec §0/§9), which is what lets
+`tests/test_math.c` run with no SDL init, no GPU, and no display server on every CI leg.
+`<assert.h>` is libc, adds no dependency, and compiles out under `NDEBUG` so the hot
+path is unaffected in Release. The assert guards a real failure mode rather than a
+hypothetical one: `bk_m3x2_inv` on a singular transform (a sprite scaled to zero — a
+hidden object, or a scale-in tween at t=0, both ordinary game states) computes
+`1.0f / 0.0f` and returns an all-NaN matrix, and Phase 3 uploads that inverse into the
+GPU payload so the fragment shader can recover world space per pixel. A NaN reaching the
+shader is undefined fragment output with nothing logged — the same silent-garbage-at-
+draw-time class as `CLAUDE.md`'s shader-resource-count gotcha, and exactly what the
+project's "no silent failure" rule exists to prevent. The header documents that callers
+which can produce a zero-scaled transform must skip it rather than lean on the assert.
 
 ## `BK_Color` moved from `bk_gfx.h` to `bk_math.h` (PLAN.md §6.1, docs/superpowers/specs/2026-08-01-bk-math-design.md §3)
 

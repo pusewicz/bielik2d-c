@@ -1,6 +1,7 @@
 #pragma once
 #include <bielik/bk_types.h>
 
+#include <assert.h>
 #include <math.h>
 
 // Pure 2D math for the draw layer: no SDL, no allocation, no global state. Every
@@ -11,12 +12,15 @@
 /// Ratio of a circle's circumference to its diameter.
 constexpr f32 BK_PI = 3.14159265358979323846f;
 
-/// The smaller of two values.
+/// The smaller of two values. Unlike fminf, NaN is not filtered: a NaN in either
+/// argument propagates or not depending on which side it is on, and it spreads through
+/// bk_v2_min/bk_aabb_add_point from there. Keep NaN out of geometry rather than relying
+/// on these to absorb it.
 [[nodiscard]] static inline f32 bk_minf(f32 lhs, f32 rhs) {
   return lhs < rhs ? lhs : rhs;
 }
 
-/// The larger of two values.
+/// The larger of two values. Same NaN caveat as bk_minf.
 [[nodiscard]] static inline f32 bk_maxf(f32 lhs, f32 rhs) {
   return lhs > rhs ? lhs : rhs;
 }
@@ -144,15 +148,18 @@ typedef struct BK_V2 {
   return bk_v2_len(bk_v2_sub(lhs, rhs));
 }
 
-/// Unit vector in the same direction. Undefined for the zero vector -- use
-/// bk_v2_safe_norm when the input can be degenerate.
+/// Unit vector in the same direction. Produces NaNs for the zero vector, and for any
+/// vector short enough that its squared length underflows f32 (|vec| below ~3.5e-23) --
+/// use bk_v2_safe_norm when the input can be degenerate.
 [[nodiscard]] static inline BK_V2 bk_v2_norm(BK_V2 vec) {
   return bk_v2_scale(vec, 1.0f / bk_v2_len(vec));
 }
 
 /// Unit vector in the same direction, returning the zero vector unchanged instead of
 /// dividing by zero. Reach for this on user-supplied geometry -- a zero-length segment
-/// is a legal thing for a game to draw.
+/// is a legal thing for a game to draw. Squared length is computed in f32, so inputs
+/// outside |vec| in (~3.5e-23, ~1.8e19) under/overflow and also return zero; game-scale
+/// coordinates are nowhere near either cliff.
 [[nodiscard]] static inline BK_V2 bk_v2_safe_norm(BK_V2 vec) {
   f32 len_sq = bk_v2_len_sq(vec);
   if (len_sq == 0.0f) {
@@ -264,8 +271,10 @@ typedef struct BK_M3x2 {
 }
 
 /// An orthographic projection mapping a width x height box centered on the origin onto
-/// normalized device coordinates ([-1, 1] on both axes, y up). Composed with the inverse
-/// of a camera transform to build the draw layer's MVP.
+/// normalized device coordinates ([-1, 1] on both axes, y up -- SDL_gpu.h documents NDC
+/// as (-1,-1) at lower-left, so no flip is needed downstream). Composed with the inverse
+/// of a camera transform to build the draw layer's MVP. Undefined for a zero width or
+/// height, which a minimized window can produce -- check the drawable size first.
 [[nodiscard]] static inline BK_M3x2 bk_m3x2_ortho(f32 width, f32 height) {
   return (BK_M3x2){
       {2.0f / width, 0.0f         },
@@ -293,12 +302,18 @@ typedef struct BK_M3x2 {
                    bk_m3x2_transform_point(lhs, rhs.origin)};
 }
 
-/// The inverse transform. Undefined for a singular transform (zero determinant, e.g. a
-/// zero scale on either axis). The draw layer uploads this into the GPU payload so the
-/// fragment shader can recover world space per pixel for SDF evaluation, which is why
-/// it is core API rather than a convenience.
+/// The inverse transform. Asserts (Debug only) on a singular transform -- a zero scale
+/// on either axis -- and produces NaNs if that assert is compiled out. The draw layer
+/// uploads this into the GPU payload so the fragment shader can recover world space per
+/// pixel for SDF evaluation, which is why it is core API rather than a convenience, and
+/// why the assert matters: a NaN reaching the shader is undefined fragment output with
+/// nothing logged. Callers that can produce a zero-scaled transform (a hidden sprite, a
+/// scale-in tween at t=0) must skip it rather than rely on the assert.
 [[nodiscard]] static inline BK_M3x2 bk_m3x2_inv(BK_M3x2 transform) {
   f32 det = transform.x.x * transform.y.y - transform.y.x * transform.x.y;
+  // Plain assert, not BK_ASSERT: that one wraps SDL_assert, and this module is
+  // deliberately SDL-free. Debug-only, so the hot path pays nothing in Release.
+  assert(det != 0.0f && "bk_m3x2_inv: singular transform (zero scale?)");
   f32 inv_det = 1.0f / det;
   BK_M3x2 result = {
       {transform.y.y * inv_det,  -transform.x.y * inv_det},

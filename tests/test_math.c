@@ -3,13 +3,18 @@
 #include <bielik/bk_math.h>
 
 #include <math.h>
+#include <stddef.h>
 
 // Tolerance for single-operation f32 results. Comparisons that are exact by
 // construction (3-4-5 lengths, the zero-vector safe_norm) use == deliberately.
 constexpr f32 EPS = 1e-5f;
 
 // Anything downstream of a matrix product or an inverse accumulates error across six
-// multiply-adds, so it gets a looser bound than a single operation.
+// multiply-adds, so it gets a looser bound than a single operation. This is an absolute
+// bound on a relative property: it holds comfortably for the fixed, game-scale cases
+// below (worst observed ~5e-6, 5% of budget), but error grows with operand magnitude --
+// a randomized sweep at |t| <= 100 reaches ~1e-4. Anything larger-magnitude added here
+// later wants a relative comparison, not a bigger constant.
 constexpr f32 EPS_ACC = 1e-4f;
 
 static void s_require_v2_near(BK_V2 actual, BK_V2 expected, f32 eps) {
@@ -112,8 +117,14 @@ static void test_v2_normalize(void) {
   REQUIRE(safe_zero.x == 0.0f);
   REQUIRE(safe_zero.y == 0.0f);
 
-  // A very small but non-zero vector still normalizes to unit length.
-  REQUIRE_NEAR(bk_v2_len(bk_v2_safe_norm(bk_v2(1e-20f, 0.0f))), 1.0f, EPS);
+  // A small non-zero vector still normalizes to unit length. Stays well clear of the
+  // f32 underflow cliff: len_sq is computed in f32, so below |vec| ~3.5e-23 it flushes
+  // to zero and safe_norm returns zero for non-zero input (documented in the header).
+  // 1e-20f is only ~2 decades above that and already carries 3e-6 error, so this uses a
+  // game-scale magnitude instead -- the tiny-input behavior is a documented limit, not a
+  // property worth pinning at the edge.
+  REQUIRE_NEAR(bk_v2_len(bk_v2_safe_norm(bk_v2(1e-6f, 0.0f))), 1.0f, EPS);
+  REQUIRE_NEAR(bk_v2_len(bk_v2_safe_norm(bk_v2(0.0f, -2.5e5f))), 1.0f, EPS);
   s_require_v2_near(bk_v2_safe_norm(bk_v2(3.0f, 4.0f)), bk_v2(0.6f, 0.8f), EPS);
 }
 
@@ -364,12 +375,19 @@ static void test_aabb_expand_and_combine(void) {
 
 static void test_rect_field_order(void) {
   // BK_Rect carries no operations; this pins its field order so a future reorder is
-  // caught here rather than silently at an SDL_SetGPUScissor call site.
-  BK_Rect rect = {.x = 1, .y = 2, .width = 3, .height = 4};
+  // caught here rather than silently at an SDL_SetGPUScissor call site. Deliberately
+  // positional, not designated: designated initializers bind by name, so they follow
+  // members wherever they move and would pass a reorder unchanged.
+  BK_Rect rect = {1, 2, 3, 4};
   REQUIRE(rect.x == 1);
   REQUIRE(rect.y == 2);
   REQUIRE(rect.width == 3);
   REQUIRE(rect.height == 4);
+
+  static_assert(offsetof(BK_Rect, x) == 0, "BK_Rect.x must come first");
+  static_assert(offsetof(BK_Rect, y) == sizeof(i32), "BK_Rect.y must come second");
+  static_assert(offsetof(BK_Rect, width) == 2 * sizeof(i32), "BK_Rect.width must be third");
+  static_assert(offsetof(BK_Rect, height) == 3 * sizeof(i32), "BK_Rect.height must be fourth");
 }
 
 static void s_require_color_near(BK_Color actual, BK_Color expected, f32 eps) {

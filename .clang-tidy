@@ -8,8 +8,8 @@ CheckOptions:
   - key: readability-identifier-length.MinimumLoopCounterNameLength
     value: '2'
   - key: readability-identifier-length.IgnoredVariableNames
-    value: '^(i|x|y|r|g|b|a)$'
+    value: '^(i|x|y|r|g|b|a|t)$'
   - key: readability-identifier-length.IgnoredParameterNames
-    value: '^(i|x|y|r|g|b|a)$'
+    value: '^(i|x|y|r|g|b|a|t)$'
   - key: readability-identifier-length.IgnoredLoopCounterNames
-    value: '^(i|x|y|r|g|b|a)$'
+    value: '^(i|x|y|r|g|b|a|t)$'
