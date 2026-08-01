@@ -113,6 +113,91 @@ static void test_indexed_and_instanced_counts_are_recorded(void) {
   bk__gfx_flush();
 }
 
+static void test_storage_buffer_slots_are_recorded(void) {
+  static int dummy_a, dummy_b;
+  bk__gfx_flush();
+
+  bk_gfx_bind_pipeline((BK_GfxPipeline *)&dummy_a);
+  bk_gfx_bind_vertex_storage_buffer((BK_GfxBuffer *)&dummy_a, 0);
+  bk_gfx_bind_vertex_storage_buffer((BK_GfxBuffer *)&dummy_b, 2);
+  bk_gfx_bind_fragment_storage_buffer((BK_GfxBuffer *)&dummy_b, 1);
+  bk_gfx_draw(3);
+
+  const BK_GfxDrawCmd *draw = bk__gfx_get_draw_cmd(0);
+  REQUIRE(draw != nullptr);
+  REQUIRE(draw->vertex_storage[0] == (BK_GfxBuffer *)&dummy_a);
+  REQUIRE(draw->vertex_storage[2] == (BK_GfxBuffer *)&dummy_b);
+  // Count is highest bound slot + 1, so the replay binds one contiguous run. Slot 1
+  // was never bound and stays null inside that run.
+  REQUIRE(draw->num_vertex_storage == 3);
+  REQUIRE(draw->vertex_storage[1] == nullptr);
+  REQUIRE(draw->num_fragment_storage == 2);
+  REQUIRE(draw->fragment_storage[1] == (BK_GfxBuffer *)&dummy_b);
+
+  bk__gfx_flush();
+}
+
+// Overwrites a chunk of stack below the current frame, to prove the uniform push kept
+// its own copy rather than aliasing a caller local that has since gone out of scope.
+static void s_clobber_stack(void) {
+  volatile u8 scratch[512];
+  for (usize i = 0; i < sizeof scratch / sizeof scratch[0]; ++i) {
+    scratch[i] = 0xCD;
+  }
+}
+
+// Pushes from a local that dies when this function returns. bk_gfx_push_vertex_uniform
+// must copy into the frame arena -- SDL_PushGPUVertexUniformData doesn't run until
+// flush, long after this frame is gone.
+static void s_push_uniform_from_a_dead_frame(void) {
+  f32 values[4] = {1.5f, -2.5f, 3.5f, 4.5f};
+  bk_gfx_push_vertex_uniform(values, sizeof values);
+}
+
+static void test_uniform_data_is_copied_not_referenced(void) {
+  static int dummy;
+  bk__gfx_flush();
+
+  bk_gfx_bind_pipeline((BK_GfxPipeline *)&dummy);
+  s_push_uniform_from_a_dead_frame();
+  s_clobber_stack();
+  bk_gfx_draw(3);
+
+  const BK_GfxDrawCmd *draw = bk__gfx_get_draw_cmd(0);
+  REQUIRE(draw != nullptr);
+  REQUIRE(draw->vertex_uniform != nullptr);
+  REQUIRE(draw->vertex_uniform_size == 4 * sizeof(f32));
+
+  const f32 *stored = (const f32 *)draw->vertex_uniform;
+  REQUIRE(stored[0] == 1.5f);
+  REQUIRE(stored[1] == -2.5f);
+  REQUIRE(stored[2] == 3.5f);
+  REQUIRE(stored[3] == 4.5f);
+
+  bk__gfx_flush();
+}
+
+static void test_uniform_pushes_are_per_stage(void) {
+  static int dummy;
+  bk__gfx_flush();
+
+  f32 vertex_data = 1.0f;
+  u32 fragment_data = 0xABCDEF01u;
+  bk_gfx_bind_pipeline((BK_GfxPipeline *)&dummy);
+  bk_gfx_push_vertex_uniform(&vertex_data, sizeof vertex_data);
+  bk_gfx_push_fragment_uniform(&fragment_data, sizeof fragment_data);
+  bk_gfx_draw(3);
+
+  const BK_GfxDrawCmd *draw = bk__gfx_get_draw_cmd(0);
+  REQUIRE(draw != nullptr);
+  REQUIRE(*(const f32 *)draw->vertex_uniform == 1.0f);
+  REQUIRE(*(const u32 *)draw->fragment_uniform == 0xABCDEF01u);
+  // Separate arena copies, not the same block reused.
+  REQUIRE(draw->vertex_uniform != draw->fragment_uniform);
+
+  bk__gfx_flush();
+}
+
 // Part 2: end-to-end replay through a real window and GPU device. Two overlapping
 // full-screen quads are drawn in one frame; the second must win at the overlap. The
 // frame is captured to a BMP and read back, and the whole thing runs twice with the
@@ -308,6 +393,9 @@ int main(void) {
   test_flush_resets_the_chain();
   test_draw_cmd_index_bounds();
   test_indexed_and_instanced_counts_are_recorded();
+  test_storage_buffer_slots_are_recorded();
+  test_uniform_data_is_copied_not_referenced();
+  test_uniform_pushes_are_per_stage();
   test_replay_order_matches_record_order();
   printf("test_gfx_drawlist: OK\n");
   return 0;

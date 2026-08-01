@@ -118,6 +118,55 @@ BK_GfxSampler *bk__gfx_get_pending_sampler(void) {
   return s_state.sampler;
 }
 
+void bk_gfx_bind_vertex_storage_buffer(BK_GfxBuffer *buffer, i32 slot) {
+  BK_ASSERT(buffer != nullptr);
+  BK_ASSERT(slot >= 0 && slot < BK_GFX_MAX_STORAGE_BUFFERS);
+  s_state.vertex_storage[slot] = buffer;
+  if (slot + 1 > s_state.num_vertex_storage) {
+    s_state.num_vertex_storage = slot + 1;
+  }
+}
+
+void bk_gfx_bind_fragment_storage_buffer(BK_GfxBuffer *buffer, i32 slot) {
+  BK_ASSERT(buffer != nullptr);
+  BK_ASSERT(slot >= 0 && slot < BK_GFX_MAX_STORAGE_BUFFERS);
+  s_state.fragment_storage[slot] = buffer;
+  if (slot + 1 > s_state.num_fragment_storage) {
+    s_state.num_fragment_storage = slot + 1;
+  }
+}
+
+// The arena copy is what makes passing a stack local safe: SDL_PushGPU*UniformData
+// doesn't run until flush, long after the caller's frame is gone.
+static const void *s_copy_uniform(const void *data, u32 size) {
+  BK_ASSERT(data != nullptr);
+  BK_ASSERT(size > 0);
+  void *copy = bk_frame_alloc(size, 0); // 0 => platform max alignment, per its contract
+  if (copy == nullptr) {
+    return nullptr; // already logged and asserted by bk_frame_alloc
+  }
+  SDL_memcpy(copy, data, size);
+  return copy;
+}
+
+void bk_gfx_push_vertex_uniform(const void *data, u32 size) {
+  const void *copy = s_copy_uniform(data, size);
+  if (copy == nullptr) {
+    return;
+  }
+  s_state.vertex_uniform = copy;
+  s_state.vertex_uniform_size = size;
+}
+
+void bk_gfx_push_fragment_uniform(const void *data, u32 size) {
+  const void *copy = s_copy_uniform(data, size);
+  if (copy == nullptr) {
+    return;
+  }
+  s_state.fragment_uniform = copy;
+  s_state.fragment_uniform_size = size;
+}
+
 // Frame-level, not a record field: see BK_GfxDrawCmd's comment and spec section 5.
 static BK_GfxCanvas *s_pending_canvas = nullptr;
 
@@ -311,6 +360,32 @@ void bk__gfx_flush(void) {
           .texture = bk__gfx_texture_handle(draw->texture),
           .sampler = bk__gfx_sampler_handle(draw->sampler)};
       SDL_BindGPUFragmentSamplers(pass, 0, &sampler_binding, 1);
+    }
+    if (draw->num_vertex_storage > 0) {
+      SDL_GPUBuffer *handles[BK_GFX_MAX_STORAGE_BUFFERS] = {nullptr};
+      for (i32 i = 0; i < draw->num_vertex_storage; ++i) {
+        handles[i] = draw->vertex_storage[i] != nullptr
+                         ? bk__gfx_buffer_handle(draw->vertex_storage[i])
+                         : nullptr;
+      }
+      SDL_BindGPUVertexStorageBuffers(pass, 0, handles, (Uint32)draw->num_vertex_storage);
+    }
+    if (draw->num_fragment_storage > 0) {
+      SDL_GPUBuffer *handles[BK_GFX_MAX_STORAGE_BUFFERS] = {nullptr};
+      for (i32 i = 0; i < draw->num_fragment_storage; ++i) {
+        handles[i] = draw->fragment_storage[i] != nullptr
+                         ? bk__gfx_buffer_handle(draw->fragment_storage[i])
+                         : nullptr;
+      }
+      SDL_BindGPUFragmentStorageBuffers(pass, 0, handles, (Uint32)draw->num_fragment_storage);
+    }
+    // Uniforms push to the command buffer, not the render pass -- that's SDL's API
+    // shape; the data applies to subsequent draws recorded on that command buffer.
+    if (draw->vertex_uniform != nullptr) {
+      SDL_PushGPUVertexUniformData(cmd, 0, draw->vertex_uniform, draw->vertex_uniform_size);
+    }
+    if (draw->fragment_uniform != nullptr) {
+      SDL_PushGPUFragmentUniformData(cmd, 0, draw->fragment_uniform, draw->fragment_uniform_size);
     }
     if (draw->index_count > 0) {
       SDL_DrawGPUIndexedPrimitives(pass, (Uint32)draw->index_count, (Uint32)draw->instance_count, 0,
