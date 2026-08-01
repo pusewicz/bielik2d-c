@@ -16,6 +16,10 @@ target_link_libraries(test_arena PRIVATE bielik bk_warnings)
 target_include_directories(test_arena PRIVATE ${PROJECT_SOURCE_DIR}/src)
 add_test(NAME test_arena COMMAND test_arena)
 
+add_executable(test_math test_math.c)
+target_link_libraries(test_math PRIVATE bielik bk_warnings)
+add_test(NAME test_math COMMAND test_math)
+
 add_executable(test_gfx test_gfx.c)
 target_link_libraries(test_gfx PRIVATE bielik bk_warnings)
 target_include_directories(test_gfx PRIVATE ${PROJECT_SOURCE_DIR}/src)
@@ -42,6 +46,9 @@ target_link_libraries(test_header_bk_time PRIVATE bielik bk_warnings)
 
 add_library(test_header_bk_types OBJECT test_header_bk_types.c)
 target_link_libraries(test_header_bk_types PRIVATE bielik bk_warnings)
+
+add_library(test_header_bk_math OBJECT test_header_bk_math.c)
+target_link_libraries(test_header_bk_math PRIVATE bielik bk_warnings)
 
 add_library(test_header_bk_task OBJECT test_header_bk_task.c)
 target_link_libraries(test_header_bk_task PRIVATE bielik bk_warnings)
