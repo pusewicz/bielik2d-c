@@ -8,6 +8,21 @@ typedef struct BK_GfxTexture BK_GfxTexture;
 constexpr i32 BK_DRAW_STACK_MAX = 64;
 
 // ---------------------------------------------------------------------------
+// Paint order, and one unsupported combination
+//
+// bk_draw records into a per-frame list the framework submits once, after the render
+// callback returns. So everything bk_draw draws paints ON TOP OF everything the same
+// frame drew through the raw bk_gfx_* API, no matter which order the calls were made
+// in: raw draws cannot be layered over bk_draw output within a frame. Within bk_draw
+// itself, bk_draw_push_layer is how to order shapes.
+//
+// A canvas bound with bk_gfx_bind_canvas is NOT supported alongside bk_draw yet. The
+// draw pipelines bake the swapchain's colour format, which a canvas texture does not
+// share; the mismatch is silent on Metal and a validation error on Vulkan/D3D12.
+// Tracked as pusewicz/bielik2d-c issue #27.
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
 // Camera
 // ---------------------------------------------------------------------------
 
@@ -38,7 +53,8 @@ void bk_draw_translate(BK_V2 offset);
 void bk_draw_rotate(f32 radians);
 
 /// Scales the camera transform. A zero component makes the transform singular, which is
-/// legal -- subsequent draws are culled at record time rather than rasterized (§5).
+/// legal: a shape scaled to zero covers no pixels, so subsequent draws are dropped as
+/// they are recorded instead of reaching the GPU. Not an error, and nothing is logged.
 void bk_draw_scale(BK_V2 scale);
 
 /// Composes transform onto the current camera transform.
@@ -84,8 +100,10 @@ BK_Rect bk_draw_pop_scissor(void);
 //
 // All coordinates are world space, transformed by the camera transform captured at
 // record time. thickness strokes centered on the shape's boundary. radius rounds
-// corners; 0 keeps them sharp. A thickness or radius large enough to swallow the shape
-// is clamped by the SDF itself, not by the API.
+// corners; 0 keeps them sharp. Neither is clamped anywhere: a thickness wider than the
+// shape spills as far outward as it fills inward, and a radius past a box's smaller
+// half-extent drives the SDF's inset extents negative, distorting the silhouette rather
+// than saturating it at a capsule. Keep radius below the smaller half-extent.
 // ---------------------------------------------------------------------------
 
 void bk_draw_box_fill(BK_Aabb bb, f32 radius);

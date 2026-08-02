@@ -137,7 +137,8 @@ void bk_draw_translate(BK_V2 offset);
 void bk_draw_rotate(f32 radians);
 
 /// Scales the camera transform. A zero component makes the transform singular, which is
-/// legal -- subsequent draws are culled at record time rather than rasterized (§5).
+/// legal: a shape scaled to zero covers no pixels, so subsequent draws are dropped as
+/// they are recorded instead of reaching the GPU. Not an error, and nothing is logged.
 void bk_draw_scale(BK_V2 scale);
 
 /// Composes transform onto the current camera transform.
@@ -183,8 +184,10 @@ BK_Rect bk_draw_pop_scissor(void);
 //
 // All coordinates are world space, transformed by the camera transform captured at
 // record time. thickness strokes centered on the shape's boundary. radius rounds
-// corners; 0 keeps them sharp. A thickness or radius large enough to swallow the shape
-// is clamped by the SDF itself, not by the API.
+// corners; 0 keeps them sharp. Neither is clamped anywhere: a thickness wider than the
+// shape spills as far outward as it fills inward, and a radius past a box's smaller
+// half-extent drives the SDF's inset extents negative, distorting the silhouette rather
+// than saturating it at a capsule. Keep radius below the smaller half-extent.
 // ---------------------------------------------------------------------------
 
 void bk_draw_box_fill(BK_Aabb bb, f32 radius);
@@ -409,8 +412,14 @@ what removes any need for a resize event.
 
 `bk__gfx_flush()` then replays the draw list `bk_draw` just appended to, exactly as it
 would replay a game's hand-written `bk_gfx_*` calls. `bk_draw` records **through** the
-public `bk_gfx` API rather than around it, so a game can interleave its own raw draws with
-`bk_draw` calls in the same frame.
+public `bk_gfx` API rather than around it, so a game's own raw draws and its `bk_draw`
+calls land in one list and one flush — no second submission path, no extra pass.
+
+The *calls* interleave freely; the **paint order does not**. `bk__draw_collate()` runs
+after the render callback returns, so every `bk_draw` batch is appended after every raw
+`bk_gfx_*` draw the frame recorded, whatever order they were called in. Raw-gfx UI meant
+to sit on top of `bk_draw` shapes ends up underneath instead. `bk_draw.h` states this
+where a game author will see it.
 
 ## 6. Shaders
 
