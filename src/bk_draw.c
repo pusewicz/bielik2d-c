@@ -702,6 +702,11 @@ static_assert(sizeof(BK_DrawBatchUniform) == 16, "std140: one uvec4");
 static BK_GfxBuffer *s_corner_buffer = nullptr;
 static BK_GfxPipeline *s_pipeline_no_depth = nullptr;
 static BK_GfxPipeline *s_pipeline_depth = nullptr;
+// Cached at init rather than re-queried at collate time: both pipelines above bake this
+// as their color_target_format, so this is what a bound canvas's format must be compared
+// against -- what the pipelines actually declare, not a fresh SDL query that could in
+// principle disagree.
+static SDL_GPUTextureFormat s_swapchain_color_format = SDL_GPU_TEXTUREFORMAT_INVALID;
 static BK_GfxSampler *s_sampler = nullptr;
 // Bound for every shape-only batch: draw.frag declares one sampler unconditionally, so
 // a batch with no bk_draw_texture call still needs something bound to that slot -- an
@@ -736,7 +741,7 @@ static BK_GfxPipeline *s_create_pipeline(SDL_GPUTextureFormat depth_format) {
       .vertex_attributes = &attribute,
       .num_vertex_attributes = 1,
       .primitive_type = BK_GFX_PRIMITIVE_TRIANGLE_LIST,
-      .color_target_format = SDL_GetGPUSwapchainTextureFormat(bk_gpu(), bk_window()),
+      .color_target_format = s_swapchain_color_format,
       .blend_mode = BK_GFX_BLEND_PREMULTIPLIED,
       .depth_stencil_format = depth_format,
   };
@@ -744,6 +749,8 @@ static BK_GfxPipeline *s_create_pipeline(SDL_GPUTextureFormat depth_format) {
 }
 
 void bk__draw_init(void) {
+  s_swapchain_color_format = SDL_GetGPUSwapchainTextureFormat(bk_gpu(), bk_window());
+
   s_corner_buffer =
       bk_gfx_buffer_create(bk_gpu(), BK_GFX_BUFFER_USAGE_VERTEX, sizeof s_draw_corners);
   if (s_corner_buffer != nullptr &&
@@ -788,6 +795,24 @@ void bk__draw_collate(void) {
   i32 target_w = 0, target_h = 0;
   BK_GfxCanvas *canvas = bk__gfx_get_pending_canvas();
   if (canvas != nullptr) {
+    // bk_draw.h documents this combination as unsupported: the pipelines above bake
+    // s_swapchain_color_format, which a canvas's colour texture (always
+    // R8G8B8A8_UNORM) may not share. Detected up front, before packing this frame's
+    // commands at all -- drawing into the mismatched format was silent on Metal and a
+    // validation error on Vulkan/D3D12 (issue #27); decline loudly instead. Logged
+    // once, not every frame, same reasoning as the missing-resource branch below: the
+    // bound canvas's format cannot change frame to frame, so this would otherwise be
+    // an unthrottled log at frame rate for as long as the app keeps this canvas bound.
+    static bool s_logged_canvas_format_mismatch = false;
+    if (bk__gfx_texture_format(bk_gfx_canvas_texture(canvas)) != s_swapchain_color_format) {
+      if (!s_logged_canvas_format_mismatch) {
+        SDL_Log("BK: bk__draw_collate: bound canvas's colour format does not match the "
+                "swapchain's, declining this frame's draws (see bk_draw.h, issue #27)");
+        s_logged_canvas_format_mismatch = true;
+      }
+      bk__draw_reset();
+      return;
+    }
     bk__gfx_texture_size(bk_gfx_canvas_texture(canvas), &target_w, &target_h);
   } else {
     // Not the swapchain texture's size: bk_gfx only learns that from
@@ -896,6 +921,7 @@ void bk__draw_shutdown(void) {
   s_pipeline_no_depth = nullptr;
   bk_gfx_pipeline_destroy(s_pipeline_depth);
   s_pipeline_depth = nullptr;
+  s_swapchain_color_format = SDL_GPU_TEXTUREFORMAT_INVALID;
   bk_gfx_buffer_destroy(s_corner_buffer);
   s_corner_buffer = nullptr;
 }

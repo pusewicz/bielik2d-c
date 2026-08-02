@@ -3,6 +3,7 @@
 #include <bielik/bk_app.h>
 #include <bielik/bk_draw.h>
 #include <bielik/bk_gfx.h>
+#include <bielik/bk_gfx_canvas.h>
 #include <bielik/bk_gfx_texture.h>
 #include <bielik/bk_math.h>
 
@@ -661,6 +662,75 @@ static void test_filled_box_draws_with_depth_stencil_enabled(void) {
   SDL_DestroySurface(frame);
 }
 
+// ---------------------------------------------------------------------------
+// Canvas + bk_draw: bk_draw.h documents this combination as unsupported -- the draw
+// pipelines bake the swapchain's colour format, which a canvas's colour texture
+// (always R8G8B8A8_UNORM) may not share. bk__draw_collate must decline the frame's
+// draws loudly (PR #43 review, issue #27) rather than drawing into the mismatched
+// format, which was silent on Metal and a validation error on Vulkan/D3D12.
+// ---------------------------------------------------------------------------
+
+static BK_GfxCanvas *s_decline_canvas = nullptr;
+// Whether this run's swapchain happens to match the canvas's fixed R8G8B8A8_UNORM --
+// bk_draw.h documents that as backend-dependent, not guaranteed to mismatch, so this is
+// checked rather than assumed. Set from init, the only place bk_gpu()/bk_window() are
+// valid to query.
+static bool s_decline_formats_match = false;
+
+static BK_Result s_decline_canvas_init(void **state, int argc, char **argv) {
+  (void)state;
+  (void)argc;
+  (void)argv;
+  s_decline_canvas = bk_gfx_canvas_create(bk_gpu(), &(BK_GfxCanvasDesc){.width = 64, .height = 64});
+  REQUIRE(s_decline_canvas != nullptr);
+  s_decline_formats_match = SDL_GetGPUSwapchainTextureFormat(bk_gpu(), bk_window()) ==
+                            SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+  return BK_CONTINUE;
+}
+
+static void s_decline_canvas_quit(void *state, BK_Result result) {
+  (void)state;
+  (void)result;
+  bk_gfx_canvas_destroy(s_decline_canvas);
+  s_decline_canvas = nullptr;
+}
+
+static void app_render_box_on_canvas(void *state, const BK_FrameInfo *frame) {
+  (void)state;
+  (void)frame;
+  bk_gfx_bind_canvas(s_decline_canvas);
+  bk_draw_push_color((BK_Color){1.0f, 0.0f, 0.0f, 1.0f});
+  bk_draw_box_fill(bk_aabb(bk_v2(-64.0f, -64.0f), bk_v2(64.0f, 64.0f)), 0.0f);
+  bk_draw_pop_color();
+}
+
+static void test_canvas_bound_declines_instead_of_misrendering(void) {
+  SDL_Surface *frame = s_render_one_frame_full(s_decline_canvas_init, app_render_box_on_canvas,
+                                               s_decline_canvas_quit, false);
+  if (frame == nullptr) {
+    printf("test_draw_gpu: no capture produced, skipping canvas decline\n");
+    return;
+  }
+  if (s_decline_formats_match) {
+    // The one case bk_draw.h itself calls out: a backend whose swapchain happens to
+    // pick R8G8B8A8_UNORM matches the canvas, so bk__draw_collate draws normally
+    // instead of declining -- nothing to probe for a decline here.
+    printf("test_draw_gpu: swapchain format matches the canvas's, skipping canvas decline\n");
+    SDL_DestroySurface(frame);
+    return;
+  }
+
+  // bk__draw_collate declined, so the canvas was cleared but never drawn into -- the
+  // box's red never reaches the swapchain via the blit. A regression that drew anyway
+  // would put red at the centre instead.
+  const u8 *centre = s_pixel_at(frame, frame->w / 2, frame->h / 2);
+  REQUIRE(centre[0] < 55);
+  REQUIRE(centre[1] < 55);
+  REQUIRE(centre[2] < 55);
+
+  SDL_DestroySurface(frame);
+}
+
 int main(void) {
   test_filled_box_draws();
   test_app_viewport_does_not_leak_into_batches();
@@ -677,6 +747,7 @@ int main(void) {
   test_layers_reorder_paint_order();
   test_scissor_clips();
   test_filled_box_draws_with_depth_stencil_enabled();
+  test_canvas_bound_declines_instead_of_misrendering();
   printf("test_draw_gpu: OK\n");
   return 0;
 }
