@@ -154,6 +154,13 @@ static void test_equal_layers_keep_record_order(void) {
   REQUIRE(packed.cmds[0].meta[0] == BK_DRAW_TYPE_CIRCLE);
   REQUIRE(packed.cmds[1].meta[0] == BK_DRAW_TYPE_BOX);
   REQUIRE(packed.cmds[2].meta[0] == BK_DRAW_TYPE_CIRCLE);
+  // The shape-type sequence alone is palindromic, so an anti-stable sort that reverses
+  // equal-layer records maps it to itself and this test would pass under the very
+  // regression it names. The two circles' radii (shape[0], not the payload -- a CIRCLE's
+  // payload slot holds only its centre) are what tell them apart.
+  REQUIRE(packed.cmds[0].shape[0] == 1.0f);
+  REQUIRE(packed.cmds[1].shape[0] == 0.0f); // the box's corner radius
+  REQUIRE(packed.cmds[2].shape[0] == 2.0f);
 }
 
 static void test_batches_split_on_texture_and_scissor_only(void) {
