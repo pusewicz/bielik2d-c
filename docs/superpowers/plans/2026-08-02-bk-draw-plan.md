@@ -306,18 +306,22 @@ typedef struct BK_DrawGeom {
   //   TRI      [0]=p0      [1]=p1  [2]=p2
   //   ARROW    [0]=a       [1]=b   [2]=(shaft_radius, head_width)
   BK_V2 shape[4];
-  f32 radius; // corner/circle radius
-  f32 half_stroke;  // 0 => filled
-  f32 aa_px;        // antialias band, in pixels
-  bool fill;
+  f32 radius;      // corner/circle radius
+  f32 half_stroke; // stroke half-width; 0 on unstroked records. NOT the fill
+                   // discriminator -- see .fill. A line is a filled capsule:
+                   // fill = true with half_stroke != 0.
+  f32 aa_px;       // antialias band, in pixels
+  bool fill;       // the discriminator the packer and shader branch on
   i32 layer;
   BK_Rect scissor;
   BK_GfxTexture *texture; // TEXTURE only; nullptr otherwise
   BK_M3x2 transform;      // the camera transform at record time (projection NOT applied)
 } BK_DrawGeom;
 
-/// Clears the record chain and resets every state stack to its default. Called at the
-/// end of bk__draw_collate, and directly by tests to isolate cases.
+/// Clears the record chain, resets every state stack to its default, and drops any
+/// projection override set this frame -- bk_draw.h documents that override as consumed
+/// by the frame's collate. Called at the end of bk__draw_collate, and directly by tests
+/// to isolate cases.
 void bk__draw_reset(void);
 
 /// Number of records in the current frame's chain. Framework-internal; tests only.
@@ -1291,7 +1295,7 @@ Add one case per remaining shape to `tests/test_draw_gpu.c`, each following `tes
 - `test_stroked_circle_is_hollow` — `bk_draw_circle(bk_v2(0, 0), 64.0f, 8.0f)`; centre **clear**, a pixel on the ring filled.
 - `test_line_draws` — `bk_draw_line(bk_v2(-64, 0), bk_v2(64, 0), 8.0f)`; a pixel on the segment filled, one 40px above it clear.
 - `test_filled_tri_draws` — `bk_draw_tri_fill(bk_v2(0, 64), bk_v2(-64, -64), bk_v2(64, -64), 0.0f)`; the centroid filled, a top corner of the AABB clear.
-- `test_arrow_draws` — `bk_draw_arrow(bk_v2(-64, 0), bk_v2(64, 0), 6.0f, 20.0f)`; a shaft pixel filled, one well above the head clear.
+- `test_arrow_draws` — `bk_draw_arrow(bk_v2(-64, 0), bk_v2(64, 0), 6.0f, 20.0f)`; a shaft pixel filled, one well above the head clear, **and one inside the head's silhouette that only the head can fill** — world `(48, 12)`, pixel `(688, 348)`. That third probe is not optional: `distance_arrow`'s `base = b - n*w` and `t = perp*w` both scale with `w`, so the head's edge slope is always ±1 no matter the head width. A shaft-centreline probe plus a far-above-the-head probe therefore both pass even when `head_width` is zero and no arrowhead is drawn at all. At x=48 the head's half-height is `20 * (1 - (48-44)/(64-44)) = 16`, so y=12 is inside it, while the distance from that point to the shaft segment alone is `√(4² + 12²) − 3 ≈ 9.65` — outside the shaft. Filled if and only if the head exists.
 - `test_rounded_box_corner_is_cut` — `bk_draw_box_fill(bb, 24.0f)`; the box's exact corner pixel clear, its centre filled.
 - `test_texture_draws` — create a 2x2 texture with one known non-uniform colour per texel, `bk_draw_texture` it across the window, and assert two pixels in different quadrants carry different colours. This is what proves `src_px` → UV normalisation is right, which no shape test touches.
 - `test_layers_reorder_paint_order` — draw a red box at layer 5 **first**, then a blue box covering the same area at layer 0. Assert the centre is **red**: the later-recorded blue box paints first because its layer is lower.

@@ -248,7 +248,7 @@ yet:
 // Mirrors `Cmd` in draw.vert (std430).
 typedef struct BK_DrawCmd {
   u32 meta[4];       // type, color_rg, payload offset (vec4 units), mvp offset
-  f32 shape[4];      // radius, half-stroke, aa, alpha
+  f32 shape[4];      // radius, half-stroke, aa (world units), unused
   f32 misc[4];       // fill, color_ba (as float bits), 2 unused
 } BK_DrawCmd;
 static_assert(sizeof(BK_DrawCmd) == 48, "std430 layout: three vec4s");

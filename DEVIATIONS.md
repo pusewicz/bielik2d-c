@@ -512,3 +512,95 @@ or at pipeline creation, it silently drops the command buffer at draw time. Conf
 empirically by regenerating the MSL the naive way and watching
 `tests/test_gfx_drawlist.c`'s instancing pixel check fail, with nothing logged anywhere in
 the chain.
+
+## bk_draw_texture's src_px is normalised to UVs, with a V-flip, at pack time (docs/superpowers/specs/2026-08-02-bk-draw-design.md §4, task-5-brief.md)
+
+Neither the design spec's §4 payload description nor Task 3's shipped packer divided
+`bk_draw_texture`'s `src_px` (documented, correctly, as texels) by the texture's
+dimensions before writing it into the payload -- `draw.frag` samples a normalised
+`sampler2D`, so an unnormalised texel rect (e.g. a 64x64 source rect producing UVs of
+(0,0)-(64,64) instead of (0,0)-(1,1)) is silently wrong: no assert, no log, just a
+black/garbage sample or a repeat-wrapped one depending on address mode. Task 5's brief
+called this out explicitly and specified the fix: `s_write_shape_payload`'s TEXTURE case
+(`src/bk_draw.c`) now calls the new `bk__gfx_texture_size` and divides `src_px.min`/`.max`
+by the texture's width/height. A zero-sized or nullptr texture (a stand-in pointer in a
+unit test, or a texture that failed to create) would otherwise divide by zero and produce
+`inf`; that case is guarded, writing a zeroed UV rect instead.
+
+The division also carries a **V-flip**, because `dst` is a world-space AABB with y up
+while `src_px` is texel space with y down: corner `cy=0` maps to `dst.min.y` (the
+world-space bottom, per `draw.vert`'s `mix`), which must sample `src_px`'s bottom -- the
+*larger* texel y. The payload's y components are therefore swapped relative to x:
+`payload[offset+1] = (src_px.min.x/w, src_px.max.y/h, src_px.max.x/w, src_px.min.y/h)`.
+Verified two ways, not just derived: (1) `tests/test_draw_gpu.c`'s
+`test_positive_y_is_up` isolates the "+y is up, image row 0 is the top" assumption the
+flip depends on, with a box entirely in +y and its mirror position, before trusting
+anything about texture orientation; (2) `test_texture_quadrants_v_flip_is_correct` draws
+a 2x2 red/green/blue/yellow texture (same row-major, top-to-bottom upload layout
+`tests/test_gfx_texture.c`'s checkerboard already proves) onto a full quad and checks all
+four quadrants land where a naive, unflipped textured quad would put them -- both pass
+against the real GPU on this machine. `draw.vert`/`draw.frag` are unchanged.
+
+Also required, but not named by any spec or brief: `draw.frag` declares exactly one
+sampler unconditionally (Task 4's shader), but a shape-only batch (no `bk_draw_texture`
+call) binds no texture at all in `bk_gfx`'s existing bind/replay path
+(`src/bk_gfx.c`'s `bk_gfx_bind_texture` guard) -- an unbound declared sampler is the same
+silent-all-zero-command-buffer hazard `CLAUDE.md` documents for a resource-count
+mismatch, not something that fails loudly. `bk__draw_init` now creates a 1x1 white
+`BK_GFX_TEXTURE_USAGE_SAMPLER` texture, destroyed in `bk__draw_shutdown`, bound for every
+batch whose `texture == nullptr`.
+
+## bk__draw_collate selects its pipeline from a new accessor, not from bk__gfx_canvas_depth_format directly (docs/superpowers/specs/2026-08-02-bk-draw-design.md §5.0, task-5-brief.md)
+
+Both the design spec's §5.0 and Task 5's brief specify collate's pipeline choice as
+"the depth variant chosen from `bk__gfx_canvas_depth_format(bk__gfx_get_pending_canvas())`."
+That call `BK_ASSERT`s `canvas != nullptr` (`src/bk_gfx_canvas.c`) -- which is exactly
+the *default*, no-canvas-bound case every existing sample and this task's own GPU test
+exercise, not an edge case. Following the literal instruction crashes on the common path.
+It also misses `BK_AppDesc.window.depth_stencil` entirely: with no canvas bound but
+swapchain depth enabled, `bk__gfx_flush` attaches the framework-owned depth texture
+(`src/bk_gfx.c`) and asserts the bound pipeline's format against it -- picking the
+no-depth pipeline there would trip that assert too, in precisely the scenario the second
+pipeline exists to serve.
+
+Added `bk__gfx_pending_target_depth_format()` (`src/internal/bk_gfx_internal.h`,
+implemented in `src/bk_gfx.c`) as the internal detail this exposed a real gap in: it
+returns the pending canvas's own depth format if one is bound, else
+`bk_gfx_depth_stencil_format(bk_gpu())` if the framework-owned swapchain depth texture is
+enabled, else `SDL_GPU_TEXTUREFORMAT_INVALID` -- i.e. whatever `bk__gfx_flush` will
+actually attach this frame, covering both cases the spec's selector misses.
+`bk__draw_collate` selects from this instead. No public API changed.
+
+## bk_draw's two per-frame storage buffers outlive the collate call that creates them (docs/superpowers/specs/2026-08-02-bk-draw-design.md §5, task-5-brief.md)
+
+Both the design spec ("created and destroyed per frame") and Task 5's brief describe the
+cmds/payload storage buffers as destroyed within the same `bk__draw_collate` call that
+creates them. That can't work as written: `bk_gfx_bind_vertex_storage_buffer` only
+records the `BK_GfxBuffer *` pointer into this frame's draw chain (`src/bk_gfx.c`), which
+`bk__gfx_flush` replays *after* `bk__draw_collate` returns (`src/bk_app.c`'s call order).
+Destroying the buffers before returning from collate would free them before flush
+dereferences them -- a use-after-free, not a hypothetical one, on the very first frame
+with anything to draw. Implemented instead: hold both buffers in file statics, and
+destroy the *previous* frame's pair at the top of the *next* `bk__draw_collate` call
+(mirroring the reasoning already established for the swapchain-depth texture's
+recreate-without-a-fence-wait in `src/bk_gfx.c`, since SDL_GPU itself defers the
+underlying release past any command buffer still referencing the old handle);
+`bk__draw_shutdown` destroys whatever pair is still held after the last frame. Net effect
+matches the design's intent (still one alloc/upload pair per frame, no persistent cycled
+buffer) with a one-frame lifetime shift that makes it actually correct.
+
+## BK_DrawCmd.shape has no alpha lane (docs/superpowers/specs/2026-08-02-bk-draw-design.md §4, task-3-brief.md)
+
+The design spec's §4 documented `shape[4]` as `// radius, half-stroke, aa, alpha` — a
+leftover from CF's `CF_TileCmd` layout, where alpha rides as a fourth float alongside
+`aa`. Task 3's brief (and the shipped `BK_DrawCmd` in `bk_draw_internal.h`) instead pack
+alpha into the `color_ba` packed-half4 word at `misc[1]`, alongside blue, leaving
+`shape[3]` unused. The brief is what got implemented — verified against the shipped
+struct's own field comments, which already correctly describe `misc` as `fill,
+color_ba (as float bits), 2 unused` — so this is the spec text that was stale, not the
+code. Fixed §4's `shape[4]` comment to `radius, half-stroke, aa (world units), unused`
+to match. Recorded because a Task 4 shader author consulting §4 as canonical, rather
+than reading the packer, would wire `shape.w` to alpha and get an always-zero component
+— which renders every shape fully transparent with no pipeline-creation failure and
+no log anywhere in the chain, the same silent-failure hazard CLAUDE.md's SDL_GPU
+gotchas section already warns about for resource-count mismatches.
