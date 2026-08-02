@@ -36,9 +36,12 @@ static void s_test_render(void *state, const BK_FrameInfo *frame) {
 // and hands back the RGBA32 surface. Returns nullptr if no capture was produced --
 // callers treat that as a skip, not a failure. Caller destroys the surface. init/quit
 // may be nullptr for a case that needs no setup beyond bk_draw_* calls in render.
+// depth_stencil enables the swapchain's depth attachment (BK_AppDesc.window.depth_
+// stencil), which routes bk__draw_collate through its depth pipeline variant instead
+// of the default no-depth one.
 static SDL_Surface *s_render_one_frame_full(BK_Result (*init)(void **, int, char **),
                                             void (*render)(void *, const BK_FrameInfo *),
-                                            void (*quit)(void *, BK_Result)) {
+                                            void (*quit)(void *, BK_Result), bool depth_stencil) {
   s_render_fn = render;
   s_frames = 0;
 
@@ -48,7 +51,10 @@ static SDL_Surface *s_render_one_frame_full(BK_Result (*init)(void **, int, char
   SDL_RemovePath(s_capture_path);
 
   BK_AppDesc desc = {
-      .window = {.title = "test_draw_gpu", .width = 1280, .height = 720},
+      .window = {.title = "test_draw_gpu",
+                 .width = 1280,
+                 .height = 720,
+                 .depth_stencil = depth_stencil},
       .time = {.tick_hz = 60},
       .init = init,
       .update = s_test_update,
@@ -72,7 +78,7 @@ static SDL_Surface *s_render_one_frame_full(BK_Result (*init)(void **, int, char
 // back the RGBA32 surface. Returns nullptr if no capture was produced -- callers treat
 // that as a skip, not a failure. Caller destroys the surface.
 static SDL_Surface *s_render_one_frame(void (*render)(void *, const BK_FrameInfo *)) {
-  return s_render_one_frame_full(nullptr, render, nullptr);
+  return s_render_one_frame_full(nullptr, render, nullptr, false);
 }
 
 // Byte offset of the pixel at (x, y) in a converted surface.
@@ -276,7 +282,7 @@ static void app_render_texture_quadrants(void *state, const BK_FrameInfo *frame)
 
 static void test_texture_quadrants_v_flip_is_correct(void) {
   SDL_Surface *frame = s_render_one_frame_full(
-      s_quadrant_texture_init, app_render_texture_quadrants, s_quadrant_texture_quit);
+      s_quadrant_texture_init, app_render_texture_quadrants, s_quadrant_texture_quit, false);
   if (frame == nullptr) {
     printf("test_draw_gpu: no capture produced, skipping texture quadrant probe\n");
     return;
@@ -342,8 +348,8 @@ static void app_render_alpha_texture(void *state, const BK_FrameInfo *frame) {
 }
 
 static void test_premultiplied_texture_composites_correctly(void) {
-  SDL_Surface *frame =
-      s_render_one_frame_full(s_alpha_texture_init, app_render_alpha_texture, s_alpha_texture_quit);
+  SDL_Surface *frame = s_render_one_frame_full(s_alpha_texture_init, app_render_alpha_texture,
+                                               s_alpha_texture_quit, false);
   if (frame == nullptr) {
     printf("test_draw_gpu: no capture produced, skipping premultiplied texture probe\n");
     return;
@@ -616,6 +622,45 @@ static void test_scissor_clips(void) {
   SDL_DestroySurface(frame);
 }
 
+// ---------------------------------------------------------------------------
+// Depth pipeline: BK_AppDesc.window.depth_stencil routes bk__draw_collate through
+// s_pipeline_depth instead of s_pipeline_no_depth (PR #43 review, issue #36) -- no
+// case above ever enables it, so neither of the pipeline's two failure modes is
+// exercised: s_pipeline_depth failing to create at all (leaves it null, so collate's
+// missing-resource branch declines every frame), and picking the wrong variant for
+// the active depth target, which bk__gfx_flush's BK_ASSERT (the depth_stencil_format
+// contract bk_gfx.h:80-83 documents) turns into a hard crash rather than a quiet
+// misrender.
+// ---------------------------------------------------------------------------
+
+static void app_render_box_depth_enabled(void *state, const BK_FrameInfo *frame) {
+  (void)state;
+  (void)frame;
+  bk_draw_push_color((BK_Color){1.0f, 0.0f, 0.0f, 1.0f});
+  bk_draw_box_fill(bk_aabb(bk_v2(-64.0f, -64.0f), bk_v2(64.0f, 64.0f)), 0.0f);
+  bk_draw_pop_color();
+}
+
+static void test_filled_box_draws_with_depth_stencil_enabled(void) {
+  SDL_Surface *frame = s_render_one_frame_full(nullptr, app_render_box_depth_enabled, nullptr,
+                                               /*depth_stencil=*/true);
+  if (frame == nullptr) {
+    printf("test_draw_gpu: no capture produced, skipping depth-pipeline box\n");
+    return;
+  }
+
+  const u8 *centre = s_pixel_at(frame, frame->w / 2, frame->h / 2);
+  REQUIRE(centre[0] > 200); // red
+  REQUIRE(centre[1] < 55);
+  REQUIRE(centre[2] < 55);
+
+  // Well outside the 128x128 box, so this is the clear colour.
+  const u8 *corner = s_pixel_at(frame, 4, 4);
+  REQUIRE(corner[0] < 55);
+
+  SDL_DestroySurface(frame);
+}
+
 int main(void) {
   test_filled_box_draws();
   test_app_viewport_does_not_leak_into_batches();
@@ -631,6 +676,7 @@ int main(void) {
   test_rounded_box_corner_is_cut();
   test_layers_reorder_paint_order();
   test_scissor_clips();
+  test_filled_box_draws_with_depth_stencil_enabled();
   printf("test_draw_gpu: OK\n");
   return 0;
 }
