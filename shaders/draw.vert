@@ -8,8 +8,28 @@ struct Cmd {
   vec4 misc;   // fill, color_ba as float bits, unused, unused
 };
 
+// SDL_GPU's SPIR-V convention puts vertex-stage storage buffers in set 0 and uniform
+// buffers in set 1; its MSL convention wants [[buffer]] indices as uniforms-first,
+// storage-second. spirv-cross assigns MSL indices by (set, binding) sort order, which
+// produces exactly the opposite pairing -- a mismatch that fails silently at draw
+// time. The MSL build therefore compiles this shader with -DBK_MSL_BINDINGS and
+// translates with --msl-decoration-binding, matching shaders/instanced.vert's
+// precedent. See DEVIATIONS.md and cmake/shaders.cmake.
+#ifdef BK_MSL_BINDINGS
+layout (std430, set = 0, binding = 1) readonly buffer cmd_buffer { Cmd cmds[]; };
+layout (std430, set = 0, binding = 2) readonly buffer payload_buffer { vec4 payload[]; };
+#else
 layout (std430, set = 0, binding = 0) readonly buffer cmd_buffer { Cmd cmds[]; };
 layout (std430, set = 0, binding = 1) readonly buffer payload_buffer { vec4 payload[]; };
+#endif
+
+// The batch's first command index. cmds/payload hold every batch's data back to back
+// in one buffer pair (bk__draw_collate), so a batch after the first must offset its
+// read by this rather than starting at cmds[0] again. Not SDL_DrawGPUPrimitives'
+// first_instance: gl_InstanceIndex's relationship to baseInstance differs across
+// backends (Vulkan folds baseInstance in; spirv-cross's Metal translation maps it to
+// [[instance_id]], which does not) -- see DEVIATIONS.md.
+layout (set = 1, binding = 0) uniform batch_uniform { uvec4 u_batch_base; };
 
 layout (location = 0) out vec4 v_pos_uv;   // world pos.xy, uv.zw
 layout (location = 1) out vec4 v_ab;       // payload P0
@@ -23,7 +43,7 @@ vec4 unpack_half4(uint rg, uint ba) {
 }
 
 void main() {
-  Cmd cmd = cmds[gl_InstanceIndex];
+  Cmd cmd = cmds[gl_InstanceIndex + u_batch_base.x];
   uint type = cmd.meta.x;
   uint po = cmd.meta.z;
   int corner = int(in_corner + 0.5);

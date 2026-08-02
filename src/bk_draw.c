@@ -684,6 +684,21 @@ bool bk__draw_pack(BK_DrawPacked *out, i32 target_w, i32 target_h) {
 // read out of bounds on the 6-vertex draw.
 static constexpr f32 s_draw_corners[6] = {0.0f, 1.0f, 2.0f, 0.0f, 2.0f, 3.0f};
 
+/// Mirrors draw.vert's batch_uniform block: a single batch-base command index, padded
+/// to a uvec4 (16 bytes) so std140's block-size rule is satisfied trivially rather than
+/// relying on implicit tail padding. Pushed once per batch, before that batch's draw --
+/// see bk__draw_collate. Not SDL_DrawGPUPrimitives' first_instance: gl_InstanceIndex's
+/// relationship to baseInstance differs across backends (Vulkan folds it in; the MSL
+/// translation maps it to a zero-based [[instance_id]], which does not), so the offset
+/// travels as a uniform instead of relying on either driver convention. See
+/// DEVIATIONS.md.
+typedef struct BK_DrawBatchUniform {
+  u32 base_index;
+  u32 _pad[3];
+} BK_DrawBatchUniform;
+
+static_assert(sizeof(BK_DrawBatchUniform) == 16, "std140: one uvec4");
+
 static BK_GfxBuffer *s_corner_buffer = nullptr;
 static BK_GfxPipeline *s_pipeline_no_depth = nullptr;
 static BK_GfxPipeline *s_pipeline_depth = nullptr;
@@ -711,10 +726,11 @@ static BK_GfxPipeline *s_create_pipeline(SDL_GPUTextureFormat depth_format) {
   BK_GfxPipelineDesc desc = {
       .vertex_shader = {.spirv = {bk__draw_vertex_spv, bk__draw_vertex_spv_size, "main"},
                         .msl = {bk__draw_vertex_msl, bk__draw_vertex_msl_size, "main0"},
-                        .num_storage_buffers = 2},
+                        .num_storage_buffers = 2,
+                        .num_uniform_buffers = 1},
       .fragment_shader = {.spirv = {bk__draw_fragment_spv, bk__draw_fragment_spv_size, "main"},
                         .msl = {bk__draw_fragment_msl, bk__draw_fragment_msl_size, "main0"},
-                        .num_samplers = 1       },
+                        .num_samplers = 1},
       .vertex_buffers = &layout,
       .num_vertex_buffers = 1,
       .vertex_attributes = &attribute,
@@ -820,6 +836,13 @@ void bk__draw_collate(void) {
       bk_gfx_bind_vertex_buffer(s_corner_buffer);
       bk_gfx_bind_vertex_storage_buffer(s_cmds_buffer, 0);
       bk_gfx_bind_vertex_storage_buffer(s_payload_buffer, 1);
+      // cmds/payload hold every batch's commands back to back in one buffer pair, so
+      // draw.vert must offset its cmds[] read by this batch's start -- gl_InstanceIndex
+      // alone always counts from 0 within a single draw call, on every batch after the
+      // first. See BK_DrawBatchUniform's doc comment for why this travels as a uniform
+      // rather than SDL_DrawGPUPrimitives' first_instance parameter.
+      BK_DrawBatchUniform batch_uniform = {.base_index = (u32)batch->first};
+      bk_gfx_push_vertex_uniform(&batch_uniform, sizeof batch_uniform);
       bk_gfx_bind_texture(batch->texture != nullptr ? batch->texture : s_white_texture, s_sampler);
       bk_gfx_set_scissor(batch->scissor);
       // bk_gfx's bound state is sticky and only cleared inside flush, which runs after

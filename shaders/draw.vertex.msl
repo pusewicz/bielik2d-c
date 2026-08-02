@@ -24,6 +24,11 @@ struct cmd_buffer
     Cmd_1 cmds[1];
 };
 
+struct batch_uniform
+{
+    uint4 u_batch_base;
+};
+
 struct payload_buffer
 {
     float4 payload[1];
@@ -51,18 +56,19 @@ float4 unpack_half4(thread const uint& rg, thread const uint& ba)
     return float4(float2(as_type<half2>(rg)), float2(as_type<half2>(ba)));
 }
 
-vertex main0_out main0(main0_in in [[stage_in]], const device cmd_buffer& _35 [[buffer(0)]], const device payload_buffer& _74 [[buffer(1)]], uint gl_InstanceIndex [[instance_id]])
+vertex main0_out main0(main0_in in [[stage_in]], constant batch_uniform& _44 [[buffer(0)]], const device cmd_buffer& _35 [[buffer(1)]], const device payload_buffer& _82 [[buffer(2)]], uint gl_InstanceIndex [[instance_id]])
 {
     main0_out out = {};
+    uint _49 = uint(int(gl_InstanceIndex)) + _44.u_batch_base.x;
     Cmd cmd;
-    cmd.meta = _35.cmds[int(gl_InstanceIndex)].meta;
-    cmd.shape = _35.cmds[int(gl_InstanceIndex)].shape;
-    cmd.misc = _35.cmds[int(gl_InstanceIndex)].misc;
+    cmd.meta = _35.cmds[_49].meta;
+    cmd.shape = _35.cmds[_49].shape;
+    cmd.misc = _35.cmds[_49].misc;
     uint type = cmd.meta.x;
     uint po = cmd.meta.z;
     int corner = int(in.in_corner + 0.5);
-    float4 P0 = _74.payload[po];
-    float4 P1 = _74.payload[po + 1u];
+    float4 P0 = _82.payload[po];
+    float4 P1 = _82.payload[po + 1u];
     float cx = float((corner == 1) || (corner == 2));
     float cy = float((corner == 2) || (corner == 3));
     float pad = (cmd.shape.x + (cmd.shape.y * 2.0)) + cmd.shape.z;
@@ -115,8 +121,8 @@ vertex main0_out main0(main0_in in [[stage_in]], const device cmd_buffer& _35 [[
             }
         }
     }
-    float4 f0 = _74.payload[cmd.meta.w];
-    float4 f1 = _74.payload[cmd.meta.w + 1u];
+    float4 f0 = _82.payload[cmd.meta.w];
+    float4 f1 = _82.payload[cmd.meta.w + 1u];
     float2 posH = ((f0.xy * pos.x) + (f0.zw * pos.y)) + f1.xy;
     out.v_pos_uv = float4(pos, uv);
     out.v_ab = P0;

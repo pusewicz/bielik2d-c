@@ -144,6 +144,56 @@ static void test_app_viewport_does_not_leak_into_batches(void) {
   SDL_DestroySurface(frame);
 }
 
+// Critical regression (Task 5 reopened): bk__draw_collate never offset cmds[] by a
+// batch's starting index, and bk_gfx's replay hardcodes SDL_DrawGPUPrimitives'
+// first_instance to 0 -- so every batch after the first re-read batch 0's commands
+// under its own texture/scissor instead of its own. Two boxes recorded under
+// different scissors force a two-batch frame -- no texture needed, per the review's
+// repro -- and the second batch must show its OWN shape, not a re-read of the first's.
+static void app_render_two_batches(void *state, const BK_FrameInfo *frame) {
+  (void)state;
+  (void)frame;
+
+  // Batch 0: a red box in the left half, scissored to the left half.
+  bk_draw_push_scissor((BK_Rect){.x = 0, .y = 0, .width = 640, .height = 720});
+  bk_draw_push_color((BK_Color){1.0f, 0.0f, 0.0f, 1.0f});
+  bk_draw_box_fill(bk_aabb(bk_v2(-576.0f, -64.0f), bk_v2(-384.0f, 64.0f)), 0.0f);
+  bk_draw_pop_color();
+  bk_draw_pop_scissor();
+
+  // Batch 1: a distinct green box in the right half, scissored to the right half --
+  // a different scissor from batch 0's, which is what forces bk__draw_pack to split
+  // them (a batch splits on texture or scissor change only).
+  bk_draw_push_scissor((BK_Rect){.x = 640, .y = 0, .width = 640, .height = 720});
+  bk_draw_push_color((BK_Color){0.0f, 1.0f, 0.0f, 1.0f});
+  bk_draw_box_fill(bk_aabb(bk_v2(384.0f, -64.0f), bk_v2(576.0f, 64.0f)), 0.0f);
+  bk_draw_pop_color();
+  bk_draw_pop_scissor();
+}
+
+static void test_second_batch_reads_its_own_commands(void) {
+  SDL_Surface *frame = s_render_one_frame(app_render_two_batches);
+  if (frame == nullptr) {
+    printf("test_draw_gpu: no capture produced, skipping multi-batch regression\n");
+    return;
+  }
+
+  // Batch 0's box, world x in [-576,-384] -> comfortably inside the left half.
+  const u8 *left = s_pixel_at(frame, frame->w / 2 - 480, frame->h / 2);
+  REQUIRE(left[0] > 200);
+  REQUIRE(left[1] < 55);
+
+  // Batch 1's box, world x in [384,576] -> comfortably inside the right half. Before
+  // the fix, batch 1 replayed cmds[0] (batch 0's red, left-half box) instead, which
+  // batch 1's own (right-half) scissor clips away entirely -- this read the clear
+  // colour, not green, until the fix landed.
+  const u8 *right = s_pixel_at(frame, frame->w / 2 + 480, frame->h / 2);
+  REQUIRE(right[1] > 200);
+  REQUIRE(right[0] < 55);
+
+  SDL_DestroySurface(frame);
+}
+
 // Isolating probe: does world +y (bk_m3x2_ortho's documented "y up" contract) actually
 // land in the upper rows of a captured BMP? Nothing else in this repo's GPU tests pins
 // that down -- test_filled_box_draws above is y-symmetric, and test_gfx_drawlist_gpu.c's
@@ -503,6 +553,7 @@ static void test_scissor_clips(void) {
 int main(void) {
   test_filled_box_draws();
   test_app_viewport_does_not_leak_into_batches();
+  test_second_batch_reads_its_own_commands();
   test_positive_y_is_up();
   test_texture_quadrants_v_flip_is_correct();
   test_filled_circle_draws();

@@ -604,3 +604,68 @@ than reading the packer, would wire `shape.w` to alpha and get an always-zero co
 — which renders every shape fully transparent with no pipeline-creation failure and
 no log anywhere in the chain, the same silent-failure hazard CLAUDE.md's SDL_GPU
 gotchas section already warns about for resource-count mismatches.
+
+## draw.vert's `cmds[gl_InstanceIndex]` never offset by a batch's starting index (Critical, plan Task 5, docs/superpowers/specs/2026-08-02-bk-draw-design.md, implementation plan line 826)
+
+Both the design spec and the implementation plan's own `draw.vert` listing read
+`Cmd cmd = cmds[gl_InstanceIndex];` with no batch-relative offset. `bk__draw_collate`
+packs *every* batch's commands into one `cmds` buffer, back to back, and
+`bk_gfx_draw_instanced(6, batch->count)` compiles to
+`SDL_DrawGPUPrimitives(pass, 6, count, 0, 0)` (`src/bk_gfx.c`) — `first_instance` is
+hardcoded to 0 for every draw, not `batch->first`. So every batch after the first read
+`cmds[0..count-1]` — batch 0's commands — instead of its own, under its own (correct)
+texture/scissor bind. Nothing in this plan's test suite had recorded more than one batch
+per frame before `samples/08_draw` (Task 7) did, which is why this shipped through
+Tasks 5-7 undetected: four of that sample's five blocks rendered invisibly, each
+overpainted by a duplicate of the first block's geometry.
+
+The obvious-looking fix — passing `batch->first` as `SDL_DrawGPUPrimitives`'s
+`first_instance` parameter and reading `gl_InstanceIndex` unmodified — was tried and
+rejected before implementation, because it is a portability trap that only fails on
+one of the two backends this project ships today: on Vulkan, `gl_InstanceIndex` equals
+`gl_InstanceID + gl_BaseInstance` (folds the offset in), but spirv-cross translates it
+to Metal's `[[instance_id]]`, which is zero-based within the draw and excludes
+`baseInstance` entirely (confirmed by inspecting the generated `shaders/draw.vertex.msl`:
+`uint gl_InstanceIndex [[instance_id]]`). Passing `first_instance` would render correctly
+on Vulkan and silently produce the same duplicate-block bug on Metal — this machine's
+own default backend — which is exactly the class of bug this fix exists to close, not
+one it should reintroduce.
+
+Implemented instead: the batch's first command index travels as a vertex uniform,
+portable across both `gl_InstanceIndex` conventions because it never relies on either.
+`shaders/draw.vert` gained a `set = 1, binding = 0` uniform block (`uvec4 u_batch_base`,
+16 bytes — a single `uint` padded to a `uvec4` so std140's block-size rule is satisfied
+trivially) and now reads `cmds[gl_InstanceIndex + u_batch_base.x]`; `bk__draw_collate`
+pushes `BK_DrawBatchUniform{.base_index = batch->first}` via
+`bk_gfx_push_vertex_uniform` before each batch's draw — the first consumer of that entry
+point, which P3.2 added with none. `payload[]` reads (`cmd.meta.z`/`.w`, the shape and
+matrix-palette offsets) needed no change: the packer already stores those as absolute
+indices into the whole frame's `payload` array, not batch-relative, so only the `cmds[]`
+read was ever wrong.
+
+Two more changes were required for the uniform to actually reach the shader, both
+silent-failure hazards on their own if missed (per `CLAUDE.md`'s SDL_GPU gotchas): (1)
+`src/bk_draw.c`'s `s_create_pipeline` now declares `num_uniform_buffers = 1` on the
+vertex shader desc, matching what `draw.vert` actually declares; (2)
+`CMakeLists.txt`'s `bk_compile_shader(NAME draw STAGE vertex)` gained
+`MSL_DECORATION_BINDING` (matching `shaders/instanced.vert`'s existing precedent in
+`cmake/shaders.cmake`) — `draw.vert` now declares both storage buffers *and* a uniform
+buffer in one stage, and SDL_GPU's SPIR-V convention (storage in the lower-numbered set)
+disagrees with its MSL convention (uniforms at the lower `[[buffer]]` index) exactly the
+way that flag's own doc comment describes. Verified with `spirv-cross --reflect` against
+the regenerated `draw.vertex.spv` (1 UBO at set 1 binding 0, size 16; 2 SSBOs at set 0
+bindings 0/1) and by inspecting the regenerated `draw.vertex.msl` directly
+(`constant batch_uniform& _44 [[buffer(0)]], const device cmd_buffer& _35 [[buffer(1)]],
+const device payload_buffer& _82 [[buffer(2)]]` — uniform first, storage second, as
+SDL's MSL convention requires), not assumed from the source shader alone.
+
+Verified end to end against the actual bug, not just the fix in isolation: added
+`test_second_batch_reads_its_own_commands` (`tests/test_draw_gpu.c`) — two boxes under
+different scissors (no texture needed to force the split), each in its own screen half.
+Confirmed red first by reverting only `draw.vert`'s offset read back to
+`cmds[gl_InstanceIndex]` (leaving the uniform push and pipeline declaration in place) and
+regenerating the bytecode: the test failed at the second box's probe
+(`right[1] > 200`), which read the clear colour because batch 1 replayed batch 0's
+box — a box entirely outside batch 1's own scissor rect — rather than a duplicate
+appearing at the wrong place, which is itself a discriminating signal, not a coincidence
+of this particular test's geometry. Restored the fix, regenerated, confirmed pass.
