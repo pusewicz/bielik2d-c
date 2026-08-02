@@ -125,3 +125,9 @@ target_include_directories(test_gfx_drawlist_gpu PRIVATE ${PROJECT_SOURCE_DIR}/s
 add_test(NAME test_gfx_drawlist_gpu COMMAND test_gfx_drawlist_gpu)
 set_tests_properties(test_gfx_drawlist_gpu PROPERTIES TIMEOUT 60)
 bk_stage_shaders(test_gfx_drawlist_gpu)
+
+# Record-structure tests: no GPU, so this one is a required CI check everywhere.
+add_executable(test_draw test_draw.c)
+target_link_libraries(test_draw PRIVATE bielik bk_warnings)
+target_include_directories(test_draw PRIVATE ${PROJECT_SOURCE_DIR}/src)
+add_test(NAME test_draw COMMAND test_draw)
