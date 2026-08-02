@@ -36,66 +36,132 @@ void bk__free(void *ptr) {
 
 static constexpr usize s_arena_default_capacity = 4 * 1024 * 1024;
 
-static struct {
+/// One backing block of the frame arena. The arena is a chain of these rather than a
+/// single block precisely so that running out of room never moves memory already handed
+/// out: growth appends a chunk, it never reallocates an existing one. Consumers hold
+/// arena pointers across later bk_frame_alloc calls (bk_gfx's and bk_draw's per-frame
+/// record chains both write through the previous node), so pointer stability for the
+/// whole frame is a contract, not a convenience -- see bk_frame_alloc in bk_app.h.
+typedef struct BK_ArenaChunk {
+  struct BK_ArenaChunk *next;
   unsigned char *base;
   usize capacity;
   usize used;
+} BK_ArenaChunk;
+
+static struct {
+  BK_ArenaChunk *first;
+  BK_ArenaChunk *current; // where the next allocation is tried; nullptr before the first
 } s_frame_arena;
 
+/// Carves size bytes at align out of chunk, or returns nullptr if they do not fit. The
+/// capacity test is written as a subtraction so a huge size cannot wrap the addition.
+static void *s_chunk_alloc(BK_ArenaChunk *chunk, usize size, usize align) {
+  uintptr_t base_addr = (uintptr_t)chunk->base;
+  uintptr_t aligned_addr = (base_addr + chunk->used + (align - 1)) & ~(uintptr_t)(align - 1);
+  usize offset = (usize)(aligned_addr - base_addr);
+  if (offset > chunk->capacity || size > chunk->capacity - offset) {
+    return nullptr;
+  }
+  chunk->used = offset + size;
+  return chunk->base + offset;
+}
+
+/// Allocates a chunk with the given capacity, or nullptr on failure. The header is a
+/// separate allocation from the payload so the payload keeps the allocator's own
+/// max_align_t guarantee rather than whatever offset a trailing header would land on.
+static BK_ArenaChunk *s_chunk_create(usize capacity) {
+  BK_ArenaChunk *chunk = bk__alloc(sizeof *chunk);
+  if (chunk == nullptr) {
+    return nullptr;
+  }
+  unsigned char *base = bk__alloc(capacity);
+  if (base == nullptr) {
+    bk__free(chunk);
+    return nullptr;
+  }
+  *chunk = (BK_ArenaChunk){.base = base, .capacity = capacity};
+  return chunk;
+}
+
 void bk__arena_reset(void) {
-  s_frame_arena.used = 0;
+  // Every chunk is recycled, not freed: a frame that needed two chunks last time gets
+  // both back with no allocator traffic, and the first chunk's address is stable across
+  // frames.
+  for (BK_ArenaChunk *chunk = s_frame_arena.first; chunk != nullptr; chunk = chunk->next) {
+    chunk->used = 0;
+  }
+  s_frame_arena.current = s_frame_arena.first;
 }
 
 void bk__arena_free(void) {
-  if (s_frame_arena.base != nullptr) {
-    bk__free(s_frame_arena.base);
-    s_frame_arena.base = nullptr;
-    s_frame_arena.capacity = 0;
-    s_frame_arena.used = 0;
+  BK_ArenaChunk *chunk = s_frame_arena.first;
+  while (chunk != nullptr) {
+    BK_ArenaChunk *next = chunk->next;
+    bk__free(chunk->base);
+    bk__free(chunk);
+    chunk = next;
   }
+  s_frame_arena.first = nullptr;
+  s_frame_arena.current = nullptr;
 }
 
 void *bk_frame_alloc(usize size, usize align) {
-  if (s_frame_arena.base == nullptr) {
-    unsigned char *base = bk__alloc(s_arena_default_capacity);
-    BK_ASSERT(base != nullptr);
-    if (base == nullptr) {
-      return nullptr;
-    }
-    s_frame_arena.base = base;
-    s_frame_arena.capacity = s_arena_default_capacity;
-    s_frame_arena.used = 0;
-  }
-
   if (align == 0) {
     align = alignof(max_align_t);
   } else {
     BK_ASSERT((align & (align - 1)) == 0);
   }
 
-  usize worst_case = s_frame_arena.used + (align - 1) + size;
-  if (worst_case > s_frame_arena.capacity) {
-    usize new_capacity = s_frame_arena.capacity;
-    while (new_capacity < worst_case) {
-      new_capacity *= 2;
+  // Fast path: the chunk allocations are already coming from.
+  if (s_frame_arena.current != nullptr) {
+    void *ptr = s_chunk_alloc(s_frame_arena.current, size, align);
+    if (ptr != nullptr) {
+      return ptr;
     }
-    unsigned char *new_base = bk__realloc(s_frame_arena.base, new_capacity);
-    if (new_base == nullptr) {
-      BK_ASSERT(false);
-      return nullptr;
+    // Full. Chunks recycled by bk__arena_reset sit further down the chain, in
+    // non-decreasing capacity order; take the first that fits. Skipping past a chunk
+    // strands its remaining bytes for the rest of the frame, which is the usual arena
+    // trade and far cheaper than the pointer invalidation the alternative would cost.
+    for (BK_ArenaChunk *chunk = s_frame_arena.current->next; chunk != nullptr;
+         chunk = chunk->next) {
+      ptr = s_chunk_alloc(chunk, size, align);
+      if (ptr != nullptr) {
+        s_frame_arena.current = chunk;
+        return ptr;
+      }
     }
-    s_frame_arena.base = new_base;
-    s_frame_arena.capacity = new_capacity;
-    SDL_Log("BK: frame arena grew to %zu bytes", new_capacity);
   }
 
-  uintptr_t base_addr = (uintptr_t)s_frame_arena.base;
-  uintptr_t cursor_addr = base_addr + s_frame_arena.used;
-  uintptr_t aligned_addr = (cursor_addr + (align - 1)) & ~(uintptr_t)(align - 1);
-  usize aligned_offset = (usize)(aligned_addr - base_addr);
+  // Nothing recycled fits (or there is no arena yet): append a fresh chunk, doubling the
+  // last one's capacity until the request fits so a big allocation gets a big chunk.
+  BK_ArenaChunk *tail = s_frame_arena.current;
+  while (tail != nullptr && tail->next != nullptr) {
+    tail = tail->next;
+  }
+  usize capacity = tail != nullptr ? tail->capacity : s_arena_default_capacity;
+  usize worst_case = size + (align - 1);
+  while (capacity < worst_case) {
+    capacity *= 2;
+  }
 
-  s_frame_arena.used = aligned_offset + size;
-  return s_frame_arena.base + aligned_offset;
+  BK_ArenaChunk *chunk = s_chunk_create(capacity);
+  BK_ASSERT(chunk != nullptr);
+  if (chunk == nullptr) {
+    return nullptr;
+  }
+  if (tail != nullptr) {
+    tail->next = chunk;
+  } else {
+    s_frame_arena.first = chunk;
+  }
+  s_frame_arena.current = chunk;
+  SDL_Log("BK: frame arena added a %zu byte chunk", capacity);
+
+  void *ptr = s_chunk_alloc(chunk, size, align);
+  BK_ASSERT(ptr != nullptr); // the chunk was sized for this request; only a wrapped
+                             // size + align - 1 can miss
+  return ptr;
 }
 
 #ifndef NDEBUG

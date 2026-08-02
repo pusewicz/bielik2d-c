@@ -1,5 +1,6 @@
 #include "bk_draw_shaders.h"
 #include "bk_test.h"
+#include "internal/bk_app_internal.h" // bk__arena_reset, for the arena-growth regression
 #include "internal/bk_draw_internal.h"
 
 #include <bielik/bk_draw.h>
@@ -340,6 +341,41 @@ static void test_color_half4_round_trips_through_meta_and_misc(void) {
   REQUIRE_NEAR(s_unpack_half((u16)(color_ba >> 16)), expected.a, 1e-6);
 }
 
+static void test_records_survive_an_arena_growth(void) {
+  // Both bk_draw record paths hold frame-arena pointers across later bk_frame_alloc
+  // calls: s_record writes the new record through the *previous* record's next field,
+  // and bk__draw_pack captures the chain head before allocating its four output arrays.
+  // Both are writes through freed memory if growing the arena moves its backing block,
+  // which SDL_realloc is free to do. ASan aborts on it; a Release build corrupts the
+  // first frame that crosses the capacity and then runs clean, which reads as a glitch.
+  //
+  // 60000 records x sizeof(BK_DrawGeom) (~136 bytes) is ~8MB, comfortably past the
+  // arena's 4MB default capacity, so the chain alone forces at least one growth. That
+  // capacity is private to bk_app.c and invisible here -- raising it would defang this
+  // test. Every box stays on the default layer 0: bk__draw_pack's stable sort is an
+  // insertion sort, linear on equal layers and quadratic on varied ones.
+  constexpr i32 box_count = 60000;
+
+  bk__draw_reset();
+  bk__arena_reset();
+
+  for (i32 i = 0; i < box_count; i++) {
+    f32 x = (f32)i;
+    bk_draw_box_fill(bk_aabb(bk_v2(x, 0.0f), bk_v2(x + 2.0f, 2.0f)), 0.0f);
+  }
+  REQUIRE(bk__draw_get_geom_count() == box_count);
+
+  BK_DrawPacked packed = {0};
+  REQUIRE(bk__draw_pack(&packed, 640, 480));
+  REQUIRE(packed.cmd_count == box_count);
+
+  // Box i's centre x is i + 1, exactly representable in f32 across this range. Checking
+  // the last record as well as the first is the point: a chain corrupted partway through
+  // the frame loses everything recorded after the growth.
+  REQUIRE_NEAR(packed.payload[packed.cmds[0].meta[2]].x, 1.0f, 1e-3);
+  REQUIRE_NEAR(packed.payload[packed.cmds[box_count - 1].meta[2]].x, (f32)box_count, 1e-3);
+}
+
 static void test_embedded_shader_bytecode_is_present(void) {
   // Guards the CMake generator: a mis-wired embed step yields empty arrays, and the
   // pipeline would then fail at init with a far less obvious message.
@@ -368,6 +404,7 @@ int main(void) {
   test_fill_flag_is_not_half_stroke();
   test_arrow_shaft_radius_lands_in_payload_not_half_stroke();
   test_color_half4_round_trips_through_meta_and_misc();
+  test_records_survive_an_arena_growth();
   test_embedded_shader_bytecode_is_present();
   printf("test_draw: OK\n");
   return 0;
