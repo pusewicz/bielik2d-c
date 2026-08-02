@@ -708,3 +708,21 @@ end of the enum rather than in what would otherwise be its natural position befo
 `FLOAT2`, because four existing samples and two existing tests depend on the current
 values of the other members; inserting ahead of them would renumber every one for no
 reason tied to this change.
+
+## Frame arena is a chunk chain, not a single doubling block (PLAN.md §6.6)
+
+`PLAN.md` §6.6 specifies "single linear allocator; default capacity 4 MiB, grows by
+doubling", and the original implementation grew via `SDL_realloc`. `realloc` moves the
+block, which invalidates every pointer the arena has already handed out — and the whole
+point of a frame arena here is that per-frame record chains (`bk_gfx`'s draw list,
+`bk_draw`'s geometry chain) hold arena pointers and write through them later in the same
+frame. That made the first frame to cross 4 MiB a heap-use-after-free, non-deterministic
+in Release because `realloc` may or may not move in place. `bk_frame_alloc` now keeps a
+chain of chunks, appending one (each at least double the last chunk's capacity, until the
+request fits) instead of reallocating, and `bk__arena_reset` rewinds and recycles every
+chunk rather than freeing them. The observable contract is otherwise unchanged: same 4 MiB
+default, same doubling of the amount added, same log line on growth, same rewind-not-free
+reset, same alignment guarantees. The one thing gained is what §6.6 never stated and every
+consumer assumed anyway — pointers stay valid for the whole frame, now documented on
+`bk_frame_alloc` in `include/bielik/bk_app.h`. Supersedes the "recompute alignment from the
+post-grow base" entry above, whose reasoning no longer applies now that no base moves.
