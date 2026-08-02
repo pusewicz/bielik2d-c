@@ -669,3 +669,42 @@ regenerating the bytecode: the test failed at the second box's probe
 box — a box entirely outside batch 1's own scissor rect — rather than a duplicate
 appearing at the wrong place, which is itself a discriminating signal, not a coincidence
 of this particular test's geometry. Restored the fix, regenerated, confirmed pass.
+
+## Issue #21 reassigned from P3.3 to P3.6 (docs/superpowers/specs/2026-08-01-gfx-substrate-design.md §5, docs/superpowers/specs/2026-08-02-bk-draw-design.md §7)
+
+The gfx-substrate spec's §5 assigned "the draw layer must not build an inverse MVP from a
+singular transform" to P3.3, this sub-project. Reading CF's instanced path
+(`s_inst_vs`/`s_draw_fs` in `tools/builtin_shaders.h`) end to end shows it never builds an
+inverse at all: world space reaches the fragment shader as an interpolated varying
+(`v_pos_uv.xy`), and `bk_draw`'s port carries that over unchanged. The inverse-MVP hazard
+belongs to CF's tiled path instead, whose fragment shader has no rasterized per-shape quad
+to interpolate world space from and so must invert the matrix itself — that path is P3.6
+here, not P3.3. [Issue #21](https://github.com/pusewicz/bielik2d-c/issues/21) is
+retargeted to P3.6 rather than closed. `bk_draw`'s record-time singular-transform cull
+(design spec §5, "Record") forecloses the degenerate case early, but that is a cull
+justified on its own terms — a zero-scale draw correctly rasterizing nothing — not the
+guard #21 asks for, so it does not stand in for the reassignment. Recorded here because
+`CLAUDE.md` scopes `DEVIATIONS.md` to divergence from `PLAN.md` *or a task brief*, and the
+gfx-substrate spec's §5 is the brief this diverges from.
+
+## `bk_draw` shader bytecode is embedded by CMake, not `#embed` (CLAUDE.md Conventions, docs/superpowers/specs/2026-08-02-bk-draw-design.md §1/§5.0)
+
+`CLAUDE.md` reserves `#embed` for a later phase (it needs Clang 19+/GCC 15 and the project
+isn't there yet), but a framework cannot require every consumer to stage `bk_draw`'s
+internal shader bytecode next to their binary the way a sample stages its own —
+`bk_draw_box_fill` has to work for a game that links `bielik` and never heard of
+`shaders/`. `cmake/embed_shader.cmake` reads each shader's four committed bytecode files
+(`.vertex.spv`/`.msl`, `.fragment.spv`/`.msl`) and writes one generated header of
+`static const unsigned char[]` arrays per file; `src/bk_draw.c` and `tests/test_draw.c`
+both include it, unconditionally through `target_include_directories(bielik PUBLIC
+"${CMAKE_BINARY_DIR}/generated")`. Revisit once `#embed` is unblocked for the project.
+
+## `BK_GFX_VERTEX_FORMAT_FLOAT` added, appended rather than inserted (include/bielik/bk_gfx_pipeline.h)
+
+`bk_draw`'s `draw.vert` needs a single-float vertex attribute for its corner index
+(`in_corner`), and `bk_gfx_pipeline.h`'s `BK_GfxVertexFormat` enum had no such variant —
+only `FLOAT2`/`FLOAT3`/`FLOAT4`/`UBYTE4_NORM`. Added `BK_GFX_VERTEX_FORMAT_FLOAT` at the
+end of the enum rather than in what would otherwise be its natural position before
+`FLOAT2`, because four existing samples and two existing tests depend on the current
+values of the other members; inserting ahead of them would renumber every one for no
+reason tied to this change.

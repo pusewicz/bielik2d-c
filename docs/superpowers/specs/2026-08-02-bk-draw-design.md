@@ -61,15 +61,21 @@ Two consequences, both taken as decisions:
 
 ```
 bielik2d/
+  cmake/
+    embed_shader.cmake        (new; turns committed bytecode into a C header, §5.0)
   include/bielik/
     bk_draw.h                  (new; §2)
+    bk_gfx_pipeline.h          (edit: BK_GFX_VERTEX_FORMAT_FLOAT, appended to the enum)
   src/
     bk_draw.c                  (new; record + collate + pipeline/shader ownership)
+    bk_gfx_pipeline.c          (edit: the new vertex format's attribute-size case)
     internal/
       bk_draw_internal.h       (new; BK_DrawGeom, BK_DrawCmd,
                                 bk__draw_init / bk__draw_collate / bk__draw_shutdown)
+      bk_gfx_internal.h        (edit: add bk__gfx_pending_target_depth_format, §5.0)
       bk_gfx_texture_internal.h (edit: add bk__gfx_texture_size, §5.0)
-    bk_gfx_texture.c           (edit: implement it)
+    bk_gfx.c                   (edit: implement bk__gfx_pending_target_depth_format)
+    bk_gfx_texture.c           (edit: implement bk__gfx_texture_size)
     bk_app.c                   (edit: three calls -- init, collate, shutdown, §5)
   DEVIATIONS.md                (edit: issue #21 reassigned away from P3.3, §7)
   NOTICE.md                    (edit: zlib attribution for the CF port, §7)
@@ -277,8 +283,9 @@ it also references a **matrix palette** entry at `meta[3]`.
 transform genuinely varies between draws within one frame, so it cannot be a uniform
 pushed once per batch — it rides in the palette, and `meta[3]` selects the entry. Collate
 emits a new palette entry only when a record's transform differs from the previous
-record's, so a frame that never touches the camera costs one entry total. Consequently
-**neither shader declares a uniform buffer** (§6).
+record's, so a frame that never touches the camera costs one entry total. This is
+independent of the **batch-base** uniform §5 step 4 and §6 describe: that one carries a
+batch's starting index into the shared `cmds` array, not the MVP.
 
 **The matrix is the forward MVP only — 2 `vec4`s, not 4.** CF's instanced vertex shader
 emits interpolated world-space position as a varying (`v_pos_uv.xy`), and `s_draw_fs`
@@ -294,7 +301,10 @@ rasterized per-shape quad to interpolate from. See §7 for what this means for i
 `bk__gfx_configure_swapchain_depth` call; `bk__draw_shutdown()` runs beside
 `bk__gfx_shutdown()`, before `SDL_DestroyGPUDevice`. It owns three things:
 
-- the compiled `draw.vert`/`draw.frag` shader objects;
+- the compiled `draw.vert`/`draw.frag` shader objects, whose bytecode arrives as a
+  CMake-generated header: `cmake/embed_shader.cmake` turns each shader's four committed
+  bytecode files (`.vertex.spv`/`.msl`, `.fragment.spv`/`.msl`) into byte arrays in
+  `${CMAKE_BINARY_DIR}/generated/bk_draw_shaders.h`, which `src/bk_draw.c` includes;
 - the static **corner buffer** — six floats, `{0,1,2, 0,2,3}`, uploaded once, bound as
   vertex buffer slot 0 for every batch;
 - the **pipelines**, of which there are at most **two**.
@@ -307,11 +317,14 @@ pipeline would assert on exactly that case — a case the framework already supp
 that neither the sample nor the tests would otherwise reach. The count is bounded at two
 because `bk_gfx_depth_stencil_format` probes and returns exactly **one** format per
 device, so the reachable set is `{INVALID, that format}`. Both are created eagerly at
-init; collate selects per frame from
-`bk__gfx_canvas_depth_format(bk__gfx_get_pending_canvas())`, which already exists and
-already returns `INVALID` for a canvas without depth. `bk_draw` writes no depth and does
-no depth testing in either variant — the second pipeline exists solely to satisfy the
-format match.
+init; collate selects per frame from `bk__gfx_pending_target_depth_format()`, not from
+`bk__gfx_canvas_depth_format(bk__gfx_get_pending_canvas())` directly — that call
+`BK_ASSERT`s a non-null canvas, which trips on the common no-canvas-bound case, and it
+also can't see `BK_AppDesc.window.depth_stencil`. The new accessor
+(`src/internal/bk_gfx_internal.h`) covers both cases: a bound canvas's own depth format,
+else the framework-owned swapchain depth format if enabled, else `INVALID` (see
+`DEVIATIONS.md`). `bk_draw` writes no depth and does no depth testing in either variant —
+the second pipeline exists solely to satisfy the format match.
 
 ### Record
 
@@ -356,11 +369,18 @@ mid-frame flush would express.
    arena use is roughly twice the record data for the duration of collate, since the
    packed copy coexists with the chain.
 4. **Upload and emit.** Both arrays become `BK_GFX_BUFFER_USAGE_STORAGE_GRAPHICS` buffers.
-   Per batch: `bk_gfx_bind_pipeline` (the depth variant chosen per §5.0),
-   `bk_gfx_bind_vertex_buffer` (the corner buffer),
+   These cannot be destroyed before this call returns: `bk_gfx_bind_vertex_storage_buffer`
+   only records the buffer pointer into this frame's draw chain, and `bk__gfx_flush`
+   replays it *after* collate returns (`bk_app.c`'s call order), so an immediate destroy
+   would free the buffer before flush dereferences it. `bk_draw` instead holds each
+   frame's pair in file statics and destroys the *previous* frame's pair at the top of the
+   *next* `bk__draw_collate` call — still one allocation pair per frame, just with a
+   one-frame lifetime shift (see `DEVIATIONS.md`). Per batch: `bk_gfx_bind_pipeline` (the
+   depth variant chosen per §5.0), `bk_gfx_bind_vertex_buffer` (the corner buffer),
    `bk_gfx_bind_vertex_storage_buffer` (cmds at slot 0, payload at slot 1),
-   `bk_gfx_bind_texture` when the batch has one, `bk_gfx_set_scissor`, then
-   `bk_gfx_draw_instanced(6, batch_count)`. No uniform push — the MVP is per command (§4).
+   `bk_gfx_bind_texture` when the batch has one, `bk_gfx_set_scissor`,
+   `bk_gfx_push_vertex_uniform` (the batch-base uniform, §4/§6), then
+   `bk_gfx_draw_instanced(6, batch_count)`.
 5. **Reset the state stacks** to their documented defaults.
 
 The projection is resolved here, not at record time: each record stores its **camera**
@@ -370,12 +390,14 @@ frame and still applies to every draw in it.
 
 **Where the default projection's size comes from.** With a canvas bound,
 `bk__gfx_get_pending_canvas` → `bk_gfx_canvas_texture` → `bk__gfx_texture_size` (§1).
-Otherwise `SDL_GetWindowSizeInPixels(bk_window())` — **not** the swapchain texture's
+Otherwise the existing public `bk_window_size()` — **not** the swapchain texture's
 dimensions, which are not available here: `bk_gfx.c:274` only learns them from
 `SDL_WaitAndAcquireGPUSwapchainTexture` inside `bk__gfx_flush`, which runs *after* collate.
-The two can disagree for a single frame mid-resize, which is harmless: the projection is
-off by the resize delta for one frame and self-corrects the next. Sizing from the window
-is also what removes any need for a resize event.
+`bk_window_size()` is cached and refreshed on resize before any app handler runs, so this
+needs no `SDL_GetWindowSizeInPixels` call of its own. The cached size and the swapchain's
+can disagree for a single frame mid-resize, which is harmless: the projection is off by
+the resize delta for one frame and self-corrects the next. Sizing from the window is also
+what removes any need for a resize event.
 
 ### Replay
 
@@ -392,31 +414,36 @@ public `bk_gfx` API rather than around it, so a game can interleave its own raw 
 
 **Vertex.** One `layout(location = 0) in float in_corner` attribute over a static 6-float
 vertex buffer (two triangles' worth of corner indices), created once at init. Reads
-`cmds[gl_InstanceIndex]` and the payload, derives the coverage quad from the shape
-parameters — CF's OBB fitting lives here, not on the CPU — and emits the SDF varyings plus
-interpolated world-space position. Inflates coverage by `radius + stroke*2 + aa` so the
-antialias band is never clipped.
+`cmds[gl_InstanceIndex + u_batch_base.x]` and the payload, derives the coverage quad from
+the shape parameters — CF's OBB fitting lives here, not on the CPU — and emits the SDF
+varyings plus interpolated world-space position. Inflates coverage by `radius + stroke*2 +
+aa` so the antialias band is never clipped. `u_batch_base` is a `set = 1, binding = 0`
+uniform block (a single `uint`, padded to a `uvec4` for std140's block-size rule) carrying
+the batch's first command index — needed because collate packs every batch's commands
+into one shared `cmds` array back to back, but `SDL_DrawGPUPrimitives`' `first_instance` is
+hardcoded to 0 (`bk_gfx_draw_instanced`, `src/bk_gfx.c`) and `gl_InstanceIndex` is not a
+portable substitute: spirv-cross translates it to Metal's zero-based `[[instance_id]]`,
+which excludes `baseInstance` entirely, unlike Vulkan's convention. See `DEVIATIONS.md`.
 
 **Fragment.** Evaluates the shape's SDF at the interpolated world-space position, applies
 the antialias band, samples `u_image` for texture records, and outputs premultiplied
 color.
 
-**Two P3.2 entry points stay unused, deliberately.** For P3.3's shape set every fragment
+**One P3.2 entry point stays unused, deliberately.** For P3.3's shape set every fragment
 parameter fits in the varyings — CF's fragment-side payload reads serve polygon vertex
 lists and CSG operand lists, both P3.5 — so `bk_gfx_bind_fragment_storage_buffer` gets its
-first consumer in P3.5. And because the MVP is per command rather than per batch (§4),
-`bk_gfx_push_vertex_uniform` gets none here either; its consumer is whatever first needs
-genuinely batch-uniform data. Both are recorded here rather than left as a puzzle for
-whoever greps for their callers and finds none.
+first consumer in P3.5. `bk_gfx_push_vertex_uniform` is no longer in this state: the
+batch-base uniform above is its first consumer, ahead of the batch-uniform data §4
+originally expected to be its first user.
 
 **Resource counts.** `BK_GfxShaderDesc.num_samplers`, `num_storage_buffers`, and
 `num_uniform_buffers` must match what each shader binary declares — `CLAUDE.md` records
 that a mismatch fails silently at draw time, dropping the whole command buffer so the
 target reads back all-zero with nothing logged. For P3.3: the **vertex** shader declares
-2 storage buffers, 0 samplers, 0 uniform buffers; the **fragment** shader declares
-1 sampler, 0 storage buffers, 0 uniform buffers. CF's fragment uniform block
-(`u_texture_size`, `u_alpha_discard`, `u_use_smooth_uv`) serves filter modes and alpha
-discard, both out of scope, so it is not ported.
+2 storage buffers, 0 samplers, **1 uniform buffer** (the batch-base uniform above);
+the **fragment** shader declares 1 sampler, 0 storage buffers, 0 uniform buffers. CF's
+fragment uniform block (`u_texture_size`, `u_alpha_discard`, `u_use_smooth_uv`) serves
+filter modes and alpha discard, both out of scope, so it is not ported.
 
 ## 7. Decisions and rationale (do not relitigate in implementation sessions)
 
@@ -486,7 +513,10 @@ not hash-match across Metal and Vulkan, so `CLAUDE.md`'s "render to texture, has
 is not achievable for this module and the established probe-pixel convention applies. Per
 shape: an interior pixel carries the fill color, a pixel well outside is clear, and for a
 stroked variant the center is clear. Plus one layer-ordering case where a low layer is
-provably overdrawn by a high one recorded before it.
+provably overdrawn by a high one recorded before it, and
+`test_second_batch_reads_its_own_commands` — two boxes under different scissors, each in
+its own screen half, guarding the batch-base uniform (§4/§6, `DEVIATIONS.md`) against a
+second batch silently replaying the first batch's commands.
 
 **`samples/08_draw`** — every shape in the set, a rotating camera `push`/`pop`, a layer
 inversion, and antialias on/off side by side. Accepts `--frames N` like the other samples.
