@@ -23,6 +23,11 @@ static void test_quit(void *state, BK_Result result) {
 }
 
 int main(int argc, char **argv) {
+  // This test's whole point is to make boot fail, and a Release build answers that with
+  // a modal error dialog -- which nothing here can dismiss, so the test would hang until
+  // ctest's timeout killed it (bielik2d-c#22). Opt out of the dialog.
+  SDL_SetHint(BK_HINT_NO_ERROR_DIALOG, "1");
+
   BK_AppDesc desc = {
       .window = {.title = "test_app_init_failure", .width = 64, .height = 64},
       .init = test_init,
