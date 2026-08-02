@@ -50,6 +50,9 @@ target_link_libraries(test_header_bk_types PRIVATE bielik bk_warnings)
 add_library(test_header_bk_math OBJECT test_header_bk_math.c)
 target_link_libraries(test_header_bk_math PRIVATE bielik bk_warnings)
 
+add_library(test_header_bk_draw OBJECT test_header_bk_draw.c)
+target_link_libraries(test_header_bk_draw PRIVATE bielik bk_warnings)
+
 add_library(test_header_bk_task OBJECT test_header_bk_task.c)
 target_link_libraries(test_header_bk_task PRIVATE bielik bk_warnings)
 
