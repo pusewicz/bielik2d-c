@@ -94,3 +94,28 @@ function(bk_stage_shaders TARGET)
     )
     add_dependencies(${TARGET} bk_stage_shaders_${TARGET})
 endfunction()
+
+# Compiles the committed bytecode for NAME into a C header of byte arrays, so the
+# framework's own shaders need no runtime files staged beside a consumer's binary.
+# Regenerates whenever the bytecode changes.
+function(bk_embed_shader)
+    set(one_value_args NAME)
+    cmake_parse_arguments(ARG "" "${one_value_args}" "" ${ARGN})
+    set(out "${CMAKE_BINARY_DIR}/generated/bk_${ARG_NAME}_shaders.h")
+    set(inputs
+        "${PROJECT_SOURCE_DIR}/shaders/${ARG_NAME}.vertex.spv"
+        "${PROJECT_SOURCE_DIR}/shaders/${ARG_NAME}.vertex.msl"
+        "${PROJECT_SOURCE_DIR}/shaders/${ARG_NAME}.fragment.spv"
+        "${PROJECT_SOURCE_DIR}/shaders/${ARG_NAME}.fragment.msl")
+    add_custom_command(
+        OUTPUT "${out}"
+        COMMAND ${CMAKE_COMMAND}
+                -DBK_NAME=${ARG_NAME}
+                -DBK_SHADER_DIR=${PROJECT_SOURCE_DIR}/shaders
+                -DBK_OUT=${out}
+                -P "${PROJECT_SOURCE_DIR}/cmake/embed_shader.cmake"
+        DEPENDS ${inputs} "${PROJECT_SOURCE_DIR}/cmake/embed_shader.cmake"
+        COMMENT "Embedding ${ARG_NAME} shader bytecode -> bk_${ARG_NAME}_shaders.h"
+        VERBATIM)
+    add_custom_target(bk_embed_${ARG_NAME} DEPENDS "${out}")
+endfunction()
