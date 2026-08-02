@@ -192,6 +192,11 @@ static void test_batches_split_on_texture_and_scissor_only(void) {
   REQUIRE(packed.batch_count == 2);
   REQUIRE(packed.batches[0].count == 2);
   REQUIRE(packed.batches[1].count == 1);
+  // Not trivially true like batches[0].first == 0 above: batches[1].first == 2 only
+  // holds if it comes from batch 0's actual command count, not (say) the batch's own
+  // loop index (which would be 1 here) -- the same distinction bk__draw_collate's
+  // batch-base uniform depends on getting right (see DEVIATIONS.md).
+  REQUIRE(packed.batches[1].first == 2);
   REQUIRE(packed.batches[0].texture == texture_a);
   REQUIRE(packed.batches[1].texture == texture_b);
 

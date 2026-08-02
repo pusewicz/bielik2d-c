@@ -154,10 +154,16 @@ static void app_render_two_batches(void *state, const BK_FrameInfo *frame) {
   (void)state;
   (void)frame;
 
-  // Batch 0: a red box in the left half, scissored to the left half.
+  // Batch 0: two red boxes in the left half, scissored to the left half. A second
+  // shape here is load-bearing, not decoration: with only one shape per batch,
+  // batch->first happens to equal the batch's loop index (0, 1), so a collate that
+  // mistakenly used the loop index instead of batch->first would still pass. Two
+  // shapes in batch 0 makes batch 1's first (2) diverge from its index (1) -- the
+  // only value that still works is the real one.
   bk_draw_push_scissor((BK_Rect){.x = 0, .y = 0, .width = 640, .height = 720});
   bk_draw_push_color((BK_Color){1.0f, 0.0f, 0.0f, 1.0f});
   bk_draw_box_fill(bk_aabb(bk_v2(-576.0f, -64.0f), bk_v2(-384.0f, 64.0f)), 0.0f);
+  bk_draw_box_fill(bk_aabb(bk_v2(-320.0f, -64.0f), bk_v2(-200.0f, 64.0f)), 0.0f);
   bk_draw_pop_color();
   bk_draw_pop_scissor();
 
@@ -184,9 +190,11 @@ static void test_second_batch_reads_its_own_commands(void) {
   REQUIRE(left[1] < 55);
 
   // Batch 1's box, world x in [384,576] -> comfortably inside the right half. Before
-  // the fix, batch 1 replayed cmds[0] (batch 0's red, left-half box) instead, which
+  // the fix, batch 1 replayed one of batch 0's red, left-half boxes instead, which
   // batch 1's own (right-half) scissor clips away entirely -- this read the clear
-  // colour, not green, until the fix landed.
+  // colour, not green, until the fix landed. (A base_index mistakenly derived from
+  // the batch loop index rather than batch->first reads cmds[1] here, not cmds[0] --
+  // still one of batch 0's boxes, still clipped away by batch 1's scissor.)
   const u8 *right = s_pixel_at(frame, frame->w / 2 + 480, frame->h / 2);
   REQUIRE(right[1] > 200);
   REQUIRE(right[0] < 55);
