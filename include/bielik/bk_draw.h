@@ -107,6 +107,12 @@ void bk_draw_arrow(BK_V2 a, BK_V2 b, f32 thickness, f32 head_width);
 /// Draws texture's src_px sub-rect (in texels, top-left origin) onto the dst box in
 /// world space, tinted by the current color and transformed by the camera. Passing a
 /// src_px covering the whole texture draws it whole; passing sub-rects is how 9-slice
-/// composes, and how P3.4's atlas will feed this same path. A texture change splits the
-/// batch (§5), so this is O(textures) draws until the atlas lands.
+/// composes, and how P3.4's atlas will feed this same path. Each texture change starts a
+/// new batch, so this costs one draw per distinct texture until the atlas lands.
+///
+/// texture's pixels must be **premultiplied**: RGB already scaled by A. The one blend
+/// mode is premultiplied and the shader samples the texel as-is, so straight-alpha data
+/// (an ordinary decoded PNG) composites over-bright -- a 50%-alpha white texel reads back
+/// fully white instead of half-blended, and every soft edge and fade is wrong the same
+/// way. Premultiply at load time.
 void bk_draw_texture(BK_GfxTexture *texture, BK_Aabb src_px, BK_Aabb dst);

@@ -306,6 +306,64 @@ static void test_texture_quadrants_v_flip_is_correct(void) {
 }
 
 // ---------------------------------------------------------------------------
+// Texture alpha: bk_draw_texture's texel data must be premultiplied
+// ---------------------------------------------------------------------------
+
+static BK_GfxTexture *s_alpha_texture = nullptr;
+
+static BK_Result s_alpha_texture_init(void **state, int argc, char **argv) {
+  (void)state;
+  (void)argc;
+  (void)argv;
+  // Premultiplied half-alpha red: straight (255, 0, 0, 128) with its RGB scaled by its
+  // own alpha. draw.frag samples the texel unmodified and the one blend mode is
+  // BK_GFX_BLEND_PREMULTIPLIED (src ONE, dst ONE_MINUS_SRC_ALPHA), so this -- not
+  // straight alpha, which is what an ordinary decoded PNG carries -- is the convention
+  // bk_draw_texture documents.
+  u8 texel[4] = {128, 0, 0, 128};
+  s_alpha_texture = bk_gfx_texture_create(bk_gpu(), BK_GFX_TEXTURE_USAGE_SAMPLER, 1, 1);
+  REQUIRE(s_alpha_texture != nullptr);
+  REQUIRE(bk_gfx_texture_upload(s_alpha_texture, texel));
+  return BK_CONTINUE;
+}
+
+static void s_alpha_texture_quit(void *state, BK_Result result) {
+  (void)state;
+  (void)result;
+  bk_gfx_texture_destroy(s_alpha_texture);
+  s_alpha_texture = nullptr;
+}
+
+static void app_render_alpha_texture(void *state, const BK_FrameInfo *frame) {
+  (void)state;
+  (void)frame;
+  bk_draw_texture(s_alpha_texture, bk_aabb(bk_v2(0.0f, 0.0f), bk_v2(1.0f, 1.0f)),
+                  bk_aabb(bk_v2(-64.0f, -64.0f), bk_v2(64.0f, 64.0f)));
+}
+
+static void test_premultiplied_texture_composites_correctly(void) {
+  SDL_Surface *frame =
+      s_render_one_frame_full(s_alpha_texture_init, app_render_alpha_texture, s_alpha_texture_quit);
+  if (frame == nullptr) {
+    printf("test_draw_gpu: no capture produced, skipping premultiplied texture probe\n");
+    return;
+  }
+
+  // Over the default clear colour (0.1, 0.1, 0.12), src ONE / dst ONE_MINUS_SRC_ALPHA
+  // puts the centre at 128 + 25.5 * (1 - 128/255) ~= 141, 13, 15 -- measured, not just
+  // derived. The two realistic regressions both land well outside this window: feeding
+  // straight-alpha texel data instead pins red at 255, and premultiplying in the shader
+  // (or switching to a straight-alpha blend) halves it to ~77. Nothing else in this file
+  // can catch either -- every texel in the quadrant probe above is alpha 255.
+  const u8 *centre = s_pixel_at(frame, frame->w / 2, frame->h / 2);
+  REQUIRE(centre[0] > 120 && centre[0] < 165);
+  REQUIRE(centre[1] < 40);
+  REQUIRE(centre[2] < 45);
+
+  SDL_DestroySurface(frame);
+}
+
+// ---------------------------------------------------------------------------
 // Filled circle
 // ---------------------------------------------------------------------------
 
@@ -564,6 +622,7 @@ int main(void) {
   test_second_batch_reads_its_own_commands();
   test_positive_y_is_up();
   test_texture_quadrants_v_flip_is_correct();
+  test_premultiplied_texture_composites_correctly();
   test_filled_circle_draws();
   test_stroked_circle_is_hollow();
   test_line_draws();
