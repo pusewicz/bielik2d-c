@@ -746,8 +746,13 @@ static BK_GfxPipeline *s_create_pipeline(SDL_GPUTextureFormat depth_format) {
 void bk__draw_init(void) {
   s_corner_buffer =
       bk_gfx_buffer_create(bk_gpu(), BK_GFX_BUFFER_USAGE_VERTEX, sizeof s_draw_corners);
-  if (s_corner_buffer != nullptr) {
-    bk_gfx_buffer_upload(s_corner_buffer, s_draw_corners, 0, sizeof s_draw_corners);
+  if (s_corner_buffer != nullptr &&
+      !bk_gfx_buffer_upload(s_corner_buffer, s_draw_corners, 0, sizeof s_draw_corners)) {
+    // Already logged by bk_gfx_buffer_upload. Drop the buffer rather than keep one
+    // holding uninitialised GPU memory: collate's missing-resource branch then declines
+    // to draw at all, instead of drawing every shape from garbage corner indices.
+    bk_gfx_buffer_destroy(s_corner_buffer);
+    s_corner_buffer = nullptr;
   }
 
   s_pipeline_no_depth = s_create_pipeline(SDL_GPU_TEXTUREFORMAT_INVALID);
@@ -758,7 +763,12 @@ void bk__draw_init(void) {
   s_white_texture = bk_gfx_texture_create(bk_gpu(), BK_GFX_TEXTURE_USAGE_SAMPLER, 1, 1);
   if (s_white_texture != nullptr) {
     static constexpr u8 white_pixel[4] = {255, 255, 255, 255};
-    bk_gfx_texture_upload(s_white_texture, white_pixel);
+    if (!bk_gfx_texture_upload(s_white_texture, white_pixel)) {
+      // Same reasoning as the corner buffer above: an unuploaded fallback texture tints
+      // every shape-only batch by whatever the driver left in that texel.
+      bk_gfx_texture_destroy(s_white_texture);
+      s_white_texture = nullptr;
+    }
   }
 }
 
@@ -827,8 +837,16 @@ void bk__draw_collate(void) {
       bk__draw_reset();
       return;
     }
-    bk_gfx_buffer_upload(s_cmds_buffer, packed.cmds, 0, cmds_size);
-    bk_gfx_buffer_upload(s_payload_buffer, packed.payload, 0, payload_size);
+    // Both uploads must land before any batch draws: an upload that failed leaves its
+    // buffer holding uninitialised GPU memory, which draw.vert reads as commands --
+    // arbitrary types, offsets and transforms, not nothing.
+    if (!bk_gfx_buffer_upload(s_cmds_buffer, packed.cmds, 0, cmds_size) ||
+        !bk_gfx_buffer_upload(s_payload_buffer, packed.payload, 0, payload_size)) {
+      SDL_Log("BK: bk__draw_collate: storage buffer upload failed, dropping %d commands",
+              packed.cmd_count);
+      bk__draw_reset();
+      return;
+    }
 
     for (i32 i = 0; i < packed.batch_count; i++) {
       const BK_DrawBatch *batch = &packed.batches[i];
@@ -858,6 +876,13 @@ void bk__draw_collate(void) {
 }
 
 void bk__draw_shutdown(void) {
+  // Not redundant with collate's own reset: bk__iterate returns early when update or
+  // post_update returns non-BK_CONTINUE, skipping collate entirely. Without this, an app
+  // that records from update and quits on the same tick leaves the chain pointing into
+  // memory bk__arena_free is about to release, for a second bk_run in the same process
+  // to walk.
+  bk__draw_reset();
+
   bk_gfx_buffer_destroy(s_cmds_buffer);
   bk_gfx_buffer_destroy(s_payload_buffer);
   s_cmds_buffer = nullptr;

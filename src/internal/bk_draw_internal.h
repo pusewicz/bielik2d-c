@@ -134,5 +134,7 @@ void bk__draw_collate(void);
 /// Destroys both pipelines, the sampler, the fallback texture, the corner buffer, and
 /// whichever of this frame's two storage buffers collate left held (see bk__draw_collate's
 /// doc comment on why they outlive the collate call that created them), and nulls them
-/// all. Called once from bk_app.c, immediately before bk__gfx_shutdown.
+/// all. Also clears the record chain (bk__draw_reset), because a run that ends from
+/// update never reaches collate. Called once from bk_app.c, immediately before
+/// bk__gfx_shutdown.
 void bk__draw_shutdown(void);

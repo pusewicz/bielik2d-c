@@ -383,6 +383,23 @@ static void test_records_survive_an_arena_growth(void) {
   REQUIRE_NEAR(packed.payload[packed.cmds[box_count - 1].meta[2]].x, (f32)box_count, 1e-3);
 }
 
+static void test_shutdown_clears_the_record_chain(void) {
+  // bk__iterate returns early when update returns non-BK_CONTINUE, skipping collate and
+  // therefore bk__draw_reset. An app that records from update and quits on the same tick
+  // would otherwise leave the chain pointing into memory bk__arena_free is about to
+  // release, and a second bk_run in the same process would walk it. Needs no device:
+  // every GPU resource shutdown destroys is nullptr here, and all four destroy entry
+  // points return on nullptr.
+  bk__draw_reset();
+  bk_draw_box_fill(bk_aabb(bk_v2(-1.0f, -1.0f), bk_v2(1.0f, 1.0f)), 0.0f);
+  REQUIRE(bk__draw_get_geom_count() == 1);
+
+  bk__draw_shutdown();
+
+  REQUIRE(bk__draw_get_geom_count() == 0);
+  REQUIRE(bk__draw_get_geom(0) == nullptr);
+}
+
 static void test_embedded_shader_bytecode_is_present(void) {
   // Guards the CMake generator: a mis-wired embed step yields empty arrays, and the
   // pipeline would then fail at init with a far less obvious message.
@@ -412,6 +429,7 @@ int main(void) {
   test_arrow_shaft_radius_lands_in_payload_not_half_stroke();
   test_color_half4_round_trips_through_meta_and_misc();
   test_records_survive_an_arena_growth();
+  test_shutdown_clears_the_record_chain();
   test_embedded_shader_bytecode_is_present();
   printf("test_draw: OK\n");
   return 0;
