@@ -50,6 +50,9 @@ target_link_libraries(test_header_bk_types PRIVATE bielik bk_warnings)
 add_library(test_header_bk_math OBJECT test_header_bk_math.c)
 target_link_libraries(test_header_bk_math PRIVATE bielik bk_warnings)
 
+add_library(test_header_bk_draw OBJECT test_header_bk_draw.c)
+target_link_libraries(test_header_bk_draw PRIVATE bielik bk_warnings)
+
 add_library(test_header_bk_task OBJECT test_header_bk_task.c)
 target_link_libraries(test_header_bk_task PRIVATE bielik bk_warnings)
 
@@ -122,3 +125,17 @@ target_include_directories(test_gfx_drawlist_gpu PRIVATE ${PROJECT_SOURCE_DIR}/s
 add_test(NAME test_gfx_drawlist_gpu COMMAND test_gfx_drawlist_gpu)
 set_tests_properties(test_gfx_drawlist_gpu PROPERTIES TIMEOUT 60)
 bk_stage_shaders(test_gfx_drawlist_gpu)
+
+# Record-structure tests: no GPU, so this one is a required CI check everywhere.
+add_executable(test_draw test_draw.c)
+target_link_libraries(test_draw PRIVATE bielik bk_warnings)
+target_include_directories(test_draw PRIVATE ${PROJECT_SOURCE_DIR}/src)
+add_test(NAME test_draw COMMAND test_draw)
+
+# GPU replay tests: needs a real device and pipeline, so it joins CI's allow-failure
+# GPU group (no DXIL variant exists for Windows -- see DEVIATIONS.md).
+add_executable(test_draw_gpu test_draw_gpu.c)
+target_link_libraries(test_draw_gpu PRIVATE bielik bk_warnings)
+target_include_directories(test_draw_gpu PRIVATE ${PROJECT_SOURCE_DIR}/src)
+add_test(NAME test_draw_gpu COMMAND test_draw_gpu)
+set_tests_properties(test_draw_gpu PROPERTIES TIMEOUT 60)

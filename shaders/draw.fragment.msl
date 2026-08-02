@@ -1,0 +1,220 @@
+#pragma clang diagnostic ignored "-Wmissing-prototypes"
+
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct main0_out
+{
+    float4 result [[color(0)]];
+};
+
+struct main0_in
+{
+    float4 v_pos_uv [[user(locn0)]];
+    float4 v_ab [[user(locn1)]];
+    float4 v_cd [[user(locn2)]];
+    float4 v_col [[user(locn3)]];
+    float4 v_shape [[user(locn4)]];
+    float v_fill [[user(locn5)]];
+};
+
+static inline __attribute__((always_inline))
+float distance_aabb(thread const float2& p, thread const float2& he)
+{
+    float2 d = abs(p) - he;
+    return length(fast::max(d, float2(0.0))) + fast::min(fast::max(d.x, d.y), 0.0);
+}
+
+static inline __attribute__((always_inline))
+float safe_len(thread const float2& v)
+{
+    float d = dot(v, v);
+    float _69;
+    if (d == 0.0)
+    {
+        _69 = 0.0;
+    }
+    else
+    {
+        _69 = sqrt(d);
+    }
+    return _69;
+}
+
+static inline __attribute__((always_inline))
+float safe_div(thread const float& a, thread const float& b)
+{
+    float _53;
+    if (b == 0.0)
+    {
+        _53 = 0.0;
+    }
+    else
+    {
+        _53 = a / b;
+    }
+    return _53;
+}
+
+static inline __attribute__((always_inline))
+float distance_segment(thread const float2& p, thread const float2& a, thread const float2& b)
+{
+    float2 n = b - a;
+    float2 pa = p - a;
+    float param = dot(pa, n);
+    float param_1 = dot(n, n);
+    float d = safe_div(param, param_1);
+    float h = fast::clamp(d, 0.0, 1.0);
+    float2 param_2 = pa - (n * h);
+    return safe_len(param_2);
+}
+
+static inline __attribute__((always_inline))
+float det2(thread const float2& a, thread const float2& b)
+{
+    return (a.x * b.y) - (a.y * b.x);
+}
+
+static inline __attribute__((always_inline))
+float distance_triangle(thread const float2& p, thread const float2& a, thread const float2& b, thread const float2& c)
+{
+    float2 e0 = b - a;
+    float2 e1 = c - b;
+    float2 e2 = a - c;
+    float2 v0 = p - a;
+    float2 v1 = p - b;
+    float2 v2 = p - c;
+    float param = dot(v0, e0);
+    float param_1 = dot(e0, e0);
+    float2 pq0 = v0 - (e0 * fast::clamp(safe_div(param, param_1), 0.0, 1.0));
+    float param_2 = dot(v1, e1);
+    float param_3 = dot(e1, e1);
+    float2 pq1 = v1 - (e1 * fast::clamp(safe_div(param_2, param_3), 0.0, 1.0));
+    float param_4 = dot(v2, e2);
+    float param_5 = dot(e2, e2);
+    float2 pq2 = v2 - (e2 * fast::clamp(safe_div(param_4, param_5), 0.0, 1.0));
+    float2 param_6 = e0;
+    float2 param_7 = e2;
+    float s = det2(param_6, param_7);
+    float2 param_8 = v0;
+    float2 param_9 = e0;
+    float2 param_10 = v1;
+    float2 param_11 = e1;
+    float2 param_12 = v2;
+    float2 param_13 = e2;
+    float2 d = fast::min(fast::min(float2(dot(pq0, pq0), s * det2(param_8, param_9)), float2(dot(pq1, pq1), s * det2(param_10, param_11))), float2(dot(pq2, pq2), s * det2(param_12, param_13)));
+    return (-sqrt(d.x)) * sign(d.y);
+}
+
+static inline __attribute__((always_inline))
+float distance_arrow(thread const float2& p, thread const float2& a, thread const float2& b, thread const float& r, thread const float& w)
+{
+    float2 d = b - a;
+    float2 param = d;
+    float l = safe_len(param);
+    float2 _275;
+    if (l == 0.0)
+    {
+        _275 = float2(0.0);
+    }
+    else
+    {
+        _275 = d / float2(l);
+    }
+    float2 n = _275;
+    float2 base = b - (n * w);
+    float2 t = float2(-n.y, n.x) * w;
+    float2 param_1 = p;
+    float2 param_2 = a;
+    float2 param_3 = base;
+    float ds = distance_segment(param_1, param_2, param_3) - r;
+    float2 param_4 = p;
+    float2 param_5 = b;
+    float2 param_6 = base + t;
+    float2 param_7 = base - t;
+    float dt = distance_triangle(param_4, param_5, param_6, param_7);
+    return fast::min(ds, dt);
+}
+
+fragment main0_out main0(main0_in in [[stage_in]], texture2d<float> u_image [[texture(0)]], sampler u_imageSmplr [[sampler(0)]])
+{
+    main0_out out = {};
+    uint type = uint(in.v_shape.w + 0.5);
+    float2 pos = in.v_pos_uv.xy;
+    float radius = in.v_shape.x;
+    float half_stroke = in.v_shape.y;
+    float aa = in.v_shape.z;
+    if (type == 0u)
+    {
+        out.result = u_image.sample(u_imageSmplr, in.v_pos_uv.zw) * in.v_col;
+        return out;
+    }
+    float dist;
+    if (type == 1u)
+    {
+        float2 param = pos - in.v_ab.xy;
+        float2 param_1 = in.v_ab.zw - float2(radius);
+        dist = distance_aabb(param, param_1) - radius;
+    }
+    else
+    {
+        if (type == 2u)
+        {
+            float2 param_2 = pos - in.v_ab.xy;
+            dist = safe_len(param_2) - radius;
+        }
+        else
+        {
+            if (type == 3u)
+            {
+                float2 param_3 = pos;
+                float2 param_4 = in.v_ab.xy;
+                float2 param_5 = in.v_ab.zw;
+                dist = distance_segment(param_3, param_4, param_5) - half_stroke;
+            }
+            else
+            {
+                if (type == 4u)
+                {
+                    float2 param_6 = pos;
+                    float2 param_7 = in.v_ab.xy;
+                    float2 param_8 = in.v_ab.zw;
+                    float2 param_9 = in.v_cd.xy;
+                    dist = distance_triangle(param_6, param_7, param_8, param_9) - radius;
+                }
+                else
+                {
+                    float2 param_10 = pos;
+                    float2 param_11 = in.v_ab.xy;
+                    float2 param_12 = in.v_ab.zw;
+                    float param_13 = in.v_cd.x;
+                    float param_14 = in.v_cd.y;
+                    dist = distance_arrow(param_10, param_11, param_12, param_13, param_14);
+                }
+            }
+        }
+    }
+    if (in.v_fill < 0.5)
+    {
+        dist = abs(dist) - half_stroke;
+    }
+    float _471;
+    if (aa > 0.0)
+    {
+        _471 = 1.0 - smoothstep(-aa, aa, dist);
+    }
+    else
+    {
+        _471 = float(dist <= 0.0);
+    }
+    float coverage = _471;
+    if (coverage <= 0.0)
+    {
+        discard_fragment();
+    }
+    out.result = in.v_col * coverage;
+    return out;
+}
+

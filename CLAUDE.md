@@ -17,8 +17,11 @@ layout) before assuming a command exists beyond what's listed here.
 
 Phase 2 (gfx core) is complete, landed as three sub-projects, each with its own spec
 (`docs/superpowers/specs/`) and implementation plan (`docs/superpowers/plans/`) —
-`PLAN.md` only covers Phase 0/1. Phase 3 (draw2d: draw-list recording, sprite batch,
-atlas, SDF shapes) is next; see `PLAN.md` §7 for its scope.
+`PLAN.md` only covers Phase 0/1. Phase 3 (draw2d) ships as six sub-projects, P3.1–P3.6
+(see `docs/superpowers/specs/2026-08-02-bk-draw-design.md` §0 for the breakdown); P3.1
+(`bk_math`), P3.2 (gfx substrate), and P3.3 (`bk_draw`, the unified SDF renderer) have
+landed, each with its own spec and plan. P3.4 (runtime atlas cache, `BK_Sprite`) is next;
+see `PLAN.md` §7 for Phase 3's overall scope.
 
 Build: `cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBK_WERROR=ON && cmake --build build`.
 Test: `ctest --test-dir build --output-on-failure` (or run a single test

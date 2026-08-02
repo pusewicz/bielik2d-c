@@ -193,6 +193,15 @@ BK_GfxCanvas *bk__gfx_get_pending_canvas(void) {
 }
 
 static bool s_swapchain_depth_enabled = false;
+
+SDL_GPUTextureFormat bk__gfx_pending_target_depth_format(void) {
+  if (s_pending_canvas != nullptr) {
+    return bk__gfx_canvas_depth_format(s_pending_canvas);
+  }
+  return s_swapchain_depth_enabled ? bk_gfx_depth_stencil_format(bk_gpu())
+                                   : SDL_GPU_TEXTUREFORMAT_INVALID;
+}
+
 static BK_GfxTexture *s_swapchain_depth_texture = nullptr;
 static i32 s_swapchain_depth_w = 0;
 static i32 s_swapchain_depth_h = 0;
@@ -247,8 +256,8 @@ void bk__gfx_flush(void) {
   // bk__arena_reset() unconditionally, and this function returns early on a failed
   // command-buffer acquire and on a null swapchain texture (minimized/occluded window).
   // Clearing at the end would leave the draw chain pointing into arena memory that
-  // bk__arena_reset then recycles -- and if the arena grew via bk__realloc meanwhile,
-  // the block moved and those are freed pointers.
+  // bk__arena_reset then hands out again, so the next frame's records would overwrite
+  // this frame's chain while it was still linked.
   BK_GfxDrawCmd *draw_head = s_draw_head;
   BK_GfxCanvas *pending_canvas = s_pending_canvas;
   char pending_capture_path[sizeof s_pending_capture_path];

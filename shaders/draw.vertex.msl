@@ -1,0 +1,138 @@
+#pragma clang diagnostic ignored "-Wmissing-prototypes"
+
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct Cmd
+{
+    uint4 meta;
+    float4 shape;
+    float4 misc;
+};
+
+struct Cmd_1
+{
+    uint4 meta;
+    float4 shape;
+    float4 misc;
+};
+
+struct cmd_buffer
+{
+    Cmd_1 cmds[1];
+};
+
+struct batch_uniform
+{
+    uint4 u_batch_base;
+};
+
+struct payload_buffer
+{
+    float4 payload[1];
+};
+
+struct main0_out
+{
+    float4 v_pos_uv [[user(locn0)]];
+    float4 v_ab [[user(locn1)]];
+    float4 v_cd [[user(locn2)]];
+    float4 v_col [[user(locn3)]];
+    float4 v_shape [[user(locn4)]];
+    float v_fill [[user(locn5)]];
+    float4 gl_Position [[position]];
+};
+
+struct main0_in
+{
+    float in_corner [[attribute(0)]];
+};
+
+static inline __attribute__((always_inline))
+float4 unpack_half4(thread const uint& rg, thread const uint& ba)
+{
+    return float4(float2(as_type<half2>(rg)), float2(as_type<half2>(ba)));
+}
+
+vertex main0_out main0(main0_in in [[stage_in]], constant batch_uniform& _44 [[buffer(0)]], const device cmd_buffer& _35 [[buffer(1)]], const device payload_buffer& _82 [[buffer(2)]], uint gl_InstanceIndex [[instance_id]])
+{
+    main0_out out = {};
+    uint _49 = uint(int(gl_InstanceIndex)) + _44.u_batch_base.x;
+    Cmd cmd;
+    cmd.meta = _35.cmds[_49].meta;
+    cmd.shape = _35.cmds[_49].shape;
+    cmd.misc = _35.cmds[_49].misc;
+    uint type = cmd.meta.x;
+    uint po = cmd.meta.z;
+    int corner = int(in.in_corner + 0.5);
+    float4 P0 = _82.payload[po];
+    float4 P1 = _82.payload[po + 1u];
+    float cx = float((corner == 1) || (corner == 2));
+    float cy = float((corner == 2) || (corner == 3));
+    float pad = (cmd.shape.x + (cmd.shape.y * 2.0)) + cmd.shape.z;
+    float2 pos = float2(0.0);
+    float2 uv = float2(0.0);
+    if (type == 0u)
+    {
+        pos = float2(mix(P0.x, P0.z, cx), mix(P0.y, P0.w, cy));
+        uv = float2(mix(P1.x, P1.z, cx), mix(P1.y, P1.w, cy));
+    }
+    else
+    {
+        if (type == 1u)
+        {
+            float2 centre = P0.xy;
+            float2 he = P0.zw + float2(pad);
+            pos = centre + (he * float2((cx * 2.0) - 1.0, (cy * 2.0) - 1.0));
+        }
+        else
+        {
+            if (type == 2u)
+            {
+                float2 he_1 = float2(cmd.shape.x + pad);
+                pos = P0.xy + (he_1 * float2((cx * 2.0) - 1.0, (cy * 2.0) - 1.0));
+            }
+            else
+            {
+                if (type == 3u)
+                {
+                    float2 mn = fast::min(P0.xy, P0.zw) - float2(pad);
+                    float2 mx = fast::max(P0.xy, P0.zw) + float2(pad);
+                    pos = float2(mix(mn.x, mx.x, cx), mix(mn.y, mx.y, cy));
+                }
+                else
+                {
+                    if (type == 4u)
+                    {
+                        float2 mn_1 = fast::min(P0.xy, fast::min(P0.zw, P1.xy)) - float2(pad);
+                        float2 mx_1 = fast::max(P0.xy, fast::max(P0.zw, P1.xy)) + float2(pad);
+                        pos = float2(mix(mn_1.x, mx_1.x, cx), mix(mn_1.y, mx_1.y, cy));
+                    }
+                    else
+                    {
+                        float apad = fast::max(P1.x, P1.y) + pad;
+                        float2 mn_2 = fast::min(P0.xy, P0.zw) - float2(apad);
+                        float2 mx_2 = fast::max(P0.xy, P0.zw) + float2(apad);
+                        pos = float2(mix(mn_2.x, mx_2.x, cx), mix(mn_2.y, mx_2.y, cy));
+                    }
+                }
+            }
+        }
+    }
+    float4 f0 = _82.payload[cmd.meta.w];
+    float4 f1 = _82.payload[cmd.meta.w + 1u];
+    float2 posH = ((f0.xy * pos.x) + (f0.zw * pos.y)) + f1.xy;
+    out.v_pos_uv = float4(pos, uv);
+    out.v_ab = P0;
+    out.v_cd = P1;
+    uint param = cmd.meta.y;
+    uint param_1 = as_type<uint>(cmd.misc.y);
+    out.v_col = unpack_half4(param, param_1);
+    out.v_shape = float4(cmd.shape.x, cmd.shape.y, cmd.shape.z, float(type));
+    out.v_fill = cmd.misc.x;
+    out.gl_Position = float4(posH, 0.0, 1.0);
+    return out;
+}
+

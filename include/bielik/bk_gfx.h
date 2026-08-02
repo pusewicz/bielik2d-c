@@ -58,7 +58,13 @@ void bk_gfx_push_fragment_uniform(const void *data, u32 size);
 
 /// Records an instanced draw: instance_count copies of vertex_count vertices. The
 /// vertex shader reads gl_InstanceIndex (SV_InstanceID) to pick per-instance data,
-/// typically out of a bound vertex storage buffer.
+/// typically out of a bound vertex storage buffer. Instances are always numbered from
+/// 0 within this draw -- there is no first_instance parameter here, and there
+/// deliberately never will be: gl_InstanceIndex's relationship to a base-instance
+/// offset differs across backends (folded in on Vulkan, excluded from Metal's
+/// [[instance_id]] after spirv-cross translation), so a caller slicing one shared
+/// buffer across several draws (as bk_draw's batches do) must push the base offset as
+/// a uniform instead -- see BK_DrawBatchUniform in src/bk_draw.c for a worked example.
 void bk_gfx_draw_instanced(i32 vertex_count, i32 instance_count);
 
 /// Clips every subsequent draw this frame to rect, in pixels of the render target with

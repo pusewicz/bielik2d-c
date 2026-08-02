@@ -30,6 +30,11 @@ typedef struct BK_TaskSystemDesc {
 /// Per-frame linear allocator; reset after render/flush each frame. Never
 /// free individual allocations — the whole arena rewinds at frame end.
 /// align must be a power of two, or 0 to use the platform's max alignment.
+/// Every pointer returned stays valid until the end of the frame, including
+/// across later bk_frame_alloc calls that exhaust the current capacity: the
+/// arena grows by adding backing blocks, never by moving the ones already
+/// handed out. So a per-frame structure may safely hold arena pointers and
+/// write through them later in the same frame.
 void *bk_frame_alloc(usize size, usize align);
 
 /// Termination/continuation code returned by app callbacks; numerically

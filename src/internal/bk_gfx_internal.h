@@ -86,6 +86,16 @@ const char *bk__gfx_get_pending_capture_path(void);
 /// nullptr if none has been bound since the last flush.
 BK_GfxCanvas *bk__gfx_get_pending_canvas(void);
 
+/// Returns the depth-stencil format the next bk__gfx_flush will attach its render pass
+/// with: a pending canvas's own depth format (bk__gfx_canvas_depth_format) if one is
+/// bound, else bk_gfx_depth_stencil_format(bk_gpu()) if the framework-owned swapchain
+/// depth texture is enabled (bk__gfx_configure_swapchain_depth), else
+/// SDL_GPU_TEXTUREFORMAT_INVALID. Framework-internal; used by bk_draw to pick which of
+/// its two pipelines to bind before flush attaches the render pass this frame actually
+/// targets -- bk__gfx_canvas_depth_format alone (what the design spec names) BK_ASSERTs
+/// on a nullptr canvas, so it cannot answer the no-canvas case by itself.
+SDL_GPUTextureFormat bk__gfx_pending_target_depth_format(void);
+
 /// Enables or disables the framework-owned swapchain depth-stencil texture (mirrors
 /// BK_AppDesc.window.depth_stencil). Called once by bk__boot after the GPU device is
 /// created. When enabled, bk__gfx_flush creates/recreates this texture to match the
