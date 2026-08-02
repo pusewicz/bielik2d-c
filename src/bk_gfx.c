@@ -256,8 +256,8 @@ void bk__gfx_flush(void) {
   // bk__arena_reset() unconditionally, and this function returns early on a failed
   // command-buffer acquire and on a null swapchain texture (minimized/occluded window).
   // Clearing at the end would leave the draw chain pointing into arena memory that
-  // bk__arena_reset then recycles -- and if the arena grew via bk__realloc meanwhile,
-  // the block moved and those are freed pointers.
+  // bk__arena_reset then hands out again, so the next frame's records would overwrite
+  // this frame's chain while it was still linked.
   BK_GfxDrawCmd *draw_head = s_draw_head;
   BK_GfxCanvas *pending_canvas = s_pending_canvas;
   char pending_capture_path[sizeof s_pending_capture_path];

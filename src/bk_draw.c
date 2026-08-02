@@ -546,8 +546,8 @@ bool bk__draw_pack(BK_DrawPacked *out, i32 target_w, i32 target_h) {
   // Snapshot and clear FIRST, before anything can fail or return early. bk_app.c runs
   // bk__gfx_flush() then bk__arena_reset() unconditionally, and flush has early returns
   // (failed command-buffer acquire, null swapchain texture on a minimised window). A
-  // chain left pointing into arena memory across a reset is a use-after-free the moment
-  // the arena has grown via bk__realloc.
+  // chain left linked across a reset points at arena memory the next frame's records
+  // will be handed and will overwrite.
   BK_DrawGeom *head = s_draw.head;
   s_draw.head = nullptr;
   s_draw.tail = nullptr;
