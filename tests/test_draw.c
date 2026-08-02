@@ -1,3 +1,4 @@
+#include "bk_draw_shaders.h"
 #include "bk_test.h"
 #include "internal/bk_draw_internal.h"
 
@@ -114,6 +115,238 @@ static void test_reset_clears_records_and_stacks(void) {
   REQUIRE(bk_draw_peek_layer() == 0);
 }
 
+static void test_packed_cmd_matches_the_shader_layout(void) {
+  // Three vec4s, std430. draw.vert's `Cmd` struct must match this byte-for-byte.
+  REQUIRE(sizeof(BK_DrawCmd) == 48);
+  REQUIRE(offsetof(BK_DrawCmd, meta) == 0);
+  REQUIRE(offsetof(BK_DrawCmd, shape) == 16);
+  REQUIRE(offsetof(BK_DrawCmd, misc) == 32);
+}
+
+static void test_layers_sort_above_record_order(void) {
+  bk__draw_reset();
+
+  bk_draw_push_layer(5);
+  bk_draw_box_fill(bk_aabb(bk_v2(-1.0f, -1.0f), bk_v2(1.0f, 1.0f)), 0.0f); // record 0
+  bk_draw_pop_layer();
+  bk_draw_circle_fill(bk_v2(0.0f, 0.0f), 1.0f); // record 1, layer 0
+
+  BK_DrawPacked packed = {0};
+  REQUIRE(bk__draw_pack(&packed, 640, 480));
+  REQUIRE(packed.cmd_count == 2);
+  // Layer 0 paints first even though it was recorded second.
+  REQUIRE(packed.cmds[0].meta[0] == BK_DRAW_TYPE_CIRCLE);
+  REQUIRE(packed.cmds[1].meta[0] == BK_DRAW_TYPE_BOX);
+}
+
+static void test_equal_layers_keep_record_order(void) {
+  bk__draw_reset();
+
+  bk_draw_circle_fill(bk_v2(0.0f, 0.0f), 1.0f);                            // record 0
+  bk_draw_box_fill(bk_aabb(bk_v2(-1.0f, -1.0f), bk_v2(1.0f, 1.0f)), 0.0f); // record 1
+  bk_draw_circle_fill(bk_v2(0.0f, 0.0f), 2.0f);                            // record 2
+
+  BK_DrawPacked packed = {0};
+  REQUIRE(bk__draw_pack(&packed, 640, 480));
+  REQUIRE(packed.cmd_count == 3);
+  // The sort is stable, so equal layers preserve the order they were recorded in.
+  REQUIRE(packed.cmds[0].meta[0] == BK_DRAW_TYPE_CIRCLE);
+  REQUIRE(packed.cmds[1].meta[0] == BK_DRAW_TYPE_BOX);
+  REQUIRE(packed.cmds[2].meta[0] == BK_DRAW_TYPE_CIRCLE);
+}
+
+static void test_batches_split_on_texture_and_scissor_only(void) {
+  // Wide enough to stand in for a real BK_GfxTexture: the packer's TEXTURE case now
+  // reads texture->width/height (bk__gfx_texture_size) to normalise src_px into UVs, so
+  // a bare int-sized dummy would be an out-of-bounds read. Zeroed, so
+  // bk__gfx_texture_size reports width=height=0 -- exercises the packer's zero-size
+  // guard rather than crashing. alignas(max_align_t): the cast to BK_GfxTexture *
+  // relies on this dummy satisfying whatever alignment the real (opaque, incomplete
+  // here) struct actually needs -- a plain u8[] only guarantees 1-byte alignment.
+  static alignas(max_align_t) u8 dummy_a[256], dummy_b[256];
+  BK_GfxTexture *texture_a = (BK_GfxTexture *)dummy_a;
+  BK_GfxTexture *texture_b = (BK_GfxTexture *)dummy_b;
+  BK_Aabb unit = bk_aabb(bk_v2(-1.0f, -1.0f), bk_v2(1.0f, 1.0f));
+
+  bk__draw_reset();
+  // Color, layer, antialias and shape type all change -- none of them may split.
+  bk_draw_box_fill(unit, 0.0f);
+  bk_draw_push_color((BK_Color){1.0f, 0.0f, 0.0f, 1.0f});
+  bk_draw_circle_fill(bk_v2(0.0f, 0.0f), 1.0f);
+  bk_draw_pop_color();
+  bk_draw_push_antialias(0.0f);
+  bk_draw_line(bk_v2(-1.0f, 0.0f), bk_v2(1.0f, 0.0f), 1.0f);
+  bk_draw_pop_antialias();
+
+  BK_DrawPacked packed = {0};
+  REQUIRE(bk__draw_pack(&packed, 640, 480));
+  REQUIRE(packed.batch_count == 1);
+  REQUIRE(packed.batches[0].first == 0);
+  REQUIRE(packed.batches[0].count == 3);
+
+  bk__draw_reset();
+  bk_draw_texture(texture_a, unit, unit);
+  bk_draw_texture(texture_a, unit, unit); // same texture -- no split
+  bk_draw_texture(texture_b, unit, unit); // different texture -- splits
+  REQUIRE(bk__draw_pack(&packed, 640, 480));
+  REQUIRE(packed.batch_count == 2);
+  REQUIRE(packed.batches[0].count == 2);
+  REQUIRE(packed.batches[1].count == 1);
+  REQUIRE(packed.batches[0].texture == texture_a);
+  REQUIRE(packed.batches[1].texture == texture_b);
+
+  bk__draw_reset();
+  bk_draw_box_fill(unit, 0.0f);
+  bk_draw_push_scissor((BK_Rect){.x = 0, .y = 0, .width = 10, .height = 10});
+  bk_draw_box_fill(unit, 0.0f); // different scissor -- splits
+  bk_draw_pop_scissor();
+  REQUIRE(bk__draw_pack(&packed, 640, 480));
+  REQUIRE(packed.batch_count == 2);
+}
+
+static void test_matrix_palette_dedupes_identical_transforms(void) {
+  BK_Aabb unit = bk_aabb(bk_v2(-1.0f, -1.0f), bk_v2(1.0f, 1.0f));
+
+  bk__draw_reset();
+  bk_draw_box_fill(unit, 0.0f);
+  bk_draw_box_fill(unit, 0.0f);
+  bk_draw_box_fill(unit, 0.0f);
+
+  BK_DrawPacked packed = {0};
+  REQUIRE(bk__draw_pack(&packed, 640, 480));
+  // A frame that never touches the camera emits exactly one palette entry, and every
+  // command selects it.
+  REQUIRE(packed.cmds[0].meta[3] == packed.cmds[1].meta[3]);
+  REQUIRE(packed.cmds[1].meta[3] == packed.cmds[2].meta[3]);
+
+  bk__draw_reset();
+  bk_draw_box_fill(unit, 0.0f);
+  bk_draw_push();
+  bk_draw_translate(bk_v2(50.0f, 0.0f));
+  bk_draw_box_fill(unit, 0.0f);
+  bk_draw_pop();
+  REQUIRE(bk__draw_pack(&packed, 640, 480));
+  REQUIRE(packed.cmds[0].meta[3] != packed.cmds[1].meta[3]);
+}
+
+static void test_payload_offsets_match_each_type(void) {
+  BK_Aabb unit = bk_aabb(bk_v2(-2.0f, -3.0f), bk_v2(4.0f, 5.0f));
+
+  bk__draw_reset();
+  bk_draw_box_fill(unit, 0.0f);                                  // 1 payload vec4
+  bk_draw_tri_fill(bk_v2(0, 0), bk_v2(1, 0), bk_v2(0, 1), 0.0f); // 2 payload vec4s
+
+  BK_DrawPacked packed = {0};
+  REQUIRE(bk__draw_pack(&packed, 640, 480));
+
+  // The box's payload holds centre then half-extents.
+  u32 box_offset = packed.cmds[0].meta[2];
+  REQUIRE_NEAR(packed.payload[box_offset].x, 1.0f, 1e-5); // centre x = (-2+4)/2
+  REQUIRE_NEAR(packed.payload[box_offset].y, 1.0f, 1e-5); // centre y = (-3+5)/2
+  REQUIRE_NEAR(packed.payload[box_offset].z, 3.0f, 1e-5); // half-extent x
+  REQUIRE_NEAR(packed.payload[box_offset].w, 4.0f, 1e-5); // half-extent y
+
+  // The triangle's payload starts after the box's single vec4.
+  u32 tri_offset = packed.cmds[1].meta[2];
+  REQUIRE(tri_offset == box_offset + 1);
+  REQUIRE(packed.payload_count >= (i32)(tri_offset + 2));
+}
+
+static void test_fill_flag_is_not_half_stroke(void) {
+  bk__draw_reset();
+
+  // The line is the case that actually discriminates: fill = true with a nonzero
+  // half_stroke (a capsule). Regressing the packer to branch on half_stroke == 0
+  // instead of .fill would render it hollow, with no crash and no log.
+  bk_draw_line(bk_v2(-1.0f, 0.0f), bk_v2(1.0f, 0.0f), 2.0f);
+
+  BK_DrawPacked packed = {0};
+  REQUIRE(bk__draw_pack(&packed, 640, 480));
+  REQUIRE(packed.cmd_count == 1);
+  REQUIRE(packed.cmds[0].misc[0] == 1.0f);
+  REQUIRE_NEAR(packed.cmds[0].shape[1], 1.0f, 1e-5); // half_stroke = thickness / 2, nonzero
+}
+
+static void test_arrow_shaft_radius_lands_in_payload_not_half_stroke(void) {
+  bk__draw_reset();
+
+  // Unlike the line, bk_draw_arrow never assigns half_stroke -- it stays zero from
+  // s_record's designated initializer. The shaft radius travels in shape[2].x instead,
+  // alongside head_width in shape[2].y, and s_write_shape_payload packs that pair into
+  // the payload vec4 right after (a, b). Task 4's shader must read the arrow's stroke
+  // width from there, not from BK_DrawCmd.shape[1] -- a mismatch that would drop the
+  // command buffer at draw time with nothing logged, per this project's standing
+  // silent-failure hazard.
+  bk_draw_arrow(bk_v2(-1.0f, 0.0f), bk_v2(1.0f, 0.0f), 2.0f, 4.0f);
+
+  BK_DrawPacked packed = {0};
+  REQUIRE(bk__draw_pack(&packed, 640, 480));
+  REQUIRE(packed.cmd_count == 1);
+  REQUIRE(packed.cmds[0].misc[0] == 1.0f);  // filled shaft+head SDF, not a stroked outline
+  REQUIRE(packed.cmds[0].shape[1] == 0.0f); // half_stroke is unused for ARROW
+
+  u32 offset = packed.cmds[0].meta[2];
+  REQUIRE_NEAR(packed.payload[offset + 1].x, 1.0f, 1e-5); // shaft_radius = thickness / 2
+  REQUIRE_NEAR(packed.payload[offset + 1].y, 4.0f, 1e-5); // head_width
+}
+
+/// Unpacks one IEEE-754 binary16 value (in the low 16 bits of half) back to f32 -- this
+/// test's own inverse of the packer's s_half_bits, used to verify the round trip through
+/// BK_DrawCmd.meta[1]/misc[1] rather than trusting the encoding by inspection alone.
+static f32 s_unpack_half(u16 half) {
+  u32 sign = (u32)(half & 0x8000u) << 16;
+  u32 exponent = (half >> 10) & 0x1Fu;
+  u32 mantissa = half & 0x3FFu;
+  u32 bits = exponent == 0 ? sign : sign | ((exponent + 112u) << 23) | (mantissa << 13);
+
+  union {
+    u32 bits;
+    f32 value;
+  } convert = {.bits = bits};
+
+  return convert.value;
+}
+
+static void test_color_half4_round_trips_through_meta_and_misc(void) {
+  bk__draw_reset();
+  bk_draw_push_color((BK_Color){0.25f, 0.5f, 0.75f, 0.5f});
+  bk_draw_box_fill(bk_aabb(bk_v2(-1.0f, -1.0f), bk_v2(1.0f, 1.0f)), 0.0f);
+
+  BK_DrawPacked packed = {0};
+  REQUIRE(bk__draw_pack(&packed, 640, 480));
+  REQUIRE(packed.cmd_count == 1);
+
+  // Premultiplied at record time (bk_color_premultiply), so this is what the packer
+  // actually encoded -- every component here is exactly representable in binary16, so
+  // the round trip is bit-exact, not just within tolerance.
+  BK_Color expected = bk_color_premultiply((BK_Color){0.25f, 0.5f, 0.75f, 0.5f});
+
+  u32 color_rg = packed.cmds[0].meta[1];
+  REQUIRE_NEAR(s_unpack_half((u16)(color_rg & 0xFFFFu)), expected.r, 1e-6);
+  REQUIRE_NEAR(s_unpack_half((u16)(color_rg >> 16)), expected.g, 1e-6);
+
+  union {
+    f32 value;
+    u32 bits;
+  } convert = {.value = packed.cmds[0].misc[1]}; // reinterpret, per BK_DrawCmd's contract
+
+  u32 color_ba = convert.bits;
+  REQUIRE_NEAR(s_unpack_half((u16)(color_ba & 0xFFFFu)), expected.b, 1e-6);
+  REQUIRE_NEAR(s_unpack_half((u16)(color_ba >> 16)), expected.a, 1e-6);
+}
+
+static void test_embedded_shader_bytecode_is_present(void) {
+  // Guards the CMake generator: a mis-wired embed step yields empty arrays, and the
+  // pipeline would then fail at init with a far less obvious message.
+  REQUIRE(bk__draw_vertex_spv_size > 0);
+  REQUIRE(bk__draw_fragment_spv_size > 0);
+  // SPIR-V's magic number, little-endian.
+  REQUIRE(bk__draw_vertex_spv[0] == 0x03);
+  REQUIRE(bk__draw_vertex_spv[1] == 0x02);
+  REQUIRE(bk__draw_vertex_spv[2] == 0x23);
+  REQUIRE(bk__draw_vertex_spv[3] == 0x07);
+}
+
 int main(void) {
   test_color_stack_pushes_pops_and_peeks();
   test_records_snapshot_their_own_state();
@@ -121,6 +354,16 @@ int main(void) {
   test_records_capture_the_camera_transform();
   test_singular_transform_is_culled();
   test_reset_clears_records_and_stacks();
+  test_packed_cmd_matches_the_shader_layout();
+  test_layers_sort_above_record_order();
+  test_equal_layers_keep_record_order();
+  test_batches_split_on_texture_and_scissor_only();
+  test_matrix_palette_dedupes_identical_transforms();
+  test_payload_offsets_match_each_type();
+  test_fill_flag_is_not_half_stroke();
+  test_arrow_shaft_radius_lands_in_payload_not_half_stroke();
+  test_color_half4_round_trips_through_meta_and_misc();
+  test_embedded_shader_bytecode_is_present();
   printf("test_draw: OK\n");
   return 0;
 }

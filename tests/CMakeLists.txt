@@ -131,3 +131,11 @@ add_executable(test_draw test_draw.c)
 target_link_libraries(test_draw PRIVATE bielik bk_warnings)
 target_include_directories(test_draw PRIVATE ${PROJECT_SOURCE_DIR}/src)
 add_test(NAME test_draw COMMAND test_draw)
+
+# GPU replay tests: needs a real device and pipeline, so it joins CI's allow-failure
+# GPU group (no DXIL variant exists for Windows -- see DEVIATIONS.md).
+add_executable(test_draw_gpu test_draw_gpu.c)
+target_link_libraries(test_draw_gpu PRIVATE bielik bk_warnings)
+target_include_directories(test_draw_gpu PRIVATE ${PROJECT_SOURCE_DIR}/src)
+add_test(NAME test_draw_gpu COMMAND test_draw_gpu)
+set_tests_properties(test_draw_gpu PROPERTIES TIMEOUT 60)
