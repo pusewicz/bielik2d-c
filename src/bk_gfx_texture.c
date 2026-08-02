@@ -189,3 +189,16 @@ SDL_GPUTextureFormat bk__gfx_texture_format(const BK_GfxTexture *texture) {
   BK_ASSERT(texture != nullptr);
   return texture->format;
 }
+
+bool bk__gfx_texture_size(const BK_GfxTexture *texture, i32 *out_w, i32 *out_h) {
+  if (texture == nullptr) {
+    return false;
+  }
+  if (out_w != nullptr) {
+    *out_w = (i32)texture->width;
+  }
+  if (out_h != nullptr) {
+    *out_h = (i32)texture->height;
+  }
+  return true;
+}

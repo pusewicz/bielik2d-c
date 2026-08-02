@@ -35,6 +35,8 @@ typedef enum BK_GfxVertexFormat {
   BK_GFX_VERTEX_FORMAT_FLOAT3,
   BK_GFX_VERTEX_FORMAT_FLOAT4,
   BK_GFX_VERTEX_FORMAT_UBYTE4_NORM, // packed color
+  BK_GFX_VERTEX_FORMAT_FLOAT,       // single float -- appended, not inserted: existing
+                                    // values are used by four samples and two tests
 } BK_GfxVertexFormat;
 
 /// One vertex attribute: which shader input location it feeds, which vertex buffer

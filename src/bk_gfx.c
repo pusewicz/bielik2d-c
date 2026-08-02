@@ -193,6 +193,15 @@ BK_GfxCanvas *bk__gfx_get_pending_canvas(void) {
 }
 
 static bool s_swapchain_depth_enabled = false;
+
+SDL_GPUTextureFormat bk__gfx_pending_target_depth_format(void) {
+  if (s_pending_canvas != nullptr) {
+    return bk__gfx_canvas_depth_format(s_pending_canvas);
+  }
+  return s_swapchain_depth_enabled ? bk_gfx_depth_stencil_format(bk_gpu())
+                                   : SDL_GPU_TEXTUREFORMAT_INVALID;
+}
+
 static BK_GfxTexture *s_swapchain_depth_texture = nullptr;
 static i32 s_swapchain_depth_w = 0;
 static i32 s_swapchain_depth_h = 0;

@@ -17,3 +17,8 @@ SDL_GPUSampler *bk__gfx_sampler_handle(const BK_GfxSampler *sampler);
 /// bk_gfx_pipeline to match a depth attachment's format against a pipeline's declared
 /// depth_stencil_format.
 SDL_GPUTextureFormat bk__gfx_texture_format(const BK_GfxTexture *texture);
+
+/// Writes texture's dimensions in texels to *out_w/*out_h. Framework-internal; used by
+/// bk_draw to normalise a source rect into UVs and to size the default projection when
+/// a canvas is bound. Returns false if texture is nullptr.
+bool bk__gfx_texture_size(const BK_GfxTexture *texture, i32 *out_w, i32 *out_h);
