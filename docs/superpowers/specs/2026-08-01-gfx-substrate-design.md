@@ -60,8 +60,17 @@ bielik2d/
   samples/
     07_instanced/            (new)
   tests/
-    test_gfx_drawlist.c      (new)
+    test_gfx_drawlist.c      (new; record-structure tests, no GPU)
+    test_gfx_drawlist_gpu.c  (new; replay through a real device)
 ```
+
+The tests are split across two binaries deliberately. Everything in §7 that inspects
+recorded state needs no GPU, window, or booted app, so it stays a **required** CI check
+on every platform — including Windows, where no pipeline can be created at all while the
+shader toolchain ships SPIR-V and MSL but no DXIL. The replay tests do need a real
+device, so they join CI's existing allow-failure GPU group. Keeping them in one binary
+would have made the whole file allow-failure everywhere, quietly demoting the
+snapshot-vs-reference check that is this sub-project's most important test.
 
 No new module. Everything here extends existing ones, so `PLAN.md` §4's layout rule
 holds.

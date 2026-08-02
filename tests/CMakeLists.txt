@@ -108,9 +108,17 @@ target_include_directories(test_gfx_resize PRIVATE ${PROJECT_SOURCE_DIR}/src)
 add_test(NAME test_gfx_resize COMMAND test_gfx_resize)
 set_tests_properties(test_gfx_resize PROPERTIES TIMEOUT 30)
 
+# Record-structure tests: no GPU, so this one is a required CI check everywhere.
 add_executable(test_gfx_drawlist test_gfx_drawlist.c)
 target_link_libraries(test_gfx_drawlist PRIVATE bielik bk_warnings)
 target_include_directories(test_gfx_drawlist PRIVATE ${PROJECT_SOURCE_DIR}/src)
 add_test(NAME test_gfx_drawlist COMMAND test_gfx_drawlist)
-set_tests_properties(test_gfx_drawlist PROPERTIES TIMEOUT 60)
-bk_stage_shaders(test_gfx_drawlist)
+
+# GPU replay tests: needs a real device and pipeline, so it joins CI's allow-failure
+# GPU group (no DXIL variant exists for Windows -- see DEVIATIONS.md).
+add_executable(test_gfx_drawlist_gpu test_gfx_drawlist_gpu.c)
+target_link_libraries(test_gfx_drawlist_gpu PRIVATE bielik bk_warnings)
+target_include_directories(test_gfx_drawlist_gpu PRIVATE ${PROJECT_SOURCE_DIR}/src)
+add_test(NAME test_gfx_drawlist_gpu COMMAND test_gfx_drawlist_gpu)
+set_tests_properties(test_gfx_drawlist_gpu PROPERTIES TIMEOUT 60)
+bk_stage_shaders(test_gfx_drawlist_gpu)
