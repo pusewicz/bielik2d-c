@@ -17,9 +17,9 @@ typedef enum BK_GfxBufferUsage {
                                         // lives at bind time (see bk_gfx.h)
 } BK_GfxBufferUsage;
 
-/// A GPU buffer: vertex data, index data, or compute storage input. Owns its device
-/// upload machinery internally; callers just create, upload, bind (via bk_gfx), and
-/// destroy.
+/// A GPU buffer: vertex data, index data, or storage input for a compute or graphics
+/// shader. Owns its device upload machinery internally; callers just create, upload,
+/// bind (via bk_gfx), and destroy.
 typedef struct BK_GfxBuffer BK_GfxBuffer;
 
 /// Creates a buffer of the given usage and byte size. Logs via SDL_Log ("BK: "
