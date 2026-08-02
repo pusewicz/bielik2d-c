@@ -71,7 +71,7 @@ Shapes carry **no rotation basis**. Rotation lives in the per-command matrix, so
 
 - [ ] **Step 1: Write the failing test**
 
-Create `tests/test_header_bk_draw.c` — this mirrors the existing `test_header_bk_math.c` pattern exactly (a one-line TU proving the header pulls in its own dependencies):
+Create `tests/test_header_bk_draw.c` — this mirrors the existing `test_header_bk_math.c` exactly, a one-line TU proving the header compiles standalone and pulls in its own dependencies:
 
 ```c
 #include <bielik/bk_draw.h>
@@ -79,18 +79,15 @@ Create `tests/test_header_bk_draw.c` — this mirrors the existing `test_header_
 
 - [ ] **Step 2: Register it and run to verify it fails**
 
-Add to `tests/CMakeLists.txt`, next to the other `test_header_*` entries:
+Add to `tests/CMakeLists.txt`, next to the other `test_header_*` entries (around line 50). These are `OBJECT` libraries, **not** executables and **not** `add_test` entries: the TU has no `main`, and compiling it is the whole assertion. Match that shape exactly:
 
 ```cmake
-add_executable(test_header_bk_draw test_header_bk_draw.c)
+add_library(test_header_bk_draw OBJECT test_header_bk_draw.c)
 target_link_libraries(test_header_bk_draw PRIVATE bielik bk_warnings)
-add_test(NAME test_header_bk_draw COMMAND test_header_bk_draw)
 ```
 
 Run: `cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBK_WERROR=ON && cmake --build build --target test_header_bk_draw`
 Expected: FAIL — `fatal error: 'bielik/bk_draw.h' file not found`.
-
-Note: a header-only TU has no `main`, which is why the existing `test_header_*` files are compiled but their `add_test` only runs a trivial binary. Follow whatever the existing entries do verbatim — check `tests/CMakeLists.txt` for how `test_header_bk_math` handles it and copy that shape.
 
 - [ ] **Step 3: Write the header**
 
@@ -98,8 +95,8 @@ Create `include/bielik/bk_draw.h` with exactly the contents of spec §2. Copy it
 
 - [ ] **Step 4: Run to verify it passes**
 
-Run: `cmake --build build --target test_header_bk_draw && ctest --test-dir build -R test_header_bk_draw --output-on-failure`
-Expected: PASS.
+Run: `cmake --build build --target test_header_bk_draw`
+Expected: compiles clean under `-DBK_WERROR=ON`.
 
 - [ ] **Step 5: Format and commit**
 
