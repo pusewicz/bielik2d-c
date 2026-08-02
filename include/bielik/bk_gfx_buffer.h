@@ -8,14 +8,18 @@
 /// that is more than one thing at once.
 typedef enum BK_GfxBufferUsage {
   BK_GFX_BUFFER_USAGE_VERTEX,
-  BK_GFX_BUFFER_USAGE_INDEX,        // 16-bit indices; bk_gfx_bind_index_buffer hardcodes
-                                    // the element size, see bk_gfx.h
-  BK_GFX_BUFFER_USAGE_STORAGE_READ, // read-only storage buffer in a compute shader
+  BK_GFX_BUFFER_USAGE_INDEX,            // 16-bit indices; bk_gfx_bind_index_buffer hardcodes
+                                        // the element size, see bk_gfx.h
+  BK_GFX_BUFFER_USAGE_STORAGE_COMPUTE,  // read-only storage buffer in a compute shader
+  BK_GFX_BUFFER_USAGE_STORAGE_GRAPHICS, // read-only storage buffer in a vertex and/or
+                                        // fragment shader -- one SDL creation flag covers
+                                        // both graphics stages, so the stage distinction
+                                        // lives at bind time (see bk_gfx.h)
 } BK_GfxBufferUsage;
 
-/// A GPU buffer: vertex data, index data, or compute storage input. Owns its device
-/// upload machinery internally; callers just create, upload, bind (via bk_gfx), and
-/// destroy.
+/// A GPU buffer: vertex data, index data, or storage input for a compute or graphics
+/// shader. Owns its device upload machinery internally; callers just create, upload,
+/// bind (via bk_gfx), and destroy.
 typedef struct BK_GfxBuffer BK_GfxBuffer;
 
 /// Creates a buffer of the given usage and byte size. Logs via SDL_Log ("BK: "

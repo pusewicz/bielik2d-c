@@ -107,7 +107,7 @@ static bool s_fill_gradient(BK_GfxTexture *texture) {
 
   f32 params[8] = {0.1f, 0.2f, 0.6f, 1.0f, 0.8f, 0.6f, 0.0f, 0.0f};
   BK_GfxBuffer *params_buffer =
-      bk_gfx_buffer_create(bk_gpu(), BK_GFX_BUFFER_USAGE_STORAGE_READ, sizeof params);
+      bk_gfx_buffer_create(bk_gpu(), BK_GFX_BUFFER_USAGE_STORAGE_COMPUTE, sizeof params);
   if (params_buffer == nullptr) {
     bk_gfx_compute_pipeline_destroy(compute_pipeline);
     return false;

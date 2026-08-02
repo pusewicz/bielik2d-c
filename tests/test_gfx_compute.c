@@ -100,7 +100,7 @@ static void test_dispatch_produces_expected_gradient(void) {
   // layout: two vec4s, 16-byte aligned, no padding needed.
   f32 params[8] = {0.2f, 0.3f, 0.4f, 1.0f, 0.5f, 0.4f, 0.0f, 0.0f};
   BK_GfxBuffer *params_buffer =
-      bk_gfx_buffer_create(device, BK_GFX_BUFFER_USAGE_STORAGE_READ, sizeof params);
+      bk_gfx_buffer_create(device, BK_GFX_BUFFER_USAGE_STORAGE_COMPUTE, sizeof params);
   REQUIRE(params_buffer != nullptr);
   REQUIRE(bk_gfx_buffer_upload(params_buffer, params, 0, sizeof params));
 

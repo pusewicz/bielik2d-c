@@ -7,6 +7,40 @@
 
 #include <SDL3/SDL_gpu.h>
 
+/// Storage buffer slots bindable per shader stage. Four is what CF's tiled path needs
+/// (cmds, payload, tiles, list); the instanced path uses two.
+constexpr i32 BK_GFX_MAX_STORAGE_BUFFERS = 4;
+
+/// One recorded draw: a snapshot of the bind state at the moment bk_gfx_draw* was
+/// called, plus that draw's own counts. Allocated from the frame arena and chained in
+/// call order; bk__gfx_flush walks the chain. The same type doubles as the "currently
+/// bound state" a draw snapshots from, so recording a draw is one struct copy.
+///
+/// Deliberately has no canvas member: canvas targeting is frame-level (one canvas per
+/// flush), and a per-record field would imply per-draw targeting the replay loop does
+/// not implement. See the design spec's section 5.
+typedef struct BK_GfxDrawCmd {
+  BK_GfxPipeline *pipeline;
+  BK_GfxBuffer *vertex_buffer;
+  BK_GfxBuffer *index_buffer;
+  BK_GfxTexture *texture;
+  BK_GfxSampler *sampler;
+  BK_GfxBuffer *vertex_storage[BK_GFX_MAX_STORAGE_BUFFERS];
+  i32 num_vertex_storage; // highest bound slot + 1, so the bind is one contiguous run
+  BK_GfxBuffer *fragment_storage[BK_GFX_MAX_STORAGE_BUFFERS];
+  i32 num_fragment_storage;
+  const void *vertex_uniform; // arena copy, never the caller's pointer; nullptr if unset
+  u32 vertex_uniform_size;
+  const void *fragment_uniform;
+  u32 fragment_uniform_size;
+  BK_Rect scissor;  // width/height <= 0 => full target
+  BK_Rect viewport; // width/height <= 0 => full target
+  i32 vertex_count;
+  i32 index_count;
+  i32 instance_count;
+  struct BK_GfxDrawCmd *next;
+} BK_GfxDrawCmd;
+
 /// Returns the color most recently set via bk_gfx_set_clear_color, or the
 /// default {0.1, 0.1, 0.12, 1.0} if it hasn't been called yet.
 BK_Color bk__gfx_get_clear_color(void);
@@ -21,9 +55,12 @@ void bk__gfx_flush(void);
 /// frame, or nullptr if none has been bound since the last flush.
 BK_GfxPipeline *bk__gfx_get_pending_pipeline(void);
 
-/// Test-only accessor: returns the vertex count set via bk_gfx_draw this frame, or
-/// 0 if bk_gfx_draw hasn't been called since the last flush.
-i32 bk__gfx_get_pending_vertex_count(void);
+/// Test-only accessor: number of draws recorded this frame, reset by the flush.
+i32 bk__gfx_get_draw_count(void);
+
+/// Test-only accessor: the index'th recorded draw this frame, in call order, or
+/// nullptr if index is out of range.
+const BK_GfxDrawCmd *bk__gfx_get_draw_cmd(i32 index);
 
 /// Test-only accessor: returns the buffer bound via bk_gfx_bind_vertex_buffer this
 /// frame, or nullptr if none has been bound since the last flush.
@@ -40,10 +77,6 @@ BK_GfxTexture *bk__gfx_get_pending_texture(void);
 /// Test-only accessor: returns the sampler bound via bk_gfx_bind_texture this frame,
 /// or nullptr if none has been bound since the last flush.
 BK_GfxSampler *bk__gfx_get_pending_sampler(void);
-
-/// Test-only accessor: returns the index count set via bk_gfx_draw_indexed this
-/// frame, or 0 if bk_gfx_draw_indexed hasn't been called since the last flush.
-i32 bk__gfx_get_pending_index_count(void);
 
 /// Test-only accessor: returns the path set via bk_gfx_request_capture this frame, or
 /// an empty string if none has been requested since the last flush.

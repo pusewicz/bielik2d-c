@@ -478,3 +478,37 @@ would have been the worse split. Source compatibility was verified rather than a
 `bk_gfx.h` directly or transitively. The type name is unchanged, so no use site needed
 editing, and the full tree (library, all six samples, all 15 tests) builds clean under
 `-DBK_WERROR=ON` after the move with no other edits.
+
+## MSL binding remap for shaders mixing storage and uniform buffers (docs/superpowers/specs/2026-07-30-phase2-buffers-textures-compute-design.md §3)
+
+The Phase 2 sub-project-2 spec set up a verification gate for `spirv-cross`'s MSL binding
+indices, predicting they might not match SDL_GPU's convention. `shaders/instanced.vert` is
+the first shader to trip it, and the mismatch turns out to be structural rather than
+incidental. `SDL_gpu.h` documents two orderings that conflict: for SPIR-V, a vertex
+shader's storage buffers live in **set 0** and its uniform buffers in **set 1**; for MSL,
+`[[buffer]]` indices must be **uniform buffers first, then storage buffers**.
+`spirv-cross` assigns MSL indices by sorting on (set, binding), so a canonical shader
+yields `quad_buffer [[buffer(0)]]` / `uniform_block [[buffer(1)]]` — exactly reversed from
+what SDL expects. Verified this is not fixable by reordering declarations (tested: no
+effect, the sort is on set/binding, not source order), and that plain
+`--msl-decoration-binding` alone collides, because both resources are `binding = 0` within
+their respective sets.
+
+The fix, applied in `cmake/shaders.cmake` behind a new `MSL_DECORATION_BINDING` option:
+compile the shipped `.spv` from canonical GLSL, and compile a *second*, build-tree-only
+SPIR-V with `-DBK_MSL_BINDINGS=1` in which the storage buffer is declared at `binding = 1`,
+then translate that one with `--msl-decoration-binding` (which uses the binding number
+directly as the MSL index). This yields `uniform_block [[buffer(0)]]` /
+`quad_buffer [[buffer(1)]]` for Metal while the shipped SPIR-V keeps SDL's canonical
+`storage(set 0, binding 0)` / `uniform(set 1, binding 0)` — both verified, by inspecting
+the emitted MSL and by `spirv-cross --reflect` on the `.spv`. The `#ifdef BK_MSL_BINDINGS`
+lives in the one shader that needs it rather than in a duplicated source file.
+
+Recorded because it is a lasting constraint, not a one-off: CF's `inst_vs` — the shader
+P3.3 ports — declares exactly this storage-plus-uniform combination, so every subsequent
+draw-layer shader needs the same treatment. The failure mode is what makes it worth the
+build-system complexity: a wrong `[[buffer]]` index does not fail at `SDL_CreateGPUShader`
+or at pipeline creation, it silently drops the command buffer at draw time. Confirmed
+empirically by regenerating the MSL the naive way and watching
+`tests/test_gfx_drawlist.c`'s instancing pixel check fail, with nothing logged anywhere in
+the chain.

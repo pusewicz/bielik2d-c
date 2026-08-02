@@ -56,6 +56,7 @@ static SDL_GPUShader *s_create_shader(SDL_GPUDevice *device, const BK_GfxShaderD
       .format = format,
       .stage = stage,
       .num_samplers = (Uint32)desc->num_samplers,
+      .num_storage_buffers = (Uint32)desc->num_storage_buffers,
       .num_uniform_buffers = (Uint32)desc->num_uniform_buffers,
   };
   SDL_GPUShader *shader = SDL_CreateGPUShader(device, &info);
@@ -63,6 +64,46 @@ static SDL_GPUShader *s_create_shader(SDL_GPUDevice *device, const BK_GfxShaderD
     SDL_Log("BK: SDL_CreateGPUShader failed: %s", SDL_GetError());
   }
   return shader;
+}
+
+// No default label: a switch over every enumerator lets -Wswitch catch a future blend
+// mode that forgets to name its factors, which a default would silently swallow.
+static SDL_GPUColorTargetBlendState s_blend_state(BK_GfxBlendMode mode) {
+  SDL_GPUBlendFactor src = SDL_GPU_BLENDFACTOR_ONE;
+  SDL_GPUBlendFactor dst = SDL_GPU_BLENDFACTOR_ZERO;
+  switch (mode) {
+  case BK_GFX_BLEND_NONE:
+    return (SDL_GPUColorTargetBlendState){0};
+  case BK_GFX_BLEND_ALPHA:
+    src = SDL_GPU_BLENDFACTOR_SRC_ALPHA;
+    dst = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+    break;
+  case BK_GFX_BLEND_PREMULTIPLIED:
+    src = SDL_GPU_BLENDFACTOR_ONE;
+    dst = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+    break;
+  case BK_GFX_BLEND_ADDITIVE:
+    src = SDL_GPU_BLENDFACTOR_ONE;
+    dst = SDL_GPU_BLENDFACTOR_ONE;
+    break;
+  case BK_GFX_BLEND_MULTIPLY:
+    src = SDL_GPU_BLENDFACTOR_DST_COLOR;
+    dst = SDL_GPU_BLENDFACTOR_ZERO;
+    break;
+  case BK_GFX_BLEND_SCREEN:
+    src = SDL_GPU_BLENDFACTOR_ONE;
+    dst = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_COLOR;
+    break;
+  }
+  return (SDL_GPUColorTargetBlendState){
+      .src_color_blendfactor = src,
+      .dst_color_blendfactor = dst,
+      .color_blend_op = SDL_GPU_BLENDOP_ADD,
+      .src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE,
+      .dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+      .alpha_blend_op = SDL_GPU_BLENDOP_ADD,
+      .enable_blend = true,
+  };
 }
 
 static SDL_GPUVertexElementFormat s_vertex_format(BK_GfxVertexFormat format) {
@@ -162,22 +203,9 @@ BK_GfxPipeline *bk_gfx_pipeline_create(SDL_GPUDevice *device, const BK_GfxPipeli
     };
   }
 
-  SDL_GPUColorTargetBlendState blend = {0};
-  if (desc->blend_mode == BK_GFX_BLEND_ALPHA) {
-    blend = (SDL_GPUColorTargetBlendState){
-        .src_color_blendfactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA,
-        .dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
-        .color_blend_op = SDL_GPU_BLENDOP_ADD,
-        .src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE,
-        .dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
-        .alpha_blend_op = SDL_GPU_BLENDOP_ADD,
-        .enable_blend = true,
-    };
-  }
-
   SDL_GPUColorTargetDescription color_target = {
       .format = desc->color_target_format,
-      .blend_state = blend,
+      .blend_state = s_blend_state(desc->blend_mode),
   };
 
   SDL_GPUGraphicsPipelineCreateInfo info = {

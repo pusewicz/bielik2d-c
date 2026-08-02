@@ -11,32 +11,66 @@ typedef struct BK_GfxCanvas BK_GfxCanvas;
 /// Sets the color the swapchain is cleared to each frame.
 void bk_gfx_set_clear_color(BK_Color color);
 
-/// Binds a pipeline to be used by the next bk_gfx_draw/bk_gfx_draw_indexed call this
-/// frame. The binding is consumed (cleared) by the frame's flush.
+/// Binds a pipeline for every subsequent draw this frame. Bindings are sticky: they
+/// apply to each bk_gfx_draw* recorded after them, until changed or until the frame's
+/// flush clears them.
 void bk_gfx_bind_pipeline(BK_GfxPipeline *pipeline);
 
-/// Issues a draw of vertex_count vertices using the most recently bound pipeline.
-/// Must be called after bk_gfx_bind_pipeline in the same frame.
+/// Records a draw of vertex_count vertices, capturing the state bound above it. The
+/// frame's flush replays every recorded draw in call order.
 void bk_gfx_draw(i32 vertex_count);
 
-/// Binds a vertex buffer to slot 0 for the next draw call this frame. The binding is
-/// consumed (cleared) by the frame's flush.
+/// Binds a vertex buffer to slot 0 for every subsequent draw this frame.
 void bk_gfx_bind_vertex_buffer(BK_GfxBuffer *buffer);
 
-/// Binds an index buffer for the next bk_gfx_draw_indexed call this frame. Indices
-/// are always read as 16-bit (see bk_gfx_buffer.h's BK_GFX_BUFFER_USAGE_INDEX). The
-/// binding is consumed (cleared) by the frame's flush.
+/// Binds an index buffer for every subsequent indexed draw this frame. Indices are
+/// always read as 16-bit (see bk_gfx_buffer.h's BK_GFX_BUFFER_USAGE_INDEX).
 void bk_gfx_bind_index_buffer(BK_GfxBuffer *buffer);
 
-/// Binds a texture and sampler pair to fragment slot 0 for the next draw call this
-/// frame. The binding is consumed (cleared) by the frame's flush.
+/// Binds a texture and sampler pair to fragment slot 0 for every subsequent draw this
+/// frame.
 void bk_gfx_bind_texture(BK_GfxTexture *texture, BK_GfxSampler *sampler);
 
-/// Issues an indexed draw of index_count indices using the most recently bound
-/// pipeline, vertex buffer, and index buffer. Must be called after
-/// bk_gfx_bind_pipeline/bk_gfx_bind_vertex_buffer/bk_gfx_bind_index_buffer in the
-/// same frame.
+/// Records an indexed draw of index_count indices, using the bound index buffer and
+/// capturing the state bound above it.
 void bk_gfx_draw_indexed(i32 index_count);
+
+/// Binds a storage buffer the vertex shader reads, at the given slot (0-based, four
+/// slots per stage). buffer must have been created with
+/// BK_GFX_BUFFER_USAGE_STORAGE_GRAPHICS, and the pipeline's vertex shader desc must
+/// declare a matching num_storage_buffers -- a mismatch there fails silently at draw
+/// time, not at pipeline creation. Applies to every subsequent draw this frame.
+void bk_gfx_bind_vertex_storage_buffer(BK_GfxBuffer *buffer, i32 slot);
+
+/// Binds a storage buffer the fragment shader reads, at the given slot. Same
+/// requirements as bk_gfx_bind_vertex_storage_buffer.
+void bk_gfx_bind_fragment_storage_buffer(BK_GfxBuffer *buffer, i32 slot);
+
+/// Sets size bytes as vertex uniform slot 0 for every subsequent draw this frame. The
+/// data is copied into the frame arena, so a stack local is safe -- the GPU push
+/// happens later, at flush, when the caller's frame is long gone. Must respect std140
+/// layout (vec3/vec4 members 16-byte aligned): SDL_GPU pushes the bytes verbatim. The
+/// pipeline's vertex shader desc must declare num_uniform_buffers >= 1.
+void bk_gfx_push_vertex_uniform(const void *data, u32 size);
+
+/// Fragment-stage equivalent of bk_gfx_push_vertex_uniform, at fragment uniform slot 0.
+void bk_gfx_push_fragment_uniform(const void *data, u32 size);
+
+/// Records an instanced draw: instance_count copies of vertex_count vertices. The
+/// vertex shader reads gl_InstanceIndex (SV_InstanceID) to pick per-instance data,
+/// typically out of a bound vertex storage buffer.
+void bk_gfx_draw_instanced(i32 vertex_count, i32 instance_count);
+
+/// Clips every subsequent draw this frame to rect, in pixels of the render target with
+/// a top-left origin -- the bound canvas's dimensions when one is bound, the
+/// swapchain's otherwise, NOT the window's. A width or height <= 0 means "no scissor"
+/// (the full target), which is also the default, so passing a zero rect resets it.
+void bk_gfx_set_scissor(BK_Rect rect);
+
+/// Maps every subsequent draw this frame onto rect, in pixels of the render target with
+/// a top-left origin -- same canvas-relative meaning as bk_gfx_set_scissor. A width or
+/// height <= 0 means "full target", which is also the default.
+void bk_gfx_set_viewport(BK_Rect rect);
 
 /// Renders this frame into canvas instead of the swapchain, then blits the canvas
 /// onto the swapchain (stretched to fit, filtered per the canvas's blit_filter) once

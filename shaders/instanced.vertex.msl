@@ -1,0 +1,51 @@
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct Quad
+{
+    float2 center;
+    float2 half_size;
+    float4 color;
+};
+
+struct Quad_1
+{
+    float2 center;
+    float2 half_size;
+    float4 color;
+};
+
+struct quad_buffer
+{
+    Quad_1 quads[1];
+};
+
+struct uniform_block
+{
+    float4 mvp_basis;
+    float4 mvp_origin;
+};
+
+struct main0_out
+{
+    float4 out_color [[user(locn0)]];
+    float4 gl_Position [[position]];
+};
+
+vertex main0_out main0(constant uniform_block& _60 [[buffer(0)]], const device quad_buffer& _16 [[buffer(1)]], uint gl_InstanceIndex [[instance_id]], uint gl_VertexIndex [[vertex_id]])
+{
+    main0_out out = {};
+    Quad quad;
+    quad.center = _16.quads[int(gl_InstanceIndex)].center;
+    quad.half_size = _16.quads[int(gl_InstanceIndex)].half_size;
+    quad.color = _16.quads[int(gl_InstanceIndex)].color;
+    float2 corner = float2(((int(gl_VertexIndex) & 1) == 0) ? (-1.0) : 1.0, ((int(gl_VertexIndex) & 2) == 0) ? (-1.0) : 1.0);
+    float2 world = quad.center + (corner * quad.half_size);
+    float2 clip = float2(((_60.mvp_basis.x * world.x) + (_60.mvp_basis.z * world.y)) + _60.mvp_origin.x, ((_60.mvp_basis.y * world.x) + (_60.mvp_basis.w * world.y)) + _60.mvp_origin.y);
+    out.gl_Position = float4(clip, 0.0, 1.0);
+    out.out_color = quad.color;
+    return out;
+}
+
