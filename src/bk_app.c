@@ -1,6 +1,7 @@
 #define SDL_MAIN_HANDLED 1
 
 #include "internal/bk_app_internal.h"
+#include "internal/bk_draw_internal.h"
 #include "internal/bk_gfx_internal.h"
 #include "internal/bk_task_internal.h"
 
@@ -212,6 +213,7 @@ SDL_AppResult bk__boot(BK_AppDesc (*get_desc)(void), void **appstate, int argc, 
   }
 
   bk__gfx_configure_swapchain_depth(s_app.desc.window.depth_stencil);
+  bk__draw_init();
 
   SDL_ShowWindow(s_app.window);
 
@@ -278,6 +280,7 @@ SDL_AppResult bk__iterate(void *appstate) {
   if (s_app.desc.render) {
     s_app.desc.render(appstate, &info);
   }
+  bk__draw_collate();
   bk__gfx_flush();
   bk__arena_reset();
 
@@ -314,7 +317,8 @@ void bk__shutdown(void *appstate, SDL_AppResult result) {
     s_app.desc.quit(appstate, (BK_Result)result);
   }
   bk__arena_free();
-  bk__gfx_shutdown(); // must run before SDL_DestroyGPUDevice below
+  bk__draw_shutdown(); // must run before SDL_DestroyGPUDevice below (owns GPU resources)
+  bk__gfx_shutdown();  // must run before SDL_DestroyGPUDevice below
   if (s_app.gpu && s_app.window) {
     SDL_ReleaseWindowFromGPUDevice(s_app.gpu, s_app.window);
   }

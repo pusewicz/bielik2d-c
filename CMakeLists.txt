@@ -49,6 +49,12 @@ bk_compile_shader(NAME depth_tri STAGE fragment)
 # needs the binding remap -- see bk_compile_shader's comment in cmake/shaders.cmake.
 bk_compile_shader(NAME instanced STAGE vertex MSL_DECORATION_BINDING)
 bk_compile_shader(NAME instanced STAGE fragment)
+bk_compile_shader(NAME draw STAGE vertex)
+bk_compile_shader(NAME draw STAGE fragment)
+
+bk_embed_shader(NAME draw)
+add_dependencies(bielik bk_embed_draw)
+target_include_directories(bielik PUBLIC "${CMAKE_BINARY_DIR}/generated")
 
 if(BK_BUILD_TESTS)
     enable_testing()
