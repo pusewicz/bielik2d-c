@@ -84,8 +84,10 @@ void bk_gfx_set_viewport(BK_Rect rect);
 /// resolution / pixel-art path. The binding is consumed (cleared) by the frame's
 /// flush; pass nullptr (or don't call this) to render into the swapchain directly, as
 /// before. A pipeline bound this frame must have been created with
-/// BK_GfxPipelineDesc.depth_stencil_format matching canvas's depth attachment (or
-/// SDL_GPU_TEXTUREFORMAT_INVALID if canvas has none) -- BK_ASSERTs otherwise.
+/// BK_GfxPipelineDesc.color_target_format matching canvas's colour attachment (always
+/// SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM) and .depth_stencil_format matching canvas's
+/// depth attachment (or SDL_GPU_TEXTUREFORMAT_INVALID if canvas has none) --
+/// BK_ASSERTs otherwise.
 void bk_gfx_bind_canvas(BK_GfxCanvas *canvas);
 
 /// Requests that the frame currently being rendered be saved as a BMP to path once

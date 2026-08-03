@@ -316,24 +316,31 @@ rasterized per-shape quad to interpolate from. See §7 for what this means for i
   `${CMAKE_BINARY_DIR}/generated/bk_draw_shaders.h`, which `src/bk_draw.c` includes;
 - the static **corner buffer** — six floats, `{0,1,2, 0,2,3}`, uploaded once, bound as
   vertex buffer slot 0 for every batch;
-- the **pipelines**, of which there are at most **two**.
+- the **pipelines**, looked up (or lazily created) from a `(colour, depth)`-keyed table
+  bounded at four entries (see `DEVIATIONS.md`).
 
-Two, not one, because `bk_gfx.h:80-83` `BK_ASSERT`s that a bound pipeline's
-`depth_stencil_format` equals the render pass's attachment format. A game may bind a
-depth-enabled canvas (`BK_GfxCanvasDesc.depth_stencil`) or enable swapchain depth
-(`BK_AppDesc.window.depth_stencil`) and then call `bk_draw_*`, and a single no-depth
-pipeline would assert on exactly that case — a case the framework already supports and
-that neither the sample nor the tests would otherwise reach. The count is bounded at two
-because `bk_gfx_depth_stencil_format` probes and returns exactly **one** format per
-device, so the reachable set is `{INVALID, that format}`. Both are created eagerly at
-init; collate selects per frame from `bk__gfx_pending_target_depth_format()`, not from
-`bk__gfx_canvas_depth_format(bk__gfx_get_pending_canvas())` directly — that call
+At least two, because `bk_gfx.h`'s `bk_gfx_bind_canvas` doc comment `BK_ASSERT`s that a
+bound pipeline's `depth_stencil_format` equals the render pass's attachment format. A
+game may bind a depth-enabled canvas (`BK_GfxCanvasDesc.depth_stencil`) or enable
+swapchain depth (`BK_AppDesc.window.depth_stencil`) and then call `bk_draw_*`, and a
+single no-depth pipeline would assert on exactly that case — a case the framework
+already supports and that neither the sample nor the tests would otherwise reach. And
+at least two on the colour axis for the same reason: a canvas's colour texture (always
+`R8G8B8A8_UNORM`) need not match the swapchain's backend-dependent format, so a pipeline
+baked for one asserts on the other (issue #27). `bk_gfx_depth_stencil_format` probes and
+returns exactly **one** format per device, so depth is one of `{INVALID, that format}`;
+colour is one of `{swapchain format, R8G8B8A8_UNORM}`, which may coincide — at most
+2×2 = 4 distinct pairs are reachable, so the table never grows past that. Entries are
+created lazily, on first use, not eagerly at init — an app that never binds a canvas
+never builds the canvas-format entry. Collate selects per frame from
+`bk__gfx_pending_target_color_format()` and `bk__gfx_pending_target_depth_format()`, not
+from `bk__gfx_canvas_depth_format(bk__gfx_get_pending_canvas())` directly — that call
 `BK_ASSERT`s a non-null canvas, which trips on the common no-canvas-bound case, and it
-also can't see `BK_AppDesc.window.depth_stencil`. The new accessor
-(`src/internal/bk_gfx_internal.h`) covers both cases: a bound canvas's own depth format,
-else the framework-owned swapchain depth format if enabled, else `INVALID` (see
-`DEVIATIONS.md`). `bk_draw` writes no depth and does no depth testing in either variant —
-the second pipeline exists solely to satisfy the format match.
+also can't see `BK_AppDesc.window.depth_stencil`. Both accessors
+(`src/internal/bk_gfx_internal.h`) cover both cases: a bound canvas's own format, else
+the framework-owned swapchain/depth format, else (depth only) `INVALID`. `bk_draw`
+writes no depth and does no depth testing in any entry — the depth-enabled ones exist
+solely to satisfy the format match.
 
 ### Record
 

@@ -8,7 +8,7 @@ typedef struct BK_GfxTexture BK_GfxTexture;
 constexpr i32 BK_DRAW_STACK_MAX = 64;
 
 // ---------------------------------------------------------------------------
-// Paint order, and one unsupported combination
+// Paint order
 //
 // bk_draw records into a per-frame list the framework submits once, after the render
 // callback returns. So everything bk_draw draws paints ON TOP OF everything the same
@@ -16,14 +16,13 @@ constexpr i32 BK_DRAW_STACK_MAX = 64;
 // in: raw draws cannot be layered over bk_draw output within a frame. Within bk_draw
 // itself, bk_draw_push_layer is how to order shapes.
 //
-// A canvas bound with bk_gfx_bind_canvas is NOT supported alongside bk_draw yet. The
-// draw pipelines bake the swapchain's colour format, which a canvas texture (always
-// R8G8B8A8_UNORM) may not share -- the swapchain's format is backend-dependent, so a
-// backend that happens to pick R8G8B8A8_UNORM would match and drawing would proceed.
-// bk__draw_collate detects the mismatch and declines the frame's draws, logging once
-// via SDL_Log, rather than drawing into the wrong format -- which was silent on Metal
-// and a validation error on Vulkan/D3D12 before this check existed. The real fix (a
-// (colour, depth)-keyed pipeline cache) is tracked as pusewicz/bielik2d-c issue #27.
+// A canvas bound with bk_gfx_bind_canvas is supported: bk_draw looks up (or lazily
+// creates) a pipeline baked for whatever (colour, depth) format pair the bound canvas
+// -- or the swapchain, with no canvas bound -- actually targets, instead of baking a
+// single cached swapchain colour format at init. A canvas's colour texture is always
+// R8G8B8A8_UNORM, which need not match the swapchain's backend-dependent format; that
+// no longer matters, since each format pair gets its own pipeline (pusewicz/bielik2d-c
+// issue #27).
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
