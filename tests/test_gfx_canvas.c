@@ -190,13 +190,30 @@ static void s_run_depth_order(SDL_GPUDevice *device, BK_GfxPipeline *pipeline, B
   void *pixels_buf = bk__gfx_download_texture(device, cmd, color_handle, (Uint32)size, (Uint32)size,
                                               SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM);
   REQUIRE(pixels_buf != nullptr);
-  const uint8_t *pixels = (const uint8_t *)pixels_buf;
 
-  REQUIRE_PIXEL(pixels, size * 4, size / 2, size / 2, NEAR_R, NEAR_G, NEAR_B, 255, tolerance);
-  REQUIRE_PIXEL(pixels, size * 4, 2, 2, NEAR_R, NEAR_G, NEAR_B, 255, tolerance);
-  REQUIRE_PIXEL(pixels, size * 4, size - 3, 2, NEAR_R, NEAR_G, NEAR_B, 255, tolerance);
-  REQUIRE_PIXEL(pixels, size * 4, 2, size - 3, NEAR_R, NEAR_G, NEAR_B, 255, tolerance);
-  REQUIRE_PIXEL(pixels, size * 4, size - 3, size - 3, NEAR_R, NEAR_G, NEAR_B, 255, tolerance);
+  // SDLTest_CompareSurfaces only compares RGB (see its source), so the alpha channel
+  // needs its own spot-check.
+  REQUIRE_PIXEL(pixels_buf, size * 4, size / 2, size / 2, NEAR_R, NEAR_G, NEAR_B, 255, tolerance);
+
+  // Both triangles are the over-sized-triangle trick (see the comment above this
+  // function), so each one alone covers the *entire* canvas -- the expected image is a
+  // solid fill of the near triangle's color, everywhere. allowable_error=3 (+-1 per RGB
+  // channel) absorbs float->UNORM8 rounding; max_failing_pixels=0 because there is no
+  // rasterized edge inside the canvas -- the triangle's hypotenuse falls entirely
+  // outside it (the extreme corner pixel's NDC sample still sums to < 2, i.e. still
+  // inside both triangles, with about 1px of margin at the corner).
+  constexpr int allowable_error = 3;
+  constexpr int max_failing_pixels = 0;
+  SDL_Surface *actual =
+      SDL_CreateSurfaceFrom(size, size, SDL_PIXELFORMAT_RGBA32, pixels_buf, size * 4);
+  REQUIRE(actual != nullptr);
+  SDL_Surface *reference = SDL_CreateSurface(size, size, SDL_PIXELFORMAT_RGBA32);
+  REQUIRE(reference != nullptr);
+  REQUIRE(SDL_FillSurfaceRect(reference, nullptr,
+                              SDL_MapSurfaceRGBA(reference, NEAR_R, NEAR_G, NEAR_B, 255)));
+  REQUIRE_SURFACE(actual, reference, allowable_error, max_failing_pixels);
+  SDL_DestroySurface(actual);
+  SDL_DestroySurface(reference);
 
   bk__free(pixels_buf);
   bk_gfx_buffer_destroy(vertex_buffer);
