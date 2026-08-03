@@ -17,6 +17,11 @@ zlib / public domain (see CF's own `LICENSE`). Ported from a checkout at
 - The instanced command-renderer design in `shaders/draw.vert` — one vertex invocation per
   shape instance deriving a coverage quad from packed command data, evaluated as a signed
   distance field in the fragment stage — transliterated from CF's `s_inst_vs`.
+- The runtime atlas cache in `src/bk_atlas.c` (Phase 3, sub-project 4) — the residency
+  model (push/flush/tick/defrag), lonely textures, tick-based decay, and defrag's
+  dissolve-and-repack — transliterated from CF's `libraries/cute/cute_atlas_cache.h`. The
+  port is not faithful in four places where the donor's behaviour and its own
+  documentation disagree; the design spec's §3.1 lists them.
 
 Per zlib clause 1, this acknowledgment stands in place of claiming original authorship of
 the ported logic; per clause 2, the port is altered (rewritten for SDL_GPU/GLSL and

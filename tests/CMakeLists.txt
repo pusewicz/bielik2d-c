@@ -139,3 +139,10 @@ target_link_libraries(test_draw_gpu PRIVATE bielik bk_warnings)
 target_include_directories(test_draw_gpu PRIVATE ${PROJECT_SOURCE_DIR}/src)
 add_test(NAME test_draw_gpu COMMAND test_draw_gpu)
 set_tests_properties(test_draw_gpu PROPERTIES TIMEOUT 60)
+
+# CPU-only: the cache reaches the GPU through caller callbacks, so this is a required
+# CI check on every platform (design spec section 5.1).
+add_executable(test_atlas test_atlas.c)
+target_link_libraries(test_atlas PRIVATE bielik bk_warnings)
+target_include_directories(test_atlas PRIVATE ${PROJECT_SOURCE_DIR}/src)
+add_test(NAME test_atlas COMMAND test_atlas)
