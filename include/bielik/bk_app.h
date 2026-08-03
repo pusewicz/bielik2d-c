@@ -22,10 +22,37 @@ typedef struct BK_TaskSystemDesc {
   void (*finish)(void *task, void *ctx);
 } BK_TaskSystemDesc;
 
-/// Debug-build assertion; compiles to nothing meaningful in Release beyond
-/// what SDL_assert itself does. Wraps SDL_assert so all framework asserts
-/// share one breakpoint/logging behavior.
-#define BK_ASSERT(cond) SDL_assert(cond)
+// ---------------------------------------------------------------------------
+// Assertions
+//
+// Three tiers, mapping 1:1 onto SDL's assertion levels so they share one
+// breakpoint/logging/handler behavior. The level is pinned by CMake (BK_ASSERT_LEVEL,
+// defaulting to 2 in Debug and 1 otherwise), NOT inferred from optimization flags --
+// see the comment on it in the top-level CMakeLists.txt for why that matters.
+//
+// A failed assertion runs SDL's default handler, which pops a modal GUI dialog. Set
+// the SDL_ASSERT environment variable to "abort" (or "break"/"ignore") for anything
+// with no user to dismiss it; the test suite does this via CTest.
+//
+// Note that a disabled assertion does NOT evaluate its condition -- SDL wraps it in
+// sizeof -- so never put required work inside one.
+// ---------------------------------------------------------------------------
+
+/// Framework assertion, live in Release as well as Debug (SDL assert level >= 1).
+/// This is the default tier and what nearly every check should use: most of the
+/// framework's asserts guard a pointer that the very next line dereferences, so
+/// compiling them out trades a loud abort for undefined behavior.
+#define BK_ASSERT(cond) SDL_assert_release(cond)
+
+/// Debug-only assertion (SDL assert level >= 2), for a check too expensive to keep in
+/// Release. Deliberately has no call sites yet -- it is the migration target for when
+/// profiling shows a specific BK_ASSERT is hot, not dead code.
+#define BK_ASSERT_DEBUG(cond) SDL_assert(cond)
+
+/// Opt-in expensive assertion, off in Debug and Release alike; only live at SDL assert
+/// level 3 (-DBK_ASSERT_LEVEL=3). For checks worth running when hunting a specific bug
+/// but far too costly to leave on. Deliberately has no call sites yet.
+#define BK_ASSERT_PARANOID(cond) SDL_assert_paranoid(cond)
 
 /// Per-frame linear allocator; reset after render/flush each frame. Never
 /// free individual allocations — the whole arena rewinds at frame end.

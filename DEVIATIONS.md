@@ -463,6 +463,16 @@ draw-time class as `CLAUDE.md`'s shader-resource-count gotcha, and exactly what 
 project's "no silent failure" rule exists to prevent. The header documents that callers
 which can produce a zero-scaled transform must skip it rather than lean on the assert.
 
+Sharpened by the tiered-`BK_ASSERT` change below: now that `BK_ASSERT` is live in Release,
+this is the **only** assertion in the project that still vanishes there, and it is the one
+whose failure mode (all-NaN matrix → undefined fragment output, nothing logged) the
+paragraph above argues hardest about. The two families are also on different switches on
+purpose — libc `assert` keys off `NDEBUG`, everything else off `SDL_ASSERT_LEVEL`, which
+keys off `__OPTIMIZE__`. Keeping the module SDL-free is still judged worth that asymmetry,
+since it is what lets `test_math.c` run on every CI leg with no SDL init; the alternative
+is a `bk_math`-private assert macro with its own level knob, which is more machinery than
+one call site justifies. Revisit if `bk_math` ever grows a second assert.
+
 ## `BK_Color` moved from `bk_gfx.h` to `bk_math.h` (PLAN.md §6.1, docs/superpowers/specs/2026-08-01-bk-math-design.md §3)
 
 `PLAN.md` §6.1 defines `BK_Color` in `include/bielik/bk_gfx.h`. It now lives in
@@ -754,3 +764,33 @@ via new `bk__gfx_pending_target_color_format()` (mirroring the existing
 frame flush also gained a colour counterpart to its existing depth-format `BK_ASSERT`,
 so any bound pipeline's declared colour format is checked against the render pass's
 actual attachment the same way depth already was. No public API changed.
+
+## `BK_ASSERT` is three tiers and stays live in Release (CLAUDE.md Conventions)
+
+`CLAUDE.md` specified a single "`BK_ASSERT` wraps `SDL_assert`". Two problems with that,
+both found by auditing rather than by a failure. First, `SDL_assert.h` derives
+`SDL_ASSERT_LEVEL` from `__OPTIMIZE__` and never reads `NDEBUG`, and the project never
+pinned the level — so a Debug build that picked up `-O1`/`-O2` from anywhere silently
+dropped all 78 `BK_ASSERT`s, while `bk_math`'s libc `assert` (which does key off `NDEBUG`)
+stayed live. The two families agreed only because CMake's Release defaults happen to set
+both `-O3` and `-DNDEBUG`. Second, `SDL_assert` compiles out at level 1, and roughly 55 of
+the 78 call sites assert a pointer that the very next line dereferences with no fallback
+(`bk_gfx_canvas.c`'s `BK_ASSERT(canvas != nullptr); return canvas->color;` is the shape) —
+so Release traded a loud abort for undefined behaviour at every one of them.
+
+`BK_ASSERT` now expands to `SDL_assert_release`, live at assert level ≥ 1 and therefore in
+Release too, with `BK_ASSERT_DEBUG` (`SDL_assert`) and `BK_ASSERT_PARANOID`
+(`SDL_assert_paranoid`) added as the tiers to demote an individual check to once profiling
+shows it is hot; both ship with no call sites on purpose. The level is pinned by a
+`BK_ASSERT_LEVEL` CMake cache variable — 2 in Debug, 1 otherwise, `PUBLIC` on the `bielik`
+target so samples and tests cannot disagree with the library about what is checked. The
+cost was accepted deliberately, correctness first, on the understanding that individual
+asserts move down a tier when measurement (not speculation) says to. Verified by building
+and running the full suite at levels 2, 1, and 0 — level 0 matters because
+`SDL_disabled_assert` wraps the condition in `sizeof`, which rejects `void`-typed
+expressions, so a config nobody builds until they ship can fail to compile.
+
+One behaviour change rides along: the six `BK_ASSERT(false)` guards at the end of
+exhaustive switches now abort in Release instead of falling through to their safe default
+return. That is intended — a bad enum reaching them is a programmer error — and the
+fallback return survives as the level-0 path.
