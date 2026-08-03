@@ -156,15 +156,6 @@ static void s_free_shader(BK_GfxShaderDesc *desc) {
   SDL_free((void *)desc->msl.code);
 }
 
-static void s_check_pixel(const u8 *pixels, int width, int x, int y, u8 r, u8 g, u8 b, u8 a,
-                          int tolerance) {
-  usize i = ((usize)y * (usize)width + (usize)x) * 4;
-  REQUIRE(abs((int)pixels[i + 0] - (int)r) <= tolerance);
-  REQUIRE(abs((int)pixels[i + 1] - (int)g) <= tolerance);
-  REQUIRE(abs((int)pixels[i + 2] - (int)b) <= tolerance);
-  REQUIRE(abs((int)pixels[i + 3] - (int)a) <= tolerance);
-}
-
 // Checkerboard colors, hardcoded literals independent of the mutation test in
 // test_draw_produces_expected_pixels_from_checkerboard below -- see the design spec
 // §8 and the implementation plan Task 4 for why the assertions must not be re-derived
@@ -300,10 +291,11 @@ static void test_draw_produces_expected_pixels_from_checkerboard(void) {
   // Quadrant centers. See the coordinate-system comment on `vertices` above for why
   // top-left of the downloaded image is texel (0,0), etc. -- this is fully
   // determined by SDL_GPU's documented convention, not backend-dependent.
-  s_check_pixel(pixels, size, size / 4, size / 4, RED_R, RED_G, RED_B, 255, tolerance);
-  s_check_pixel(pixels, size, 3 * size / 4, size / 4, GREEN_R, GREEN_G, GREEN_B, 255, tolerance);
-  s_check_pixel(pixels, size, size / 4, 3 * size / 4, BLUE_R, BLUE_G, BLUE_B, 255, tolerance);
-  s_check_pixel(pixels, size, 3 * size / 4, 3 * size / 4, YELLOW_R, YELLOW_G, YELLOW_B, 255,
+  REQUIRE_PIXEL(pixels, size * 4, size / 4, size / 4, RED_R, RED_G, RED_B, 255, tolerance);
+  REQUIRE_PIXEL(pixels, size * 4, 3 * size / 4, size / 4, GREEN_R, GREEN_G, GREEN_B, 255,
+                tolerance);
+  REQUIRE_PIXEL(pixels, size * 4, size / 4, 3 * size / 4, BLUE_R, BLUE_G, BLUE_B, 255, tolerance);
+  REQUIRE_PIXEL(pixels, size * 4, 3 * size / 4, 3 * size / 4, YELLOW_R, YELLOW_G, YELLOW_B, 255,
                 tolerance);
 
   bk__free(pixels_buf);

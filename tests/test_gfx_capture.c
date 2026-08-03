@@ -69,13 +69,9 @@ int main(int argc, char **argv) {
   REQUIRE(rgba != nullptr);
   SDL_DestroySurface(loaded);
 
-  const u8 *pixels = (const u8 *)rgba->pixels;
   constexpr int tolerance = 5;
-  usize center = ((usize)(rgba->h / 2) * (usize)rgba->pitch) + (usize)(rgba->w / 2) * 4;
-  REQUIRE(abs((int)pixels[center + 0] - 51) <= tolerance);  // R = 0.2 * 255
-  REQUIRE(abs((int)pixels[center + 1] - 102) <= tolerance); // G = 0.4 * 255
-  REQUIRE(abs((int)pixels[center + 2] - 153) <= tolerance); // B = 0.6 * 255
-  REQUIRE(abs((int)pixels[center + 3] - 255) <= tolerance); // A
+  // R = 0.2 * 255, G = 0.4 * 255, B = 0.6 * 255.
+  REQUIRE_PIXEL(rgba->pixels, rgba->pitch, rgba->w / 2, rgba->h / 2, 51, 102, 153, 255, tolerance);
 
   SDL_DestroySurface(rgba);
   SDL_RemovePath(s_capture_path);

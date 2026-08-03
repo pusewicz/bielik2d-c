@@ -126,15 +126,6 @@ static void s_free_shader(BK_GfxShaderDesc *desc) {
   SDL_free((void *)desc->msl.code);
 }
 
-static void s_check_pixel(const uint8_t *pixels, int width, int x, int y, uint8_t r, uint8_t g,
-                          uint8_t b, uint8_t a, int tolerance) {
-  size_t i = ((size_t)y * (size_t)width + (size_t)x) * 4;
-  REQUIRE(abs((int)pixels[i + 0] - (int)r) <= tolerance);
-  REQUIRE(abs((int)pixels[i + 1] - (int)g) <= tolerance);
-  REQUIRE(abs((int)pixels[i + 2] - (int)b) <= tolerance);
-  REQUIRE(abs((int)pixels[i + 3] - (int)a) <= tolerance);
-}
-
 enum { NEAR_R = 255, NEAR_G = 0, NEAR_B = 0 }; // red triangle, z = 0.25 (nearer)
 
 enum { FAR_R = 0, FAR_G = 0, FAR_B = 255 }; // blue triangle, z = 0.75 (farther)
@@ -201,11 +192,11 @@ static void s_run_depth_order(SDL_GPUDevice *device, BK_GfxPipeline *pipeline, B
   REQUIRE(pixels_buf != nullptr);
   const uint8_t *pixels = (const uint8_t *)pixels_buf;
 
-  s_check_pixel(pixels, size, size / 2, size / 2, NEAR_R, NEAR_G, NEAR_B, 255, tolerance);
-  s_check_pixel(pixels, size, 2, 2, NEAR_R, NEAR_G, NEAR_B, 255, tolerance);
-  s_check_pixel(pixels, size, size - 3, 2, NEAR_R, NEAR_G, NEAR_B, 255, tolerance);
-  s_check_pixel(pixels, size, 2, size - 3, NEAR_R, NEAR_G, NEAR_B, 255, tolerance);
-  s_check_pixel(pixels, size, size - 3, size - 3, NEAR_R, NEAR_G, NEAR_B, 255, tolerance);
+  REQUIRE_PIXEL(pixels, size * 4, size / 2, size / 2, NEAR_R, NEAR_G, NEAR_B, 255, tolerance);
+  REQUIRE_PIXEL(pixels, size * 4, 2, 2, NEAR_R, NEAR_G, NEAR_B, 255, tolerance);
+  REQUIRE_PIXEL(pixels, size * 4, size - 3, 2, NEAR_R, NEAR_G, NEAR_B, 255, tolerance);
+  REQUIRE_PIXEL(pixels, size * 4, 2, size - 3, NEAR_R, NEAR_G, NEAR_B, 255, tolerance);
+  REQUIRE_PIXEL(pixels, size * 4, size - 3, size - 3, NEAR_R, NEAR_G, NEAR_B, 255, tolerance);
 
   bk__free(pixels_buf);
   bk_gfx_buffer_destroy(vertex_buffer);

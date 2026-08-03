@@ -72,15 +72,6 @@ static void test_destroy_null_is_noop(void) {
   bk_gfx_compute_pipeline_destroy(nullptr);
 }
 
-static void s_check_pixel(const u8 *pixels, int width, int x, int y, u8 r, u8 g, u8 b, u8 a,
-                          int tolerance) {
-  usize i = ((usize)y * (usize)width + (usize)x) * 4;
-  REQUIRE(abs((int)pixels[i + 0] - (int)r) <= tolerance);
-  REQUIRE(abs((int)pixels[i + 1] - (int)g) <= tolerance);
-  REQUIRE(abs((int)pixels[i + 2] - (int)b) <= tolerance);
-  REQUIRE(abs((int)pixels[i + 3] - (int)a) <= tolerance);
-}
-
 // Dispatches gradient.comp (reads a read-only storage buffer of {base_color, scale},
 // writes color = base_color + scale * vec4(uv, 0, 0) to a read-write storage texture)
 // and checks the result against hand-computed literal expected values -- proves
@@ -131,11 +122,11 @@ static void test_dispatch_produces_expected_gradient(void) {
 
   // uv = coord / (size - 1). color = base_color + scale * vec4(uv, 0, 0).
   // (0,0): uv=(0,0) -> (0.2, 0.3, 0.4, 1.0) -> (51, 77, 102, 255).
-  s_check_pixel(pixels, size, 0, 0, 51, 77, 102, 255, tolerance);
+  REQUIRE_PIXEL(pixels, size * 4, 0, 0, 51, 77, 102, 255, tolerance);
   // (15,15): uv=(1,1) -> (0.7, 0.7, 0.4, 1.0) -> (178, 178, 102, 255).
-  s_check_pixel(pixels, size, size - 1, size - 1, 178, 178, 102, 255, tolerance);
+  REQUIRE_PIXEL(pixels, size * 4, size - 1, size - 1, 178, 178, 102, 255, tolerance);
   // (15,0): uv=(1,0) -> (0.7, 0.3, 0.4, 1.0) -> (178, 77, 102, 255).
-  s_check_pixel(pixels, size, size - 1, 0, 178, 77, 102, 255, tolerance);
+  REQUIRE_PIXEL(pixels, size * 4, size - 1, 0, 178, 77, 102, 255, tolerance);
 
   bk__free(pixels_buf);
 

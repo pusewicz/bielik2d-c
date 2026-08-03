@@ -143,15 +143,6 @@ static void test_destroy_null_is_noop(void) {
   bk_gfx_pipeline_destroy(nullptr);
 }
 
-static void s_check_pixel(const u8 *pixels, int width, int x, int y, u8 r, u8 g, u8 b, u8 a,
-                          int tolerance) {
-  usize i = ((usize)y * (usize)width + (usize)x) * 4;
-  REQUIRE(abs((int)pixels[i + 0] - (int)r) <= tolerance);
-  REQUIRE(abs((int)pixels[i + 1] - (int)g) <= tolerance);
-  REQUIRE(abs((int)pixels[i + 2] - (int)b) <= tolerance);
-  REQUIRE(abs((int)pixels[i + 3] - (int)a) <= tolerance);
-}
-
 static void test_draw_produces_expected_pixels(void) {
   constexpr int size = 64;
   constexpr int tolerance = 5;
@@ -212,13 +203,13 @@ static void test_draw_produces_expected_pixels(void) {
 
   // Center: well inside the triangle (NDC bbox [-0.5,0.5] on both axes covers the
   // middle half of the viewport) -> solid red.
-  s_check_pixel(pixels, size, size / 2, size / 2, 255, 0, 0, 255, tolerance);
+  REQUIRE_PIXEL(pixels, size * 4, size / 2, size / 2, 255, 0, 0, 255, tolerance);
   // Corners, inset by 1px: outside the triangle's bounding box under any backend's
   // NDC-to-pixel axis convention -> clear color (black).
-  s_check_pixel(pixels, size, 1, 1, 0, 0, 0, 255, tolerance);
-  s_check_pixel(pixels, size, size - 2, 1, 0, 0, 0, 255, tolerance);
-  s_check_pixel(pixels, size, 1, size - 2, 0, 0, 0, 255, tolerance);
-  s_check_pixel(pixels, size, size - 2, size - 2, 0, 0, 0, 255, tolerance);
+  REQUIRE_PIXEL(pixels, size * 4, 1, 1, 0, 0, 0, 255, tolerance);
+  REQUIRE_PIXEL(pixels, size * 4, size - 2, 1, 0, 0, 0, 255, tolerance);
+  REQUIRE_PIXEL(pixels, size * 4, 1, size - 2, 0, 0, 0, 255, tolerance);
+  REQUIRE_PIXEL(pixels, size * 4, size - 2, size - 2, 0, 0, 0, 255, tolerance);
 
   bk__free(pixels_buf);
 
