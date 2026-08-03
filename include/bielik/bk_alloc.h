@@ -6,6 +6,15 @@
 //
 // Not for per-frame scratch: that is bk_frame_alloc (bk_app.h), which is also
 // the only aligned-allocation path. This header is deliberately SDL-free.
+//
+// SDL already ships SDL_SetMemoryFunctions/SDL_GetMemoryFunctions, but that is
+// one process-wide swap of the C malloc/calloc/realloc/free quartet with no
+// ctx parameter and no allocation size passed back to free/realloc -- it
+// can't express a per-instance allocator (e.g. one arena per subsystem) or
+// the size-aware free that a bump/pool allocator needs. BK_Allocator is a
+// different shape for a different job; wiring bk_alloc's default heap path
+// through SDL's functions instead of straight to SDL_malloc/SDL_free is a
+// later task, not this one.
 // ---------------------------------------------------------------------------
 
 /// A pluggable allocator. All-zero means: use the framework default (SDL heap).
