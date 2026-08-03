@@ -535,8 +535,10 @@ static int s_compare_candidates(const void *lhs, const void *rhs) {
 
 /// Builds at most one atlas from pending lonely candidates. Returns 1 if it built an atlas,
 /// 0 if it placed nothing (below threshold, or nothing fit), -1 on a failure that should
-/// make bk__atlas_defrag report false.
-static i32 s_pack_one_atlas(BK_Atlas *atlas) {
+/// make bk__atlas_defrag report false. Sets *dropped to true (never clears it) if any
+/// candidate's get_pixels failed during this pack -- the same "did less than asked" meaning
+/// bk__atlas_flush's return value already carries.
+static i32 s_pack_one_atlas(BK_Atlas *atlas, bool *dropped) {
   // Step 1: collect candidates. Permanently-lonely records can never pack usefully and must
   // not gate the threshold either -- see spec section 4.3.
   i32 candidate_count = 0;
@@ -641,6 +643,7 @@ static i32 s_pack_one_atlas(BK_Atlas *atlas) {
     i32 bytes = width * height * 4;
     if (!atlas->desc.get_pixels(image_id, scratch, bytes, width, height, atlas->desc.udata)) {
       s_log_image_failure(atlas, image_id, "get_pixels returned false");
+      *dropped = true;
       if (record->texture_id != 0) {
         atlas->desc.destroy_texture(record->texture_id, atlas->desc.udata);
       }
@@ -718,9 +721,13 @@ static i32 s_pack_one_atlas(BK_Atlas *atlas) {
 
 bool bk__atlas_defrag(BK_Atlas *atlas) {
   BK_ASSERT(atlas != nullptr);
+  // dropped carries the same meaning false already has in bk__atlas_flush: an image the
+  // callbacks could not supply was dropped, so this call did less than it was asked to.
+  // Only a hard failure stops the loop; a dropped image just taints the return value.
   bool ok = true;
+  bool dropped = false;
   for (;;) {
-    i32 packed = s_pack_one_atlas(atlas);
+    i32 packed = s_pack_one_atlas(atlas, &dropped);
     if (packed < 0) {
       ok = false;
       break;
@@ -729,5 +736,5 @@ bool bk__atlas_defrag(BK_Atlas *atlas) {
       break; // under threshold, or nothing placed: stop rather than spin
     }
   }
-  return ok;
+  return ok && !dropped;
 }

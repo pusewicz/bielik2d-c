@@ -46,6 +46,7 @@ typedef struct FakeGpu {
   // Fault injection, used from Task 2 onward. Defaults mean "never fail".
   bool fail_get_pixels;
   u64 fail_get_pixels_image; // only meaningful when fail_get_pixels is true
+  bool fail_get_pixels_all;  // every image, regardless of id -- see Task 4's step 6 test
   bool fail_create;
   i32 fail_create_on_call; // 1-based ordinal of the create_texture call that returns 0
 } FakeGpu;
@@ -62,7 +63,8 @@ static bool fake_get_pixels(u64 image_id, void *buffer, i32 size, i32 width, i32
                             void *udata) {
   FakeGpu *gpu = udata;
   gpu->get_pixels_calls++;
-  if (gpu->fail_get_pixels && image_id == gpu->fail_get_pixels_image) {
+  if (gpu->fail_get_pixels_all ||
+      (gpu->fail_get_pixels && image_id == gpu->fail_get_pixels_image)) {
     return false;
   }
   // The cache promises these agree; a mismatch here is a cache bug, not a fake bug.
@@ -761,10 +763,28 @@ static void test_defrag_packs_lonely_images_into_one_atlas(void) {
   BK_Atlas *atlas = bk__atlas_create(&desc);
   REQUIRE(atlas != nullptr);
 
-  constexpr i32 IMAGE_COUNT = 5; // one more than the threshold
-  for (i32 i = 0; i < IMAGE_COUNT; i++) {
+  constexpr i32 THRESHOLD = 4;
+  for (i32 i = 0; i < THRESHOLD; i++) {
     s_push(atlas, (u64)(i + 1), 8, 8, (u64)(i + 1));
   }
+  REQUIRE(bk__atlas_flush(atlas));
+  REQUIRE(gpu.create_calls == THRESHOLD);
+
+  // Exactly at the threshold: spec section 4.3 says "more than," not "at least," so this
+  // must not pack. A gate off by one (`count < threshold` instead of `<=`) would pack right
+  // here -- this is the boundary a fixture of threshold+1 images can never reach, since
+  // count and threshold are never equal there.
+  REQUIRE(bk__atlas_defrag(atlas));
+  REQUIRE(gpu.create_calls == THRESHOLD); // still lonely: no atlas built
+  for (i32 i = 0; i < THRESHOLD; i++) {
+    BK_AtlasEntry entry = {0};
+    REQUIRE(bk__atlas_fetch(atlas, (u64)(i + 1), &entry));
+    FakeTexture *tex = s_find_texture(&gpu, entry.texture_id);
+    REQUIRE(tex->width == 8); // its own texture, not a 256x256 atlas
+  }
+
+  constexpr i32 IMAGE_COUNT = THRESHOLD + 1; // one more than the threshold
+  s_push(atlas, (u64)IMAGE_COUNT, 8, 8, (u64)IMAGE_COUNT);
   REQUIRE(bk__atlas_flush(atlas));
   REQUIRE(gpu.create_calls == IMAGE_COUNT);
   REQUIRE(gpu.batch_count == IMAGE_COUNT);
@@ -973,7 +993,10 @@ static void test_a_get_pixels_failure_during_pack_does_not_corrupt_neighbors(voi
 
   gpu.fail_get_pixels = true;
   gpu.fail_get_pixels_image = 2;
-  REQUIRE(bk__atlas_defrag(atlas)); // dropping one image mid-pack is not a defrag failure
+  // Dropping one image mid-pack is not a hard failure -- the pack still runs to completion
+  // -- but it is still "did less than asked", the same meaning bk__atlas_flush's return
+  // value already carries, so defrag reports it the same way.
+  REQUIRE(!bk__atlas_defrag(atlas));
 
   REQUIRE(gpu.create_calls == 4);  // one atlas, built from the two survivors
   REQUIRE(gpu.destroy_calls == 3); // image 2's lonely texture, plus 1's and 3's
@@ -989,6 +1012,44 @@ static void test_a_get_pixels_failure_during_pack_does_not_corrupt_neighbors(voi
   // removal, this would either read the wrong record or the wrong pixels.
   s_require_rect_matches(&gpu, &entry_1);
   s_require_rect_matches(&gpu, &entry_3);
+
+  bk__atlas_destroy(atlas);
+  s_free_gpu(&gpu);
+}
+
+// The brief's own callout: if every placement in a pack fails get_pixels, s_pack_one_atlas
+// must free its buffers and return 0 without ever calling create_texture -- otherwise it
+// mints a blank atlas no record points at, which Task 5's dissolve pass then skips forever
+// via its `total > 0` guard, and only bk__atlas_destroy ever reclaims it. FakeGpu's
+// single-image fault injection can't reach this path on its own: every candidate here is
+// well under atlas_size / 2, so at least two always survive a pack. fail_get_pixels_all
+// extends the fake the same way its other fault-injection fields already do, rather than
+// redesigning it.
+static void test_a_pack_where_every_image_fails_builds_nothing(void) {
+  FakeGpu gpu = {0};
+  BK_AtlasDesc desc = s_make_desc(&gpu);
+  desc.atlas_size = 256;
+  desc.defrag_lonely_threshold = 2;
+  BK_Atlas *atlas = bk__atlas_create(&desc);
+  REQUIRE(atlas != nullptr);
+
+  constexpr i32 IMAGE_COUNT = 4; // more than the threshold
+  for (i32 i = 0; i < IMAGE_COUNT; i++) {
+    s_push(atlas, (u64)(i + 1), 8, 8, (u64)(i + 1));
+  }
+  REQUIRE(bk__atlas_flush(atlas));
+  REQUIRE(gpu.create_calls == IMAGE_COUNT);
+
+  gpu.fail_get_pixels_all = true;
+  REQUIRE(!bk__atlas_defrag(atlas));         // every image dropped is still "did less than asked"
+  REQUIRE(gpu.create_calls == IMAGE_COUNT);  // no atlas: nothing survived to build one from
+  REQUIRE(gpu.destroy_calls == IMAGE_COUNT); // every lonely texture destroyed on its drop
+
+  // Every image was dropped outright, not just its texture.
+  for (i32 i = 0; i < IMAGE_COUNT; i++) {
+    BK_AtlasEntry entry = {0};
+    REQUIRE(!bk__atlas_fetch(atlas, (u64)(i + 1), &entry));
+  }
 
   bk__atlas_destroy(atlas);
   s_free_gpu(&gpu);
@@ -1021,6 +1082,7 @@ int main(void) {
   test_images_that_do_not_fit_stay_pending();
   test_a_failed_atlas_leaves_every_image_drawable();
   test_a_get_pixels_failure_during_pack_does_not_corrupt_neighbors();
+  test_a_pack_where_every_image_fails_builds_nothing();
   printf("test_atlas: OK\n");
   return 0;
 }
