@@ -199,9 +199,12 @@ void bk__atlas_tick(BK_Atlas *atlas);
 - **`fetch` is read-only, returns `bool`, and takes no `width`/`height`.** CF's `fetch`
   quietly *creates* a lonely texture for a non-resident image, which is why it needs the
   dimensions; it then signals "nothing found" with a zeroed struct a caller can mistake for
-  a valid entry at rect (0,0,0,0). Here `prefetch` is the one entry point that makes things
-  resident, and `fetch` only reports. Removing the dimensions removes the only reason they
-  could disagree with the resident record.
+  a valid entry at rect (0,0,0,0). **The donor's own documentation does not describe this**:
+  `cute_atlas_cache.h:249` says only that "if a match for `image_id` is found, the texture id
+  and uv coordinates are looked up and returned as an entry" — nothing about uploading pixels
+  and minting a texture when no match is found, which is what the body does. Here `prefetch`
+  is the one entry point that makes things resident, and `fetch` only reports. Removing the
+  dimensions removes the only reason they could disagree with the resident record.
 - **Entries report a texel rect, not normalized UVs** — §3.3. This is the departure with the
   most downstream effect.
 - **No per-flush re-creation of lonely textures.** CF's flush walks every lonely entry and
