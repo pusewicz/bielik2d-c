@@ -630,8 +630,8 @@ static void test_scissor_clips(void) {
 // failure modes is exercised: creation failing outright (leaves it null, so collate's
 // missing-resource branch declines every frame), and picking the wrong entry for the
 // active depth target, which bk__gfx_flush's BK_ASSERT (the depth_stencil_format
-// contract bk_gfx_bind_canvas's doc comment in bk_gfx.h, lines 80-90, documents) turns
-// into a hard crash rather than a quiet misrender.
+// contract documented on bk_gfx_bind_canvas in include/bielik/bk_gfx.h) turns into a
+// hard crash rather than a quiet misrender.
 // ---------------------------------------------------------------------------
 
 static void app_render_box_depth_enabled(void *state, const BK_FrameInfo *frame) {
