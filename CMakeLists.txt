@@ -38,6 +38,22 @@ target_link_libraries(bielik PUBLIC SDL3::SDL3)
 target_compile_features(bielik PUBLIC c_std_23)
 target_link_libraries(bielik PRIVATE bk_warnings)
 
+# Pin the assertion level rather than letting SDL infer it. SDL_assert.h derives its
+# default from __OPTIMIZE__ (never from NDEBUG), so an unpinned Debug build that adds
+# -O1/-O2 silently drops every BK_ASSERT while leaving bk_math's libc assert live.
+# PUBLIC, not PRIVATE: BK_ASSERT lives in a public header, so samples, tests and any
+# consumer must compile at the same level or they disagree about what's checked.
+# The generator expression is required, not stylistic -- CI's Windows leg uses a
+# multi-config generator, where CMAKE_BUILD_TYPE is empty at configure time.
+# SDL_assert.h #errors on a value outside 0..3, so a typo fails the build loudly.
+set(BK_ASSERT_LEVEL "" CACHE STRING
+    "SDL assertion level: 0=off, 1=release, 2=debug, 3=paranoid. Empty = 2 in Debug, 1 otherwise.")
+if(BK_ASSERT_LEVEL STREQUAL "")
+    target_compile_definitions(bielik PUBLIC SDL_ASSERT_LEVEL=$<IF:$<CONFIG:Debug>,2,1>)
+else()
+    target_compile_definitions(bielik PUBLIC SDL_ASSERT_LEVEL=${BK_ASSERT_LEVEL})
+endif()
+
 bk_compile_shader(NAME triangle STAGE vertex)
 bk_compile_shader(NAME triangle STAGE fragment)
 bk_compile_shader(NAME textured STAGE vertex)
