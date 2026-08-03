@@ -139,3 +139,15 @@ target_link_libraries(test_draw_gpu PRIVATE bielik bk_warnings)
 target_include_directories(test_draw_gpu PRIVATE ${PROJECT_SOURCE_DIR}/src)
 add_test(NAME test_draw_gpu COMMAND test_draw_gpu)
 set_tests_properties(test_draw_gpu PROPERTIES TIMEOUT 60)
+
+# BK_ASSERT is live in Release now (see BK_ASSERT_LEVEL in the top-level CMakeLists),
+# so every test here can trip one, and SDL's default assertion handler pops a modal GUI
+# dialog. Nothing dismisses it under CTest, so the test would hang until its timeout
+# rather than failing. "abort" is SDL's own env-var override for that handler, turning a
+# tripped assert into a non-zero exit and a normal test failure.
+#
+# Applied via the directory's TESTS property rather than named per test, so a test added
+# above is covered without remembering to opt in. Keep this LAST in the file: it only
+# sees tests registered before it runs.
+get_property(bk_test_names DIRECTORY PROPERTY TESTS)
+set_tests_properties(${bk_test_names} PROPERTIES ENVIRONMENT "SDL_ASSERT=abort")
