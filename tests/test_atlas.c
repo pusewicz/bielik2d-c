@@ -1228,6 +1228,54 @@ static void test_invalidating_an_atlassed_image_dissolves_its_atlas(void) {
   s_free_gpu(&gpu);
 }
 
+// Row 4 of the mutation table (leaving `atlassed` true on a dissolved atlas's survivors) is
+// invisible to test_a_mostly_decayed_atlas_is_dissolved_and_repacked: that test always
+// re-pushes its survivors before checking anything, and s_make_resident resets `atlassed`
+// on any re-upload regardless of what the dissolve left behind. The bug only shows up
+// between the dissolve and a push -- specifically in whether s_pack_one_atlas's candidate
+// filter (`!atlassed`) can see the survivors at all -- which only defrag's own pack pass
+// can exercise, in the very call that dissolved them (spec section 4.4 step 1: "step 3 may
+// re-pack it in this same call").
+static void test_dissolved_survivors_repack_within_the_same_defrag(void) {
+  FakeGpu gpu = {0};
+  BK_AtlasDesc desc = s_make_desc(&gpu);
+  desc.atlas_size = 256;
+  desc.ticks_until_decay = 3;
+  desc.defrag_lonely_threshold = 1; // low enough that the 3 survivors alone cross it
+  BK_Atlas *atlas = bk__atlas_create(&desc);
+  REQUIRE(atlas != nullptr);
+
+  constexpr i32 IMAGE_COUNT = 6;
+  for (i32 i = 0; i < IMAGE_COUNT; i++) {
+    s_push(atlas, (u64)(i + 1), 8, 8, (u64)(i + 1));
+  }
+  REQUIRE(bk__atlas_flush(atlas));
+  REQUIRE(bk__atlas_defrag(atlas));
+  i32 create_calls_before_dissolve = gpu.create_calls;
+
+  // Three of six stop being drawn -- the same 3-of-6 dissolve boundary as the sibling test.
+  for (i32 i = 0; i < 5; i++) {
+    bk__atlas_tick(atlas);
+    s_push(atlas, 1, 8, 8, 1);
+    s_push(atlas, 2, 8, 8, 2);
+    s_push(atlas, 3, 8, 8, 3);
+    REQUIRE(bk__atlas_flush(atlas));
+  }
+
+  // One call does both: pass 1 dissolves the half-decayed atlas, and pass 3 -- the pack
+  // loop -- must see survivors 1/2/3 as pending lonely candidates immediately, with no push
+  // in between. That is only true if the dissolve actually cleared `atlassed` on them.
+  REQUIRE(bk__atlas_defrag(atlas));
+
+  REQUIRE(gpu.create_calls == create_calls_before_dissolve + 1); // one fresh atlas, in-call
+  BK_AtlasEntry entry = {0};
+  REQUIRE(bk__atlas_fetch(atlas, 1, &entry)); // resident with no intervening push
+  s_require_rect_matches(&gpu, &entry);       // and the pixels actually landed there
+
+  bk__atlas_destroy(atlas);
+  s_free_gpu(&gpu);
+}
+
 int main(void) {
   test_flush_makes_pushed_images_resident();
   test_lonely_image_reports_its_whole_texture();
@@ -1260,6 +1308,7 @@ int main(void) {
   test_a_mostly_decayed_atlas_is_dissolved_and_repacked();
   test_a_lightly_decayed_atlas_is_left_alone();
   test_invalidating_an_atlassed_image_dissolves_its_atlas();
+  test_dissolved_survivors_repack_within_the_same_defrag();
   printf("test_atlas: OK\n");
   return 0;
 }

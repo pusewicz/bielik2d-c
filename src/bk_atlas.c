@@ -397,7 +397,10 @@ void bk__atlas_invalidate(BK_Atlas *atlas, u64 image_id) {
     // to exist anyway; the neighbours re-upload on their next push. Keep the decayed ones
     // here -- invalidate is not an eviction.
     s_dissolve_atlas(atlas, atlas->records[index].texture_id, false);
-    index = s_map_get(&atlas->map, image_id); // the dissolve reshuffled the records
+    // Defensive rather than load-bearing here: s_dissolve_atlas only reorders the record
+    // array when it drops a decayed entry, and drop_decayed is false on this call, so
+    // nothing moves today. Kept so this stays correct if that argument ever changes.
+    index = s_map_get(&atlas->map, image_id);
     BK_ASSERT(index >= 0);
   } else if (atlas->records[index].texture_id != 0) {
     atlas->desc.destroy_texture(atlas->records[index].texture_id, atlas->desc.udata);
