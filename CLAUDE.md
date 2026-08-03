@@ -190,12 +190,29 @@ Style:
   thread/lifetime notes where relevant. Terse; no boilerplate prose.
 - Public headers must each compile standalone (enforced by test).
 - Errors: no silent failure. Boot-path failures log via `SDL_Log` with a
-  `"BK: "` prefix and return `BK_FAIL`. Assertions: `BK_ASSERT` wraps
-  `SDL_assert`.
+  `"BK: "` prefix and return `BK_FAIL`.
+- Assertions: three tiers in `bk_app.h`, mapping 1:1 onto SDL's assertion levels.
+  `BK_ASSERT` (→ `SDL_assert_release`) is the default and is **live in Release** — most
+  asserts guard a pointer the next line dereferences, so compiling them out trades an
+  abort for UB. `BK_ASSERT_DEBUG` (→ `SDL_assert`) and `BK_ASSERT_PARANOID`
+  (→ `SDL_assert_paranoid`) are where a check goes once profiling shows it is too
+  expensive to keep; both deliberately start with no call sites. The level is pinned by
+  CMake's `BK_ASSERT_LEVEL` (2 in Debug, 1 otherwise) — never let SDL infer it, since it
+  keys off `__OPTIMIZE__` and never reads `NDEBUG`. A disabled assert does not evaluate
+  its condition, so never put required work inside one.
 - Includes ordered: quoted/internal headers, then `<bielik/...>`, then `<SDL3/...>`, then
   system headers — enforced by `.clang-format`'s `IncludeBlocks: Regroup`, not just convention.
 
 Process:
+- **Check whether SDL already provides it before writing it.** SDL3 is already a hard
+  dependency, so anything it ships is free, portable, and maintained by someone else.
+  Search `build/_deps/sdl3-src/include/SDL3/` before implementing a facility, and say in
+  the commit or the header comment what you found and why you did or didn't use it. This
+  applies to the non-obvious corners, not just the headline APIs: `SDL_ASSERT_LEVEL` and
+  the `SDL_ASSERT`/`SDL_LOGGING` env-var overrides replaced what would have been
+  hand-rolled build plumbing; `SDL_test_assert.h` backs `tests/bk_test.h`. Where the
+  project deliberately does NOT use SDL's version, that is a `DEVIATIONS.md` entry with
+  the reason — see `bk_math`'s libc `assert`, which keeps that module SDL-free on purpose.
 - Never reorganize the file layout beyond section 4 of `PLAN.md`.
 - Keep functions small; no premature abstraction; no speculative options.
 - Deferred/non-blocking findings (bugs, follow-ups, feature ideas) get filed as
