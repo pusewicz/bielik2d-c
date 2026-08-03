@@ -367,7 +367,7 @@ to keep an id free.
 ### 4.4 Decay and defrag
 
 `tick` advances a monotonic counter. Each resident entry records the tick it was last
-pushed. An entry whose age exceeds `ticks_until_decay` (default 1800 — 30 seconds at 60 Hz,
+pushed. An entry whose age **reaches** `ticks_until_decay` (default 1800 — 30 seconds at 60 Hz,
 the donor's value) is evictable, but is not evicted eagerly. `defrag` does the work, in this
 order:
 
