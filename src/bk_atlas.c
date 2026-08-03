@@ -345,22 +345,40 @@ void bk__atlas_push(BK_Atlas *atlas, BK_AtlasEntry entry) {
   atlas->push_count++;
 }
 
-bool bk__atlas_prefetch([[maybe_unused]] BK_Atlas *atlas, [[maybe_unused]] u64 image_id,
-                        [[maybe_unused]] i32 width, [[maybe_unused]] i32 height) {
-  return false; // Task 3 implements this.
+bool bk__atlas_prefetch(BK_Atlas *atlas, u64 image_id, i32 width, i32 height) {
+  BK_ASSERT(atlas != nullptr);
+  return s_make_resident(atlas, image_id, width, height) >= 0;
 }
 
-void bk__atlas_invalidate([[maybe_unused]] BK_Atlas *atlas, [[maybe_unused]] u64 image_id) {
-  // Task 3 implements this.
+void bk__atlas_invalidate(BK_Atlas *atlas, u64 image_id) {
+  BK_ASSERT(atlas != nullptr);
+  i32 index = s_map_get(&atlas->map, image_id);
+  if (index < 0) {
+    return;
+  }
+  BK_AtlasRecord *record = &atlas->records[index];
+  // The atlassed branch lands in Task 5, once defrag can produce one.
+  BK_ASSERT(!record->atlassed);
+  if (record->texture_id != 0) {
+    atlas->desc.destroy_texture(record->texture_id, atlas->desc.udata);
+  }
+  s_record_remove(atlas, index);
 }
 
-bool bk__atlas_fetch([[maybe_unused]] BK_Atlas *atlas, [[maybe_unused]] u64 image_id,
-                     [[maybe_unused]] BK_AtlasEntry *out) {
-  return false; // Task 3 implements this.
+bool bk__atlas_fetch(BK_Atlas *atlas, u64 image_id, BK_AtlasEntry *out) {
+  BK_ASSERT(atlas != nullptr);
+  BK_ASSERT(out != nullptr);
+  i32 index = s_map_get(&atlas->map, image_id);
+  if (index < 0 || atlas->records[index].texture_id == 0) {
+    return false; // *out is deliberately untouched (spec section 3.1)
+  }
+  s_fill_entry_from_record(&atlas->records[index], out);
+  return true;
 }
 
-void bk__atlas_tick([[maybe_unused]] BK_Atlas *atlas) {
-  // Task 3 implements this.
+void bk__atlas_tick(BK_Atlas *atlas) {
+  BK_ASSERT(atlas != nullptr);
+  atlas->tick++;
 }
 
 /// A total order, so an unstable sort is fine: ties on group are broken by push index, and

@@ -586,6 +586,148 @@ static void test_a_missing_images_failure_is_logged_once_per_lifetime(void) {
   s_free_gpu(&gpu);
 }
 
+static void test_prefetch_makes_an_image_resident_without_a_push(void) {
+  FakeGpu gpu = {0};
+  BK_AtlasDesc desc = s_make_desc(&gpu);
+  BK_Atlas *atlas = bk__atlas_create(&desc);
+  REQUIRE(atlas != nullptr);
+
+  // Immediate: get_pixels and create_texture run before prefetch returns (spec section 3).
+  REQUIRE(bk__atlas_prefetch(atlas, 9, 4, 4));
+  REQUIRE(gpu.get_pixels_calls == 1);
+  REQUIRE(gpu.create_calls == 1);
+  REQUIRE(gpu.batch_count == 0); // prefetch draws nothing
+
+  // The later push finds it already there and pays nothing.
+  s_push(atlas, 9, 4, 4, 900);
+  REQUIRE(bk__atlas_flush(atlas));
+  REQUIRE(gpu.get_pixels_calls == 1);
+  REQUIRE(gpu.create_calls == 1);
+  REQUIRE(s_find_log(&gpu, 900) != nullptr);
+
+  // Prefetching something already resident is a no-op that reports success.
+  REQUIRE(bk__atlas_prefetch(atlas, 9, 4, 4));
+  REQUIRE(gpu.create_calls == 1);
+
+  bk__atlas_destroy(atlas);
+  s_free_gpu(&gpu);
+}
+
+static void test_prefetch_reports_an_unavailable_image(void) {
+  FakeGpu gpu = {0};
+  gpu.fail_get_pixels = true;
+  gpu.fail_get_pixels_image = 9;
+  BK_AtlasDesc desc = s_make_desc(&gpu);
+  BK_Atlas *atlas = bk__atlas_create(&desc);
+  REQUIRE(atlas != nullptr);
+
+  REQUIRE(!bk__atlas_prefetch(atlas, 9, 4, 4));
+  REQUIRE(gpu.create_calls == 0);
+
+  bk__atlas_destroy(atlas);
+  s_free_gpu(&gpu);
+}
+
+static void test_fetch_reports_residency_without_creating_it(void) {
+  FakeGpu gpu = {0};
+  BK_AtlasDesc desc = s_make_desc(&gpu);
+  BK_Atlas *atlas = bk__atlas_create(&desc);
+  REQUIRE(atlas != nullptr);
+
+  // A sentinel the cache must not touch. CF's fetch signals "not found" with a zeroed
+  // struct a caller can mistake for a valid entry at rect (0,0,0,0) -- this one leaves
+  // *out alone (spec section 3.1).
+  BK_AtlasEntry out = {.image_id = 0xDEAD, .texture_id = 0xBEEF, .max_x = 1234};
+  REQUIRE(!bk__atlas_fetch(atlas, 9, &out));
+  REQUIRE(out.image_id == 0xDEAD);
+  REQUIRE(out.texture_id == 0xBEEF);
+  REQUIRE(out.max_x == 1234);
+
+  // fetch never makes anything resident -- that is prefetch's job, and only prefetch's.
+  REQUIRE(gpu.get_pixels_calls == 0);
+  REQUIRE(gpu.create_calls == 0);
+
+  REQUIRE(bk__atlas_prefetch(atlas, 9, 8, 4));
+  REQUIRE(bk__atlas_fetch(atlas, 9, &out));
+  REQUIRE(out.image_id == 9);
+  REQUIRE(out.texture_id != 0);
+  REQUIRE(out.width == 8 && out.height == 4);
+  REQUIRE(out.min_x == 0 && out.min_y == 0);
+  REQUIRE(out.max_x == 8 && out.max_y == 4);
+  s_require_rect_matches(&gpu, &out);
+
+  bk__atlas_destroy(atlas);
+  s_free_gpu(&gpu);
+}
+
+static void test_invalidate_forgets_a_lonely_image(void) {
+  FakeGpu gpu = {0};
+  BK_AtlasDesc desc = s_make_desc(&gpu);
+  BK_Atlas *atlas = bk__atlas_create(&desc);
+  REQUIRE(atlas != nullptr);
+
+  s_push(atlas, 9, 4, 4, 900);
+  REQUIRE(bk__atlas_flush(atlas));
+  REQUIRE(gpu.create_calls == 1);
+  u64 first_texture = gpu.textures[0].id;
+
+  bk__atlas_invalidate(atlas, 9);
+  REQUIRE(gpu.destroy_calls == 1);
+  REQUIRE(!s_find_texture(&gpu, first_texture)->alive);
+
+  BK_AtlasEntry out = {0};
+  REQUIRE(!bk__atlas_fetch(atlas, 9, &out)); // the record is gone, not just the pixels
+
+  // The next push re-fetches, and may do so at a new size -- which is the documented way
+  // to resize an image (spec section 4.3).
+  s_push(atlas, 9, 16, 8, 901);
+  REQUIRE(bk__atlas_flush(atlas));
+  REQUIRE(gpu.get_pixels_calls == 2);
+  REQUIRE(gpu.create_calls == 2);
+  REQUIRE(bk__atlas_fetch(atlas, 9, &out));
+  REQUIRE(out.width == 16 && out.height == 8);
+  s_require_rect_matches(&gpu, &out);
+
+  // Invalidating something unknown is a no-op, not a crash.
+  bk__atlas_invalidate(atlas, 12345);
+
+  bk__atlas_destroy(atlas);
+  s_free_gpu(&gpu);
+}
+
+static void test_tick_ages_only_images_that_stop_being_pushed(void) {
+  FakeGpu gpu = {0};
+  BK_AtlasDesc desc = s_make_desc(&gpu);
+  desc.ticks_until_decay = 4;
+  BK_Atlas *atlas = bk__atlas_create(&desc);
+  REQUIRE(atlas != nullptr);
+
+  s_push(atlas, 10, 4, 4, 100);
+  s_push(atlas, 20, 4, 4, 200);
+  REQUIRE(bk__atlas_flush(atlas));
+
+  // Ten ticks pass. Image 10 keeps being drawn; image 20 does not.
+  for (i32 i = 0; i < 10; i++) {
+    bk__atlas_tick(atlas);
+    s_push(atlas, 10, 4, 4, 100);
+    REQUIRE(bk__atlas_flush(atlas));
+  }
+
+  // Decay is bookkeeping until defrag acts on it (spec section 4.4): both are still
+  // resident and neither texture has been destroyed.
+  REQUIRE(gpu.destroy_calls == 0);
+  BK_AtlasEntry out = {0};
+  REQUIRE(bk__atlas_fetch(atlas, 20, &out));
+
+  // Task 5 asserts that defrag then evicts 20 and keeps 10. What this test pins down is
+  // that the clock advanced and the re-pushed image kept its stamp fresh -- observable
+  // here because a stale stamp on image 10 would make Task 5's eviction test drop it too.
+  REQUIRE(bk__atlas_fetch(atlas, 10, &out));
+
+  bk__atlas_destroy(atlas);
+  s_free_gpu(&gpu);
+}
+
 int main(void) {
   test_flush_makes_pushed_images_resident();
   test_lonely_image_reports_its_whole_texture();
@@ -601,6 +743,11 @@ int main(void) {
   test_a_dropped_image_can_come_back_at_a_different_size();
   test_a_failing_flush_still_drains_the_push_buffer();
   test_a_missing_images_failure_is_logged_once_per_lifetime();
+  test_prefetch_makes_an_image_resident_without_a_push();
+  test_prefetch_reports_an_unavailable_image();
+  test_fetch_reports_residency_without_creating_it();
+  test_invalidate_forgets_a_lonely_image();
+  test_tick_ages_only_images_that_stop_being_pushed();
   printf("test_atlas: OK\n");
   return 0;
 }
