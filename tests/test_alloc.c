@@ -3,6 +3,8 @@
 
 #include <bielik/bk_alloc.h>
 
+#include <SDL3/SDL.h>
+
 #include <stdio.h>
 #include <string.h>
 
@@ -145,6 +147,68 @@ static void test_install_validation(void) {
   bk_free(nullptr, q, 48);
 }
 
+static void test_counting_allocator(void) {
+  BK_CountingAllocator counter = {0}; // inner all-zero => default heap
+  BK_Allocator a = bk_allocator_counting(&counter);
+
+  void *p = bk_alloc(&a, 100);
+  void *q = bk_alloc(&a, 50);
+  REQUIRE_EQ_U64((u64)counter.live_bytes, 150);
+  REQUIRE_EQ_U64((u64)counter.live_allocs, 2);
+  REQUIRE_EQ_U64((u64)counter.peak_bytes, 150);
+  REQUIRE_EQ_U64((u64)counter.total_allocs, 2);
+
+  p = bk_realloc(&a, p, 100, 300);
+  REQUIRE_EQ_U64((u64)counter.live_bytes, 350);
+  REQUIRE_EQ_U64((u64)counter.peak_bytes, 350);
+  REQUIRE_EQ_U64((u64)counter.total_allocs, 2); // realloc of a live ptr is not a new allocation
+
+  // realloc from nullptr IS an allocation (the atlas growth paths start their
+  // arrays this way) and must count as one, or its eventual free goes negative.
+  void *r = bk_realloc(&a, nullptr, 0, 40);
+  REQUIRE_EQ_U64((u64)counter.live_allocs, 3);
+  REQUIRE_EQ_U64((u64)counter.total_allocs, 3);
+  bk_free(&a, r, 40);
+
+  bk_free(&a, q, 50);
+  REQUIRE_EQ_U64((u64)counter.live_bytes, 300);
+  REQUIRE_EQ_U64((u64)counter.live_allocs, 1);
+  REQUIRE_EQ_U64((u64)counter.peak_bytes, 390); // peak never decreases
+
+  bk_free(&a, p, 300);
+  REQUIRE_EQ_U64((u64)counter.live_bytes, 0);
+  REQUIRE_EQ_U64((u64)counter.live_allocs, 0);
+}
+
+// The panic allocator is exercised by calling its functions directly, NOT
+// through bk_alloc: through the wrapper its nullptr return would hit the OOM
+// abort. Swap SDL's assertion handler so the BK_ASSERT inside is observed
+// instead of aborting (tests run with SDL_ASSERT=abort).
+static int s_panic_hits = 0;
+
+static SDL_AssertState SDLCALL s_ignore_assert(const SDL_AssertData *data, void *userdata) {
+  (void)data;
+  (void)userdata;
+  s_panic_hits++;
+  return SDL_ASSERTION_IGNORE;
+}
+
+static void test_panic_allocator(void) {
+  BK_Allocator p = bk_allocator_panic();
+  void *prev_data = nullptr;
+  SDL_AssertionHandler prev = SDL_GetAssertionHandler(&prev_data);
+  SDL_SetAssertionHandler(s_ignore_assert, nullptr);
+
+  REQUIRE(p.alloc_fn(16, p.ctx) == nullptr);
+  REQUIRE(s_panic_hits == 1);
+  REQUIRE(p.realloc_fn(nullptr, 0, 16, p.ctx) == nullptr);
+  REQUIRE(s_panic_hits == 2);
+  p.free_fn(&s_panic_hits, 4, p.ctx); // any pointer; must not be dereferenced
+  REQUIRE(s_panic_hits == 3);
+
+  SDL_SetAssertionHandler(prev, prev_data);
+}
+
 int main(void) {
   test_default_roundtrip();
   test_alloc_zero_zeroes();
@@ -152,6 +216,8 @@ int main(void) {
   test_new_macros();
   test_custom_allocator_forwarding();
   test_install_validation();
+  test_counting_allocator();
+  test_panic_allocator();
   printf("test_alloc: OK\n");
   return 0;
 }

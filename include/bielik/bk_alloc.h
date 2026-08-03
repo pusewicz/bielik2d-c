@@ -60,3 +60,26 @@ void bk__free_site(const BK_Allocator *a, void *ptr, isize size);
 /// Typed, zeroed single-object / array allocation.
 #define BK_NEW(a, T)          ((T *)bk_alloc_zero((a), (isize)sizeof(T)))
 #define BK_NEW_ARRAY(a, T, n) ((T *)bk_alloc_zero((a), (isize)sizeof(T) * (n)))
+
+/// An allocator that BK_ASSERTs (and returns nullptr / does nothing) on any
+/// call. Install it where allocation is a bug, turning "does this path
+/// allocate?" into a testable assertion.
+BK_Allocator bk_allocator_panic(void);
+
+/// State for bk_allocator_counting. Counters are plain, not atomic: use from
+/// one thread at a time (tests, HUD probes). inner all-zero means the default
+/// heap serves the actual memory. Zero-initialize before use.
+typedef struct BK_CountingAllocator {
+  BK_Allocator inner;
+  isize live_bytes;
+  isize live_allocs;
+  isize peak_bytes;
+  isize total_allocs;
+} BK_CountingAllocator;
+
+/// Returns an allocator that forwards to state->inner and maintains the
+/// counters. state must outlive every allocation made through it. Mismatched
+/// free/realloc sizes surface as nonzero live_bytes at teardown; the leak
+/// idiom is: use it for an object's lifetime, destroy, assert live_bytes == 0
+/// && live_allocs == 0.
+BK_Allocator bk_allocator_counting(BK_CountingAllocator *state);

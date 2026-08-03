@@ -39,6 +39,95 @@ bool bk__allocator_valid(const BK_Allocator *a) {
   return !any || all;
 }
 
+/// Resolves the two "use the default" spellings to the installed base.
+static const BK_Allocator *s_resolve(const BK_Allocator *a) {
+  if (a == nullptr || a->alloc_fn == nullptr) {
+    return &s_base;
+  }
+  return a;
+}
+
+static void *s_panic_alloc(isize size, void *ctx) {
+  (void)ctx;
+  SDL_Log("BK: panic allocator: alloc(%td) on a no-allocation path", size);
+  BK_ASSERT(!"panic allocator: alloc");
+  return nullptr;
+}
+
+static void *s_panic_realloc(void *ptr, isize old_size, isize new_size, void *ctx) {
+  (void)ptr;
+  (void)old_size;
+  (void)ctx;
+  SDL_Log("BK: panic allocator: realloc(%td) on a no-allocation path", new_size);
+  BK_ASSERT(!"panic allocator: realloc");
+  return nullptr;
+}
+
+static void s_panic_free(void *ptr, isize size, void *ctx) {
+  (void)ptr;
+  (void)size;
+  (void)ctx;
+  SDL_Log("BK: panic allocator: free on a no-allocation path");
+  BK_ASSERT(!"panic allocator: free");
+}
+
+BK_Allocator bk_allocator_panic(void) {
+  return (BK_Allocator){
+      .alloc_fn = s_panic_alloc, .realloc_fn = s_panic_realloc, .free_fn = s_panic_free};
+}
+
+static void s_counting_bump_peak(BK_CountingAllocator *c) {
+  if (c->live_bytes > c->peak_bytes) {
+    c->peak_bytes = c->live_bytes;
+  }
+}
+
+static void *s_counting_alloc(isize size, void *ctx) {
+  BK_CountingAllocator *c = ctx;
+  const BK_Allocator *inner = s_resolve(&c->inner);
+  void *ptr = inner->alloc_fn(size, inner->ctx);
+  if (ptr != nullptr) {
+    c->live_bytes += size;
+    c->live_allocs++;
+    c->total_allocs++;
+    s_counting_bump_peak(c);
+  }
+  return ptr;
+}
+
+static void *s_counting_realloc(void *ptr, isize old_size, isize new_size, void *ctx) {
+  BK_CountingAllocator *c = ctx;
+  const BK_Allocator *inner = s_resolve(&c->inner);
+  void *grown = inner->realloc_fn(ptr, old_size, new_size, inner->ctx);
+  if (grown != nullptr) {
+    if (ptr == nullptr) { // realloc-from-null is an allocation
+      c->live_allocs++;
+      c->total_allocs++;
+    }
+    c->live_bytes += new_size - old_size;
+    s_counting_bump_peak(c);
+  }
+  return grown;
+}
+
+static void s_counting_free(void *ptr, isize size, void *ctx) {
+  BK_CountingAllocator *c = ctx;
+  const BK_Allocator *inner = s_resolve(&c->inner);
+  inner->free_fn(ptr, size, inner->ctx);
+  c->live_bytes -= size;
+  c->live_allocs--;
+  BK_ASSERT(c->live_bytes >= 0 && c->live_allocs >= 0);
+}
+
+BK_Allocator bk_allocator_counting(BK_CountingAllocator *state) {
+  BK_ASSERT(state != nullptr);
+  BK_ASSERT(bk__allocator_valid(&state->inner));
+  return (BK_Allocator){.alloc_fn = s_counting_alloc,
+                        .realloc_fn = s_counting_realloc,
+                        .free_fn = s_counting_free,
+                        .ctx = state};
+}
+
 bool bk__alloc_install(const BK_Allocator *base) {
   if (!bk__allocator_valid(base)) {
     SDL_Log("BK: allocator is partially set: all three functions or none");
@@ -48,16 +137,14 @@ bool bk__alloc_install(const BK_Allocator *base) {
     s_base = s_default_allocator;
   } else {
     s_base = *base;
+    // Pin a counting allocator's inner to the default to prevent self-reference when
+    // the base is installed as the counting allocator's inner.
+    if (base != nullptr && base->ctx != nullptr && base->alloc_fn == s_counting_alloc &&
+        ((BK_CountingAllocator *)base->ctx)->inner.alloc_fn == nullptr) {
+      ((BK_CountingAllocator *)base->ctx)->inner = s_default_allocator;
+    }
   }
   return true;
-}
-
-/// Resolves the two "use the default" spellings to the installed base.
-static const BK_Allocator *s_resolve(const BK_Allocator *a) {
-  if (a == nullptr || a->alloc_fn == nullptr) {
-    return &s_base;
-  }
-  return a;
 }
 
 [[noreturn]] static void s_oom(isize size, const char *file, int line) {
