@@ -350,17 +350,57 @@ bool bk__atlas_prefetch(BK_Atlas *atlas, u64 image_id, i32 width, i32 height) {
   return s_make_resident(atlas, image_id, width, height) >= 0;
 }
 
+/// True when this record has not been pushed for ticks_until_decay ticks.
+static bool s_is_decayed(const BK_Atlas *atlas, const BK_AtlasRecord *record) {
+  return atlas->tick - record->last_tick >= atlas->desc.ticks_until_decay;
+}
+
+/// Destroys an atlas texture and returns its live images to the pending-lonely set with no
+/// texture. Their pixels come back lazily, on their next push. Decayed images on it are
+/// dropped outright.
+static void s_dissolve_atlas(BK_Atlas *atlas, u64 texture_id, bool drop_decayed) {
+  atlas->desc.destroy_texture(texture_id, atlas->desc.udata);
+  for (i32 i = 0; i < atlas->atlas_count; i++) {
+    if (atlas->atlas_textures[i] == texture_id) {
+      atlas->atlas_textures[i] = atlas->atlas_textures[atlas->atlas_count - 1];
+      atlas->atlas_count--;
+      break;
+    }
+  }
+  // Walk backwards: s_record_remove swap-removes, so a forward walk would skip the record
+  // it moves into the slot just vacated.
+  for (i32 i = atlas->record_count - 1; i >= 0; i--) {
+    BK_AtlasRecord *record = &atlas->records[i];
+    if (!record->atlassed || record->texture_id != texture_id) {
+      continue;
+    }
+    if (drop_decayed && s_is_decayed(atlas, record)) {
+      s_record_remove(atlas, i);
+      continue;
+    }
+    record->texture_id = 0; // no texture until the next push re-uploads it
+    record->atlassed = false;
+    record->min_x = 0;
+    record->min_y = 0;
+  }
+}
+
 void bk__atlas_invalidate(BK_Atlas *atlas, u64 image_id) {
   BK_ASSERT(atlas != nullptr);
   i32 index = s_map_get(&atlas->map, image_id);
   if (index < 0) {
     return;
   }
-  BK_AtlasRecord *record = &atlas->records[index];
-  // The atlassed branch lands in Task 5, once defrag can produce one.
-  BK_ASSERT(!record->atlassed);
-  if (record->texture_id != 0) {
-    atlas->desc.destroy_texture(record->texture_id, atlas->desc.udata);
+  if (atlas->records[index].atlassed) {
+    // The pixels are baked into a shared texture, so there is nothing to replace short of
+    // rebuilding it. Dissolving is cheaper than a recompile and reuses machinery that has
+    // to exist anyway; the neighbours re-upload on their next push. Keep the decayed ones
+    // here -- invalidate is not an eviction.
+    s_dissolve_atlas(atlas, atlas->records[index].texture_id, false);
+    index = s_map_get(&atlas->map, image_id); // the dissolve reshuffled the records
+    BK_ASSERT(index >= 0);
+  } else if (atlas->records[index].texture_id != 0) {
+    atlas->desc.destroy_texture(atlas->records[index].texture_id, atlas->desc.udata);
   }
   s_record_remove(atlas, index);
 }
@@ -557,11 +597,11 @@ static i32 s_pack_one_atlas(BK_Atlas *atlas, bool *dropped) {
     SDL_Log("BK: bk_atlas: defrag candidate list allocation failed (%d entries)", candidate_count);
     return -1;
   }
-  i32 n = 0;
+  i32 filled = 0;
   for (i32 i = 0; i < atlas->record_count; i++) {
     const BK_AtlasRecord *record = &atlas->records[i];
     if (!record->permanent_lonely && !record->atlassed) {
-      candidates[n++] = (BK_AtlasCandidate){
+      candidates[filled++] = (BK_AtlasCandidate){
           .image_id = record->image_id,
           .last_tick = record->last_tick,
           .width = record->width,
@@ -721,9 +761,42 @@ static i32 s_pack_one_atlas(BK_Atlas *atlas, bool *dropped) {
 
 bool bk__atlas_defrag(BK_Atlas *atlas) {
   BK_ASSERT(atlas != nullptr);
-  // dropped carries the same meaning false already has in bk__atlas_flush: an image the
-  // callbacks could not supply was dropped, so this call did less than it was asked to.
-  // Only a hard failure stops the loop; a dropped image just taints the return value.
+
+  // 1. Dissolve atlases that are at least half decayed. Snapshot the handles first: the
+  //    dissolve mutates atlas_textures.
+  for (i32 i = atlas->atlas_count - 1; i >= 0; i--) {
+    u64 texture_id = atlas->atlas_textures[i];
+    i32 total = 0, decayed = 0;
+    for (i32 index = 0; index < atlas->record_count; index++) {
+      const BK_AtlasRecord *record = &atlas->records[index];
+      if (record->atlassed && record->texture_id == texture_id) {
+        total++;
+        decayed += s_is_decayed(atlas, record) ? 1 : 0;
+      }
+    }
+    // Stated positively on purpose. The donor computes total/decayed and fires when that
+    // exceeds 0.5 -- true whenever anything has decayed at all, which is not what its own
+    // comment describes. Port the intent (spec section 4.4).
+    if (total > 0 && decayed * 2 >= total) {
+      s_dissolve_atlas(atlas, texture_id, true);
+    }
+  }
+
+  // 2. Destroy decayed lonely textures and forget their images.
+  for (i32 i = atlas->record_count - 1; i >= 0; i--) {
+    BK_AtlasRecord *record = &atlas->records[i];
+    if (record->atlassed || !s_is_decayed(atlas, record)) {
+      continue;
+    }
+    if (record->texture_id != 0) {
+      atlas->desc.destroy_texture(record->texture_id, atlas->desc.udata);
+    }
+    s_record_remove(atlas, i);
+  }
+
+  // 3. Pack, as implemented in Task 4. `dropped` carries the same meaning `false` has in
+  // bk__atlas_flush: an image the callbacks could not supply was dropped, so this call
+  // did less than it was asked to. Only a hard failure stops the loop.
   bool ok = true;
   bool dropped = false;
   for (;;) {

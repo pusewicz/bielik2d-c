@@ -1055,6 +1055,179 @@ static void test_a_pack_where_every_image_fails_builds_nothing(void) {
   s_free_gpu(&gpu);
 }
 
+static void test_defrag_evicts_what_stopped_being_drawn(void) {
+  FakeGpu gpu = {0};
+  BK_AtlasDesc desc = s_make_desc(&gpu);
+  desc.ticks_until_decay = 3;
+  desc.defrag_lonely_threshold = 100; // never pack: this test is about decay alone
+  BK_Atlas *atlas = bk__atlas_create(&desc);
+  REQUIRE(atlas != nullptr);
+
+  s_push(atlas, 10, 4, 4, 100);
+  s_push(atlas, 20, 4, 4, 200);
+  REQUIRE(bk__atlas_flush(atlas));
+  REQUIRE(gpu.create_calls == 2);
+
+  // Image 10 keeps being drawn; image 20 stops.
+  for (i32 i = 0; i < 5; i++) {
+    bk__atlas_tick(atlas);
+    s_push(atlas, 10, 4, 4, 100);
+    REQUIRE(bk__atlas_flush(atlas));
+  }
+
+  REQUIRE(bk__atlas_defrag(atlas));
+
+  BK_AtlasEntry entry = {0};
+  REQUIRE(bk__atlas_fetch(atlas, 10, &entry));  // still drawn, so still resident
+  REQUIRE(!bk__atlas_fetch(atlas, 20, &entry)); // decayed and evicted
+  REQUIRE(gpu.destroy_calls == 1);
+
+  bk__atlas_destroy(atlas);
+  s_free_gpu(&gpu);
+}
+
+static void test_a_mostly_decayed_atlas_is_dissolved_and_repacked(void) {
+  FakeGpu gpu = {0};
+  BK_AtlasDesc desc = s_make_desc(&gpu);
+  desc.atlas_size = 256;
+  desc.ticks_until_decay = 3;
+  desc.defrag_lonely_threshold = 3;
+  BK_Atlas *atlas = bk__atlas_create(&desc);
+  REQUIRE(atlas != nullptr);
+
+  // Six images into one atlas.
+  constexpr i32 IMAGE_COUNT = 6;
+  for (i32 i = 0; i < IMAGE_COUNT; i++) {
+    s_push(atlas, (u64)(i + 1), 8, 8, (u64)(i + 1));
+  }
+  REQUIRE(bk__atlas_flush(atlas));
+  REQUIRE(bk__atlas_defrag(atlas));
+  REQUIRE(gpu.create_calls == IMAGE_COUNT + 1);
+
+  BK_AtlasEntry before = {0};
+  REQUIRE(bk__atlas_fetch(atlas, 1, &before));
+  u64 first_atlas = before.texture_id;
+
+  // Exactly three of the six stop being drawn. Sitting on the boundary is the point: the
+  // rule is decayed/total >= 1/2, so 3/6 must dissolve. A test at 4/6 would pass under a
+  // strict > just as happily, and the whole reason this threshold is written out in the
+  // spec is that the donor's version of it is wrong (spec section 4.4).
+  for (i32 i = 0; i < 5; i++) {
+    bk__atlas_tick(atlas);
+    s_push(atlas, 1, 8, 8, 1);
+    s_push(atlas, 2, 8, 8, 2);
+    s_push(atlas, 3, 8, 8, 3);
+    REQUIRE(bk__atlas_flush(atlas));
+  }
+
+  REQUIRE(bk__atlas_defrag(atlas));
+
+  REQUIRE(!s_find_texture(&gpu, first_atlas)->alive); // the old atlas is gone
+  BK_AtlasEntry entry = {0};
+  for (u64 image_id = 4; image_id <= IMAGE_COUNT; image_id++) {
+    REQUIRE(!bk__atlas_fetch(atlas, image_id, &entry)); // the decayed three are dropped
+  }
+
+  // Survivors are still drawable: the next push re-creates a texture for them lazily,
+  // rather than the dissolve re-uploading every survivor on the spot (spec section 3.1).
+  s_push(atlas, 1, 8, 8, 11);
+  s_push(atlas, 2, 8, 8, 22);
+  s_push(atlas, 3, 8, 8, 33);
+  REQUIRE(bk__atlas_flush(atlas));
+  REQUIRE(s_find_log(&gpu, 11) != nullptr);
+  REQUIRE(s_find_log(&gpu, 22) != nullptr);
+  REQUIRE(s_find_log(&gpu, 33) != nullptr);
+  REQUIRE(bk__atlas_fetch(atlas, 1, &entry));
+  s_require_rect_matches(&gpu, &entry);
+
+  bk__atlas_destroy(atlas);
+  s_free_gpu(&gpu);
+}
+
+static void test_a_lightly_decayed_atlas_is_left_alone(void) {
+  FakeGpu gpu = {0};
+  BK_AtlasDesc desc = s_make_desc(&gpu);
+  desc.atlas_size = 256;
+  desc.ticks_until_decay = 3;
+  desc.defrag_lonely_threshold = 3;
+  BK_Atlas *atlas = bk__atlas_create(&desc);
+  REQUIRE(atlas != nullptr);
+
+  constexpr i32 IMAGE_COUNT = 6;
+  for (i32 i = 0; i < IMAGE_COUNT; i++) {
+    s_push(atlas, (u64)(i + 1), 8, 8, (u64)(i + 1));
+  }
+  REQUIRE(bk__atlas_flush(atlas));
+  REQUIRE(bk__atlas_defrag(atlas));
+
+  BK_AtlasEntry before = {0};
+  REQUIRE(bk__atlas_fetch(atlas, 1, &before));
+  u64 first_atlas = before.texture_id;
+
+  // Only two of six stop being drawn: 2/6 is below half, so the atlas stays (spec 4.4).
+  for (i32 i = 0; i < 5; i++) {
+    bk__atlas_tick(atlas);
+    for (i32 image = 1; image <= 4; image++) {
+      s_push(atlas, (u64)image, 8, 8, (u64)image);
+    }
+    REQUIRE(bk__atlas_flush(atlas));
+  }
+
+  REQUIRE(bk__atlas_defrag(atlas));
+  REQUIRE(s_find_texture(&gpu, first_atlas)->alive);
+
+  BK_AtlasEntry entry = {0};
+  REQUIRE(bk__atlas_fetch(atlas, 1, &entry));
+  REQUIRE(entry.texture_id == first_atlas);
+  REQUIRE(entry.min_x == before.min_x && entry.min_y == before.min_y); // not repacked
+  // Even the decayed ones are still there: nothing evicts them until the atlas goes.
+  REQUIRE(bk__atlas_fetch(atlas, 5, &entry));
+
+  bk__atlas_destroy(atlas);
+  s_free_gpu(&gpu);
+}
+
+static void test_invalidating_an_atlassed_image_dissolves_its_atlas(void) {
+  FakeGpu gpu = {0};
+  BK_AtlasDesc desc = s_make_desc(&gpu);
+  desc.atlas_size = 256;
+  desc.defrag_lonely_threshold = 2;
+  BK_Atlas *atlas = bk__atlas_create(&desc);
+  REQUIRE(atlas != nullptr);
+
+  for (i32 i = 0; i < 3; i++) {
+    s_push(atlas, (u64)(i + 1), 8, 8, (u64)(i + 1));
+  }
+  REQUIRE(bk__atlas_flush(atlas));
+  REQUIRE(bk__atlas_defrag(atlas));
+
+  BK_AtlasEntry entry = {0};
+  REQUIRE(bk__atlas_fetch(atlas, 1, &entry));
+  u64 atlas_texture = entry.texture_id;
+  i32 fetches_before = gpu.get_pixels_calls;
+
+  bk__atlas_invalidate(atlas, 1);
+
+  REQUIRE(!s_find_texture(&gpu, atlas_texture)->alive);
+  REQUIRE(!bk__atlas_fetch(atlas, 1, &entry)); // the invalidated image's record is gone
+  // Its neighbours keep their records but lose their texture, so fetch reports them as
+  // not resident until their next push re-uploads them (spec section 3, invalidate).
+  REQUIRE(!bk__atlas_fetch(atlas, 2, &entry));
+
+  // Everyone re-uploads on the next push, including the invalidated image at a new size.
+  s_push(atlas, 1, 16, 16, 100);
+  s_push(atlas, 2, 8, 8, 200);
+  s_push(atlas, 3, 8, 8, 300);
+  REQUIRE(bk__atlas_flush(atlas));
+  REQUIRE(gpu.get_pixels_calls == fetches_before + 3);
+  REQUIRE(bk__atlas_fetch(atlas, 1, &entry));
+  REQUIRE(entry.width == 16 && entry.height == 16);
+  s_require_rect_matches(&gpu, &entry);
+
+  bk__atlas_destroy(atlas);
+  s_free_gpu(&gpu);
+}
+
 int main(void) {
   test_flush_makes_pushed_images_resident();
   test_lonely_image_reports_its_whole_texture();
@@ -1083,6 +1256,10 @@ int main(void) {
   test_a_failed_atlas_leaves_every_image_drawable();
   test_a_get_pixels_failure_during_pack_does_not_corrupt_neighbors();
   test_a_pack_where_every_image_fails_builds_nothing();
+  test_defrag_evicts_what_stopped_being_drawn();
+  test_a_mostly_decayed_atlas_is_dissolved_and_repacked();
+  test_a_lightly_decayed_atlas_is_left_alone();
+  test_invalidating_an_atlassed_image_dissolves_its_atlas();
   printf("test_atlas: OK\n");
   return 0;
 }
