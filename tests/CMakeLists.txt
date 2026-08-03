@@ -140,6 +140,18 @@ target_include_directories(test_draw_gpu PRIVATE ${PROJECT_SOURCE_DIR}/src)
 add_test(NAME test_draw_gpu COMMAND test_draw_gpu)
 set_tests_properties(test_draw_gpu PROPERTIES TIMEOUT 60)
 
+# CPU-only: the cache reaches the GPU through caller callbacks, so this is a required
+# CI check on every platform (design spec section 5.1).
+#
+# Registered ABOVE the two get_property blocks below on purpose: each reads a directory
+# property at the point it runs, so anything added after them is invisible to them.
+# test_atlas would silently miss SDL3::SDL3_test and the SDL_ASSERT/SDL_LOGGING
+# environment -- the link error would be loud, the missing environment would not be.
+add_executable(test_atlas test_atlas.c)
+target_link_libraries(test_atlas PRIVATE bielik bk_warnings)
+target_include_directories(test_atlas PRIVATE ${PROJECT_SOURCE_DIR}/src)
+add_test(NAME test_atlas COMMAND test_atlas)
+
 # Every test binary here uses bk_test.h, whose REQUIRE macros are built on SDL_test's
 # assertion helpers. Linked via the directory's target list rather than named on each
 # target, so a test added above doesn't have to remember. The header-hygiene OBJECT
