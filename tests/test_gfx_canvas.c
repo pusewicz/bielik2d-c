@@ -126,15 +126,6 @@ static void s_free_shader(BK_GfxShaderDesc *desc) {
   SDL_free((void *)desc->msl.code);
 }
 
-static void s_check_pixel(const uint8_t *pixels, int width, int x, int y, uint8_t r, uint8_t g,
-                          uint8_t b, uint8_t a, int tolerance) {
-  size_t i = ((size_t)y * (size_t)width + (size_t)x) * 4;
-  REQUIRE(abs((int)pixels[i + 0] - (int)r) <= tolerance);
-  REQUIRE(abs((int)pixels[i + 1] - (int)g) <= tolerance);
-  REQUIRE(abs((int)pixels[i + 2] - (int)b) <= tolerance);
-  REQUIRE(abs((int)pixels[i + 3] - (int)a) <= tolerance);
-}
-
 enum { NEAR_R = 255, NEAR_G = 0, NEAR_B = 0 }; // red triangle, z = 0.25 (nearer)
 
 enum { FAR_R = 0, FAR_G = 0, FAR_B = 255 }; // blue triangle, z = 0.75 (farther)
@@ -199,13 +190,30 @@ static void s_run_depth_order(SDL_GPUDevice *device, BK_GfxPipeline *pipeline, B
   void *pixels_buf = bk__gfx_download_texture(device, cmd, color_handle, (Uint32)size, (Uint32)size,
                                               SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM);
   REQUIRE(pixels_buf != nullptr);
-  const uint8_t *pixels = (const uint8_t *)pixels_buf;
 
-  s_check_pixel(pixels, size, size / 2, size / 2, NEAR_R, NEAR_G, NEAR_B, 255, tolerance);
-  s_check_pixel(pixels, size, 2, 2, NEAR_R, NEAR_G, NEAR_B, 255, tolerance);
-  s_check_pixel(pixels, size, size - 3, 2, NEAR_R, NEAR_G, NEAR_B, 255, tolerance);
-  s_check_pixel(pixels, size, 2, size - 3, NEAR_R, NEAR_G, NEAR_B, 255, tolerance);
-  s_check_pixel(pixels, size, size - 3, size - 3, NEAR_R, NEAR_G, NEAR_B, 255, tolerance);
+  // SDLTest_CompareSurfaces only compares RGB (see its source), so the alpha channel
+  // needs its own spot-check.
+  REQUIRE_PIXEL(pixels_buf, size * 4, size / 2, size / 2, NEAR_R, NEAR_G, NEAR_B, 255, tolerance);
+
+  // Both triangles are the over-sized-triangle trick (see the comment above this
+  // function), so each one alone covers the *entire* canvas -- the expected image is a
+  // solid fill of the near triangle's color, everywhere. allowable_error=3 (+-1 per RGB
+  // channel) absorbs float->UNORM8 rounding; max_failing_pixels=0 because there is no
+  // rasterized edge inside the canvas -- the triangle's hypotenuse falls entirely
+  // outside it (the extreme corner pixel's NDC sample still sums to < 2, i.e. still
+  // inside both triangles, with about 1px of margin at the corner).
+  constexpr int allowable_error = 3;
+  constexpr int max_failing_pixels = 0;
+  SDL_Surface *actual =
+      SDL_CreateSurfaceFrom(size, size, SDL_PIXELFORMAT_RGBA32, pixels_buf, size * 4);
+  REQUIRE(actual != nullptr);
+  SDL_Surface *reference = SDL_CreateSurface(size, size, SDL_PIXELFORMAT_RGBA32);
+  REQUIRE(reference != nullptr);
+  REQUIRE(SDL_FillSurfaceRect(reference, nullptr,
+                              SDL_MapSurfaceRGBA(reference, NEAR_R, NEAR_G, NEAR_B, 255)));
+  REQUIRE_SURFACE(actual, reference, allowable_error, max_failing_pixels);
+  SDL_DestroySurface(actual);
+  SDL_DestroySurface(reference);
 
   bk__free(pixels_buf);
   bk_gfx_buffer_destroy(vertex_buffer);

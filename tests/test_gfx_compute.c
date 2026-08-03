@@ -72,23 +72,56 @@ static void test_destroy_null_is_noop(void) {
   bk_gfx_compute_pipeline_destroy(nullptr);
 }
 
-static void s_check_pixel(const u8 *pixels, int width, int x, int y, u8 r, u8 g, u8 b, u8 a,
-                          int tolerance) {
-  usize i = ((usize)y * (usize)width + (usize)x) * 4;
-  REQUIRE(abs((int)pixels[i + 0] - (int)r) <= tolerance);
-  REQUIRE(abs((int)pixels[i + 1] - (int)g) <= tolerance);
-  REQUIRE(abs((int)pixels[i + 2] - (int)b) <= tolerance);
-  REQUIRE(abs((int)pixels[i + 3] - (int)a) <= tolerance);
+// Builds the exact reference image for the gradient dispatch: per-texel, the same f32
+// expression gradient.comp computes (uv = coord / (size - 1); color = base_color +
+// scale * vec4(uv, 0, 0)), quantized the way a UNORM imageStore does -- round to
+// nearest, not truncate. This is deterministic per-texel math with no rasterization or
+// sampling involved, so the whole image should match the GPU's output exactly, modulo
+// float rounding at exact half-integer boundaries (see test_dispatch_produces_expected_
+// gradient's allowable_error comment).
+static SDL_Surface *s_build_gradient_reference(int size, const f32 base_color[4],
+                                               const f32 scale[4]) {
+  SDL_Surface *surface = SDL_CreateSurface(size, size, SDL_PIXELFORMAT_RGBA32);
+  REQUIRE(surface != nullptr);
+  REQUIRE(SDL_LockSurface(surface));
+  u8 *pixels = (u8 *)surface->pixels;
+  for (int y = 0; y < size; y++) {
+    for (int x = 0; x < size; x++) {
+      f32 uv_x = (f32)x / (f32)(size - 1);
+      f32 uv_y = (f32)y / (f32)(size - 1);
+      f32 r = base_color[0] + scale[0] * uv_x;
+      f32 g = base_color[1] + scale[1] * uv_y;
+      f32 b = base_color[2] + scale[2] * 0.0f;
+      f32 a = base_color[3] + scale[3] * 0.0f;
+      u8 *px = pixels + (usize)y * (usize)surface->pitch + (usize)x * 4;
+      px[0] = (u8)SDL_lroundf(r * 255.0f);
+      px[1] = (u8)SDL_lroundf(g * 255.0f);
+      px[2] = (u8)SDL_lroundf(b * 255.0f);
+      px[3] = (u8)SDL_lroundf(a * 255.0f);
+    }
+  }
+  SDL_UnlockSurface(surface);
+  return surface;
 }
 
 // Dispatches gradient.comp (reads a read-only storage buffer of {base_color, scale},
 // writes color = base_color + scale * vec4(uv, 0, 0) to a read-write storage texture)
-// and checks the result against hand-computed literal expected values -- proves
+// and checks the whole result against a CPU-computed reference image -- proves
 // buffer-as-storage-input, texture-as-storage-output, and the dispatch itself all
-// work together. Readback reuses bk__gfx_download_texture; no new download plumbing.
+// work together, over every texel rather than three samples. Readback reuses
+// bk__gfx_download_texture; no new download plumbing.
 static void test_dispatch_produces_expected_gradient(void) {
   constexpr int size = 16;
-  constexpr int tolerance = 5;
+  // allowable_error absorbs float-rounding noise at exact half-integer boundaries
+  // (e.g. (15,15)'s R and G channels both land on exactly x.5 -- see the params
+  // comment below): +-1 per RGB channel, sum of squares 1+1+1=3. That noise is
+  // uniform across the image (every texel's math can land on a boundary), which is
+  // exactly what allowable_error is for -- see REQUIRE_SURFACE's doc comment.
+  // max_failing_pixels=0: no rasterization or sampling happens here, so unlike the
+  // other converted tests there is no edge band to budget for -- a pixel exceeding
+  // allowable_error is a real mismatch.
+  constexpr int allowable_error = 3;
+  constexpr int max_failing_pixels = 0;
 
   SDL_GPUDevice *device = s_create_device();
 
@@ -127,15 +160,21 @@ static void test_dispatch_produces_expected_gradient(void) {
   void *pixels_buf = bk__gfx_download_texture(device, cmd, bk__gfx_texture_handle(target), size,
                                               size, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM);
   REQUIRE(pixels_buf != nullptr);
-  const u8 *pixels = (const u8 *)pixels_buf;
 
-  // uv = coord / (size - 1). color = base_color + scale * vec4(uv, 0, 0).
-  // (0,0): uv=(0,0) -> (0.2, 0.3, 0.4, 1.0) -> (51, 77, 102, 255).
-  s_check_pixel(pixels, size, 0, 0, 51, 77, 102, 255, tolerance);
-  // (15,15): uv=(1,1) -> (0.7, 0.7, 0.4, 1.0) -> (178, 178, 102, 255).
-  s_check_pixel(pixels, size, size - 1, size - 1, 178, 178, 102, 255, tolerance);
-  // (15,0): uv=(1,0) -> (0.7, 0.3, 0.4, 1.0) -> (178, 77, 102, 255).
-  s_check_pixel(pixels, size, size - 1, 0, 178, 77, 102, 255, tolerance);
+  // SDLTest_CompareSurfaces only compares RGB (see its source), so the alpha channel
+  // needs its own spot-check -- params.base_color.a=1.0, scale.a=0.0, so every texel's
+  // alpha should be exactly 255 regardless of uv.
+  REQUIRE_PIXEL(pixels_buf, size * 4, 0, 0, 51, 77, 102, 255, 1);
+
+  SDL_Surface *actual =
+      SDL_CreateSurfaceFrom(size, size, SDL_PIXELFORMAT_RGBA32, pixels_buf, size * 4);
+  REQUIRE(actual != nullptr);
+  const f32 base_color[4] = {params[0], params[1], params[2], params[3]};
+  const f32 scale[4] = {params[4], params[5], params[6], params[7]};
+  SDL_Surface *reference = s_build_gradient_reference(size, base_color, scale);
+  REQUIRE_SURFACE(actual, reference, allowable_error, max_failing_pixels);
+  SDL_DestroySurface(actual);
+  SDL_DestroySurface(reference);
 
   bk__free(pixels_buf);
 

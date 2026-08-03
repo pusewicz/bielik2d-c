@@ -69,13 +69,23 @@ int main(int argc, char **argv) {
   REQUIRE(rgba != nullptr);
   SDL_DestroySurface(loaded);
 
-  const u8 *pixels = (const u8 *)rgba->pixels;
-  constexpr int tolerance = 5;
-  usize center = ((usize)(rgba->h / 2) * (usize)rgba->pitch) + (usize)(rgba->w / 2) * 4;
-  REQUIRE(abs((int)pixels[center + 0] - 51) <= tolerance);  // R = 0.2 * 255
-  REQUIRE(abs((int)pixels[center + 1] - 102) <= tolerance); // G = 0.4 * 255
-  REQUIRE(abs((int)pixels[center + 2] - 153) <= tolerance); // B = 0.6 * 255
-  REQUIRE(abs((int)pixels[center + 3] - 255) <= tolerance); // A
+  // SDLTest_CompareSurfaces only compares RGB (see its source), so the alpha channel
+  // needs its own spot-check.
+  REQUIRE_PIXEL(rgba->pixels, rgba->pitch, rgba->w / 2, rgba->h / 2, 51, 102, 153, 255, 1);
+
+  // The whole frame is one bk_gfx_set_clear_color, no geometry drawn -- every pixel
+  // should be R=0.2*255, G=0.4*255, B=0.6*255. allowable_error=3 (+-1 per RGB channel,
+  // sum of squares 1+1+1=3) absorbs float->UNORM8 rounding uniformly, the way it does
+  // in test_gfx_compute.c; max_failing_pixels=0 because a solid clear has no edges to
+  // budget for.
+  constexpr int allowable_error = 3;
+  constexpr int max_failing_pixels = 0;
+  SDL_Surface *reference = SDL_CreateSurface(rgba->w, rgba->h, SDL_PIXELFORMAT_RGBA32);
+  REQUIRE(reference != nullptr);
+  REQUIRE(
+      SDL_FillSurfaceRect(reference, nullptr, SDL_MapSurfaceRGBA(reference, 51, 102, 153, 255)));
+  REQUIRE_SURFACE(rgba, reference, allowable_error, max_failing_pixels);
+  SDL_DestroySurface(reference);
 
   SDL_DestroySurface(rgba);
   SDL_RemovePath(s_capture_path);

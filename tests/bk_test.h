@@ -2,6 +2,7 @@
 #include <bielik/bk_types.h>
 
 #include <SDL3/SDL_test_assert.h>
+#include <SDL3/SDL_test_compare.h>
 
 #include <stdlib.h>
 
@@ -62,4 +63,74 @@
       SDLTest_LogAssertSummary();                                                             \
       exit(1);                                                                                \
     }                                                                                         \
+  } while (0)
+
+/// Checks one RGBA8 pixel in a byte buffer -- either a tightly-packed GPU download
+/// buffer or a locked SDL_Surface's `pixels` -- against expected channel values within
+/// `tolerance` each. `stride_bytes` is the byte length of one row: pass `width * 4` for
+/// a packed download buffer, or `surface->pitch` for an SDL_Surface (which may pad
+/// rows). Replaces five near-identical per-file `s_check_pixel` copies. Most call sites
+/// should prefer REQUIRE_SURFACE for whole-image coverage; this stays useful for a
+/// single spot-check (e.g. an alpha channel REQUIRE_SURFACE ignores) or where no
+/// CPU-constructible reference image exists (SDF antialiasing in test_draw_gpu.c).
+/// Fatal like REQUIRE.
+#define REQUIRE_PIXEL(pixels, stride_bytes, x, y, r, g, b, a, tolerance)      \
+  do {                                                                        \
+    const u8 *bk_test_px_ = (const u8 *)(pixels);                             \
+    usize bk_test_i_ = (usize)(y) * (usize)(stride_bytes) + (usize)(x) * 4;   \
+    REQUIRE(abs((int)bk_test_px_[bk_test_i_ + 0] - (int)(r)) <= (tolerance)); \
+    REQUIRE(abs((int)bk_test_px_[bk_test_i_ + 1] - (int)(g)) <= (tolerance)); \
+    REQUIRE(abs((int)bk_test_px_[bk_test_i_ + 2] - (int)(b)) <= (tolerance)); \
+    REQUIRE(abs((int)bk_test_px_[bk_test_i_ + 3] - (int)(a)) <= (tolerance)); \
+  } while (0)
+
+/// Compares `surface` against `reference` pixel-for-pixel via SDLTest_CompareSurfaces
+/// and fails (fatal, like REQUIRE) unless the result is 0..max_failing_pixels
+/// mismatching pixels inclusive.
+///
+/// The two knobs absorb two different kinds of disagreement, and conflating them
+/// defeats the point of a whole-image compare:
+///   - `allowable_error` (sum of squared per-pixel RGB differences) absorbs
+///     quantization/rounding noise that is uniform across the image -- every pixel is
+///     subject to it, so it must stay tight. A uniform off-by-one write can't be
+///     absorbed by `max_failing_pixels` at all: it would fail on every pixel at once.
+///   - `max_failing_pixels` absorbs spatially localized disagreement -- the 1px-wide
+///     band along a rasterized/antialiased edge where Metal, Vulkan, and D3D12
+///     legitimately pick different pixels. Derive it from the shape's actual edge
+///     length (see call sites for worked examples), not as a blanket fudge factor: a
+///     budget close to the shape's interior area would let the shape vanish or move
+///     and still pass, which defeats the point of converting from probes.
+///
+/// On failure, reports which of SDLTest_CompareSurfaces's three failure modes hit: a
+/// NULL surface (-1), a size mismatch (-2, both sizes reported), or too many differing
+/// pixels (count vs. budget). SDLTest_CompareSurfaces itself already logs a detailed
+/// sample (first differing pixel, both colors) via SDLTest_LogError.
+#define REQUIRE_SURFACE(surface, reference, allowable_error, max_failing_pixels)                 \
+  do {                                                                                           \
+    SDL_Surface *bk_test_surf_ = (surface);                                                      \
+    SDL_Surface *bk_test_ref_ = (reference);                                                     \
+    int bk_test_cmp_ = SDLTest_CompareSurfaces(bk_test_surf_, bk_test_ref_, (allowable_error));  \
+    bool bk_test_pass_;                                                                          \
+    if (bk_test_cmp_ == -1) {                                                                    \
+      bk_test_pass_ = SDLTest_AssertCheck(                                                       \
+          0, "%s:%d: REQUIRE_SURFACE(%s, %s): a surface was NULL (%s=%p, %s=%p)", __FILE__,      \
+          __LINE__, #surface, #reference, #surface, (void *)bk_test_surf_, #reference,           \
+          (void *)bk_test_ref_);                                                                 \
+    } else if (bk_test_cmp_ == -2) {                                                             \
+      bk_test_pass_ = SDLTest_AssertCheck(                                                       \
+          0, "%s:%d: REQUIRE_SURFACE(%s, %s): size mismatch, %dx%d vs expected %dx%d", __FILE__, \
+          __LINE__, #surface, #reference, bk_test_surf_->w, bk_test_surf_->h, bk_test_ref_->w,   \
+          bk_test_ref_->h);                                                                      \
+    } else {                                                                                     \
+      bk_test_pass_ = SDLTest_AssertCheck(                                                       \
+          bk_test_cmp_ <= (max_failing_pixels),                                                  \
+          "%s:%d: REQUIRE_SURFACE(%s, %s): %d pixels exceeded allowable_error=%d, budget "       \
+          "was %d",                                                                              \
+          __FILE__, __LINE__, #surface, #reference, bk_test_cmp_, (allowable_error),             \
+          (max_failing_pixels));                                                                 \
+    }                                                                                            \
+    if (!bk_test_pass_) {                                                                        \
+      SDLTest_LogAssertSummary();                                                                \
+      exit(1);                                                                                   \
+    }                                                                                            \
   } while (0)

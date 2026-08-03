@@ -156,15 +156,6 @@ static void s_free_shader(BK_GfxShaderDesc *desc) {
   SDL_free((void *)desc->msl.code);
 }
 
-static void s_check_pixel(const u8 *pixels, int width, int x, int y, u8 r, u8 g, u8 b, u8 a,
-                          int tolerance) {
-  usize i = ((usize)y * (usize)width + (usize)x) * 4;
-  REQUIRE(abs((int)pixels[i + 0] - (int)r) <= tolerance);
-  REQUIRE(abs((int)pixels[i + 1] - (int)g) <= tolerance);
-  REQUIRE(abs((int)pixels[i + 2] - (int)b) <= tolerance);
-  REQUIRE(abs((int)pixels[i + 3] - (int)a) <= tolerance);
-}
-
 // Checkerboard colors, hardcoded literals independent of the mutation test in
 // test_draw_produces_expected_pixels_from_checkerboard below -- see the design spec
 // §8 and the implementation plan Task 4 for why the assertions must not be re-derived
@@ -176,6 +167,27 @@ enum { GREEN_R = 0, GREEN_G = 255, GREEN_B = 0 };
 enum { BLUE_R = 0, BLUE_G = 0, BLUE_B = 255 };
 
 enum { YELLOW_R = 255, YELLOW_G = 255, YELLOW_B = 0 };
+
+// Builds the reference for the checkerboard draw: a full-viewport quad sampling a 2x2
+// NEAREST texture with no rotation or scaling means each screen quadrant is exactly
+// size/2 pixels of one flat texel color -- NEAREST has no blending at the quadrant
+// boundary the way LINEAR would, and size=64 divides the 2x2 texture evenly (32px per
+// texel), so the boundary falls exactly on the pixel grid with no half-texel
+// ambiguity. Colors are the same hardcoded literals the draw's own assertions use (see
+// the comment above), not re-derived from the uploaded checkerboard array.
+static SDL_Surface *s_build_checkerboard_reference(int size) {
+  SDL_Surface *surface = SDL_CreateSurface(size, size, SDL_PIXELFORMAT_RGBA32);
+  REQUIRE(surface != nullptr);
+  REQUIRE(SDL_FillSurfaceRect(surface, &(SDL_Rect){0, 0, size / 2, size / 2},
+                              SDL_MapSurfaceRGBA(surface, RED_R, RED_G, RED_B, 255)));
+  REQUIRE(SDL_FillSurfaceRect(surface, &(SDL_Rect){size / 2, 0, size / 2, size / 2},
+                              SDL_MapSurfaceRGBA(surface, GREEN_R, GREEN_G, GREEN_B, 255)));
+  REQUIRE(SDL_FillSurfaceRect(surface, &(SDL_Rect){0, size / 2, size / 2, size / 2},
+                              SDL_MapSurfaceRGBA(surface, BLUE_R, BLUE_G, BLUE_B, 255)));
+  REQUIRE(SDL_FillSurfaceRect(surface, &(SDL_Rect){size / 2, size / 2, size / 2, size / 2},
+                              SDL_MapSurfaceRGBA(surface, YELLOW_R, YELLOW_G, YELLOW_B, 255)));
+  return surface;
+}
 
 static void test_draw_produces_expected_pixels_from_checkerboard(void) {
   constexpr int size = 64;
@@ -295,16 +307,25 @@ static void test_draw_produces_expected_pixels_from_checkerboard(void) {
   void *pixels_buf = bk__gfx_download_texture(device, cmd, offscreen, size, size,
                                               SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM);
   REQUIRE(pixels_buf != nullptr);
-  const u8 *pixels = (const u8 *)pixels_buf;
 
-  // Quadrant centers. See the coordinate-system comment on `vertices` above for why
-  // top-left of the downloaded image is texel (0,0), etc. -- this is fully
-  // determined by SDL_GPU's documented convention, not backend-dependent.
-  s_check_pixel(pixels, size, size / 4, size / 4, RED_R, RED_G, RED_B, 255, tolerance);
-  s_check_pixel(pixels, size, 3 * size / 4, size / 4, GREEN_R, GREEN_G, GREEN_B, 255, tolerance);
-  s_check_pixel(pixels, size, size / 4, 3 * size / 4, BLUE_R, BLUE_G, BLUE_B, 255, tolerance);
-  s_check_pixel(pixels, size, 3 * size / 4, 3 * size / 4, YELLOW_R, YELLOW_G, YELLOW_B, 255,
-                tolerance);
+  // SDLTest_CompareSurfaces only compares RGB (see its source), so the alpha channel
+  // needs its own spot-check. See the coordinate-system comment on `vertices` above for
+  // why top-left of the downloaded image is texel (0,0), etc. -- fully determined by
+  // SDL_GPU's documented convention, not backend-dependent.
+  REQUIRE_PIXEL(pixels_buf, size * 4, size / 4, size / 4, RED_R, RED_G, RED_B, 255, tolerance);
+
+  // NEAREST sampling and an exact power-of-two size/texel ratio (see
+  // s_build_checkerboard_reference) mean the quadrant boundaries are exact, not
+  // antialiased -- no edge band to budget for.
+  constexpr int allowable_error = 3;
+  constexpr int max_failing_pixels = 0;
+  SDL_Surface *actual =
+      SDL_CreateSurfaceFrom(size, size, SDL_PIXELFORMAT_RGBA32, pixels_buf, size * 4);
+  REQUIRE(actual != nullptr);
+  SDL_Surface *reference = s_build_checkerboard_reference(size);
+  REQUIRE_SURFACE(actual, reference, allowable_error, max_failing_pixels);
+  SDL_DestroySurface(actual);
+  SDL_DestroySurface(reference);
 
   bk__free(pixels_buf);
 

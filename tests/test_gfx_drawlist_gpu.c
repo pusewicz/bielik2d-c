@@ -165,7 +165,7 @@ static void test_quit(void *state, BK_Result result) {
   s_pipeline = nullptr;
 }
 
-// Runs the app once and asserts the captured frame's center pixel is the expected
+// Runs the app once and asserts the captured frame matches a solid fill of the expected
 // color. Returns false if the capture never appeared (no GPU in this environment),
 // which the caller treats as a skip rather than a failure -- consistent with the other
 // GPU-dependent tests being continue-on-error in CI.
@@ -197,13 +197,26 @@ static bool s_run_and_check(bool second_last, u8 red, u8 green, u8 blue) {
   SDL_Surface *rgba = SDL_ConvertSurface(surface, SDL_PIXELFORMAT_RGBA32);
   SDL_DestroySurface(surface);
   REQUIRE(rgba != nullptr);
+  // Absolute pixel math below assumes the drawable is exactly the window's 64x64
+  // logical size (no HiDPI scaling) -- fail loudly here instead of building a reference
+  // against the wrong size if that assumption ever breaks.
+  REQUIRE(rgba->w == 64 && rgba->h == 64);
 
-  const u8 *pixels = (const u8 *)rgba->pixels;
-  const u8 *center = pixels + ((rgba->h / 2) * rgba->pitch) + (rgba->w / 2) * 4;
-  constexpr int tolerance = 8;
-  REQUIRE(SDL_abs((int)center[0] - (int)red) <= tolerance);
-  REQUIRE(SDL_abs((int)center[1] - (int)green) <= tolerance);
-  REQUIRE(SDL_abs((int)center[2] - (int)blue) <= tolerance);
+  // SDLTest_CompareSurfaces only compares RGB (see its source), so the alpha channel
+  // needs its own spot-check.
+  REQUIRE_PIXEL(rgba->pixels, rgba->pitch, rgba->w / 2, rgba->h / 2, red, green, blue, 255, 8);
+
+  // Both quads are full-target ([-1,1] on both axes, exactly matching the drawable) and
+  // axis-aligned, so whichever is recorded second covers the target completely -- the
+  // expected image is a solid fill, no rasterized edge to budget for.
+  constexpr int allowable_error = 3;
+  constexpr int max_failing_pixels = 0;
+  SDL_Surface *reference = SDL_CreateSurface(rgba->w, rgba->h, SDL_PIXELFORMAT_RGBA32);
+  REQUIRE(reference != nullptr);
+  REQUIRE(SDL_FillSurfaceRect(reference, nullptr,
+                              SDL_MapSurfaceRGBA(reference, red, green, blue, 255)));
+  REQUIRE_SURFACE(rgba, reference, allowable_error, max_failing_pixels);
+  SDL_DestroySurface(reference);
 
   SDL_DestroySurface(rgba);
   SDL_RemovePath(s_capture_path);
@@ -249,22 +262,29 @@ static void test_scissor_clips_the_rendered_frame(void) {
   SDL_Surface *rgba = SDL_ConvertSurface(surface, SDL_PIXELFORMAT_RGBA32);
   SDL_DestroySurface(surface);
   REQUIRE(rgba != nullptr);
+  // Absolute pixel math below (the scissor rect itself is in absolute pixels: {0, 0,
+  // 32, 64}) assumes the drawable is exactly the window's 64x64 logical size.
+  REQUIRE(rgba->w == 64 && rgba->h == 64);
 
-  const u8 *pixels = (const u8 *)rgba->pixels;
-  constexpr int tolerance = 8;
+  // SDLTest_CompareSurfaces only compares RGB (see its source), so the alpha channel
+  // needs its own spot-check, inside the scissored region.
+  REQUIRE_PIXEL(rgba->pixels, rgba->pitch, rgba->w / 4, rgba->h / 2, FIRST_R, FIRST_G, FIRST_B, 255,
+                8);
 
-  // Inside the scissor (left quarter): the quad's color.
-  const u8 *inside = pixels + ((rgba->h / 2) * rgba->pitch) + (rgba->w / 4) * 4;
-  REQUIRE(SDL_abs((int)inside[0] - (int)FIRST_R) <= tolerance);
-  REQUIRE(SDL_abs((int)inside[1] - (int)FIRST_G) <= tolerance);
-  REQUIRE(SDL_abs((int)inside[2] - (int)FIRST_B) <= tolerance);
-
-  // Outside it (right quarter): untouched clear color. Without this half the test
-  // would pass against a scissor that was silently ignored.
-  const u8 *outside = pixels + ((rgba->h / 2) * rgba->pitch) + (rgba->w * 3 / 4) * 4;
-  REQUIRE(outside[0] <= tolerance);
-  REQUIRE(outside[1] <= tolerance);
-  REQUIRE(outside[2] <= tolerance);
+  // The scissor rect ({0, 0, 32, 64}) is a hard pixel-space cutoff at exactly the
+  // canvas's horizontal midpoint, not a rasterized/antialiased edge -- no edge band to
+  // budget for. Expected image: the quad's color in the left half, untouched clear
+  // color in the right half (without the right half, this would pass against a scissor
+  // that was silently ignored).
+  constexpr int allowable_error = 3;
+  constexpr int max_failing_pixels = 0;
+  SDL_Surface *reference = SDL_CreateSurface(rgba->w, rgba->h, SDL_PIXELFORMAT_RGBA32);
+  REQUIRE(reference != nullptr);
+  REQUIRE(SDL_FillSurfaceRect(reference, nullptr, SDL_MapSurfaceRGBA(reference, 0, 0, 0, 255)));
+  REQUIRE(SDL_FillSurfaceRect(reference, &(SDL_Rect){0, 0, rgba->w / 2, rgba->h},
+                              SDL_MapSurfaceRGBA(reference, FIRST_R, FIRST_G, FIRST_B, 255)));
+  REQUIRE_SURFACE(rgba, reference, allowable_error, max_failing_pixels);
+  SDL_DestroySurface(reference);
 
   SDL_DestroySurface(rgba);
   SDL_RemovePath(s_capture_path);
@@ -358,6 +378,29 @@ static void inst_render(void *state, const BK_FrameInfo *frame) {
   bk_gfx_request_capture(s_capture_path);
 }
 
+// Builds the exact reference for the instanced draw. instanced.vert's transform is
+// linear (world = quad.center + corner*quad.half_size; clip = mvp_basis*world +
+// mvp_origin, with mvp = bk_m3x2_ortho(64, 64)), and every quad coordinate here is a
+// multiple of 3 world units, which divides the 64-wide/2-unit-per-pixel ortho evenly --
+// so, unlike the general instancing case, every quad edge lands exactly on the pixel
+// grid with no rounding. Working through the same NDC -> pixel mapping
+// s_build_triangle_reference documents: left quad (center=-21, half_size.x=6) covers
+// world x in [-27,-15] -> pixel x in [5,17); center quad (center=0) -> [26,38); right
+// quad (center=21) -> [47,59). All three share half_size.y=24 -> world y in [-24,24] ->
+// pixel y in [8,56).
+static SDL_Surface *s_build_instanced_reference(int size) {
+  SDL_Surface *surface = SDL_CreateSurface(size, size, SDL_PIXELFORMAT_RGBA32);
+  REQUIRE(surface != nullptr);
+  REQUIRE(SDL_FillSurfaceRect(surface, nullptr, SDL_MapSurfaceRGBA(surface, 0, 0, 0, 255)));
+  REQUIRE(SDL_FillSurfaceRect(surface, &(SDL_Rect){5, 8, 12, 48},
+                              SDL_MapSurfaceRGBA(surface, 255, 0, 0, 255)));
+  REQUIRE(SDL_FillSurfaceRect(surface, &(SDL_Rect){26, 8, 12, 48},
+                              SDL_MapSurfaceRGBA(surface, 0, 255, 0, 255)));
+  REQUIRE(SDL_FillSurfaceRect(surface, &(SDL_Rect){47, 8, 12, 48},
+                              SDL_MapSurfaceRGBA(surface, 0, 0, 255, 255)));
+  return surface;
+}
+
 static void inst_quit(void *state, BK_Result result) {
   (void)state;
   (void)result;
@@ -393,25 +436,23 @@ static void test_instancing_places_each_instance_separately(void) {
   SDL_Surface *rgba = SDL_ConvertSurface(surface, SDL_PIXELFORMAT_RGBA32);
   SDL_DestroySurface(surface);
   REQUIRE(rgba != nullptr);
+  // Absolute pixel math in s_build_instanced_reference assumes the drawable is exactly
+  // the window's 64x64 logical size (it's also the ortho's width/height).
+  REQUIRE(rgba->w == 64 && rgba->h == 64);
 
-  const u8 *pixels = (const u8 *)rgba->pixels;
-  const int mid_row = rgba->h / 2;
-  constexpr int tolerance = 12;
+  // SDLTest_CompareSurfaces only compares RGB (see its source), so the alpha channel
+  // needs its own spot-check, inside the center (green) instance.
+  REQUIRE_PIXEL(rgba->pixels, rgba->pitch, 32, rgba->h / 2, 0, 255, 0, 255, 12);
 
-  // World x maps to pixels via the 64-wide ortho: -21 -> ~11px, 0 -> 32px, +21 -> ~53px.
-  const u8 *left = pixels + mid_row * rgba->pitch + 11 * 4;
-  const u8 *center = pixels + mid_row * rgba->pitch + 32 * 4;
-  const u8 *right = pixels + mid_row * rgba->pitch + 53 * 4;
-  REQUIRE(left[0] > 255 - tolerance && left[1] < tolerance);     // red instance
-  REQUIRE(center[1] > 255 - tolerance && center[0] < tolerance); // green instance
-  REQUIRE(right[2] > 255 - tolerance && right[0] < tolerance);   // blue instance
-
-  // The gaps stay background. Without these, three quads stacked at one spot -- a
-  // shader ignoring gl_InstanceIndex -- would still pass the three checks above.
-  const u8 *gap_left = pixels + mid_row * rgba->pitch + 22 * 4;
-  const u8 *gap_right = pixels + mid_row * rgba->pitch + 43 * 4;
-  REQUIRE(gap_left[0] <= tolerance && gap_left[1] <= tolerance && gap_left[2] <= tolerance);
-  REQUIRE(gap_right[0] <= tolerance && gap_right[1] <= tolerance && gap_right[2] <= tolerance);
+  // Every quad edge lands exactly on the pixel grid (see s_build_instanced_reference),
+  // so there is no rasterized edge to budget for -- a shader that ignored
+  // gl_InstanceIndex and stacked all three quads at one spot, or dropped the storage
+  // buffer read entirely, fails this over most of the 3*12*48=1728px the quads cover.
+  constexpr int allowable_error = 3;
+  constexpr int max_failing_pixels = 0;
+  SDL_Surface *reference = s_build_instanced_reference(rgba->w);
+  REQUIRE_SURFACE(rgba, reference, allowable_error, max_failing_pixels);
+  SDL_DestroySurface(reference);
 
   SDL_DestroySurface(rgba);
   SDL_RemovePath(s_capture_path);

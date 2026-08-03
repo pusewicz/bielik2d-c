@@ -143,13 +143,47 @@ static void test_destroy_null_is_noop(void) {
   bk_gfx_pipeline_destroy(nullptr);
 }
 
-static void s_check_pixel(const u8 *pixels, int width, int x, int y, u8 r, u8 g, u8 b, u8 a,
-                          int tolerance) {
-  usize i = ((usize)y * (usize)width + (usize)x) * 4;
-  REQUIRE(abs((int)pixels[i + 0] - (int)r) <= tolerance);
-  REQUIRE(abs((int)pixels[i + 1] - (int)g) <= tolerance);
-  REQUIRE(abs((int)pixels[i + 2] - (int)b) <= tolerance);
-  REQUIRE(abs((int)pixels[i + 3] - (int)a) <= tolerance);
+// Standard point-in-triangle test via edge functions -- winding-independent (checks all
+// three edge signs agree, rather than assuming a fixed CW/CCW order), matching what a
+// rasterizer effectively computes at each sample point.
+static bool s_point_in_triangle(f32 px, f32 py, f32 ax, f32 ay, f32 bx, f32 by, f32 cx, f32 cy) {
+  f32 d1 = (bx - ax) * (py - ay) - (by - ay) * (px - ax);
+  f32 d2 = (cx - bx) * (py - by) - (cy - by) * (px - bx);
+  f32 d3 = (ax - cx) * (py - cy) - (ay - cy) * (px - cx);
+  bool has_neg = (d1 < 0) || (d2 < 0) || (d3 < 0);
+  bool has_pos = (d1 > 0) || (d2 > 0) || (d3 > 0);
+  return !(has_neg && has_pos);
+}
+
+// Builds the exact rasterized reference for triangle.vert's hardcoded NDC triangle
+// ((0,0.5), (0.5,-0.5), (-0.5,-0.5)), sampling each pixel at its center the way a
+// rasterizer does. NDC -> pixel uses SDL_gpu.h's documented, backend-independent
+// mapping (SDL_GPU normalizes Vulkan's opposite-Y-NDC convention away -- see
+// "Coordinate System" in SDL_gpu.h): NDC (-1,-1) is the viewport's bottom-left; pixel
+// (0,0) is the viewport's top-left with +Y down.
+static SDL_Surface *s_build_triangle_reference(int size) {
+  f32 fsize = (f32)size;
+  f32 ax = (0.0f + 1.0f) * 0.5f * fsize, ay = (1.0f - 0.5f) * 0.5f * fsize;
+  f32 bx = (0.5f + 1.0f) * 0.5f * fsize, by = (1.0f - -0.5f) * 0.5f * fsize;
+  f32 cx = (-0.5f + 1.0f) * 0.5f * fsize, cy = (1.0f - -0.5f) * 0.5f * fsize;
+
+  SDL_Surface *surface = SDL_CreateSurface(size, size, SDL_PIXELFORMAT_RGBA32);
+  REQUIRE(surface != nullptr);
+  REQUIRE(SDL_LockSurface(surface));
+  u8 *pixels = (u8 *)surface->pixels;
+  for (int y = 0; y < size; y++) {
+    for (int x = 0; x < size; x++) {
+      f32 sx = (f32)x + 0.5f, sy = (f32)y + 0.5f;
+      bool inside = s_point_in_triangle(sx, sy, ax, ay, bx, by, cx, cy);
+      u8 *px = pixels + (usize)y * (usize)surface->pitch + (usize)x * 4;
+      px[0] = inside ? 255 : 0;
+      px[1] = 0;
+      px[2] = 0;
+      px[3] = 255;
+    }
+  }
+  SDL_UnlockSurface(surface);
+  return surface;
 }
 
 static void test_draw_produces_expected_pixels(void) {
@@ -208,17 +242,34 @@ static void test_draw_produces_expected_pixels(void) {
   void *pixels_buf = bk__gfx_download_texture(device, cmd, offscreen, size, size,
                                               SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM);
   REQUIRE(pixels_buf != nullptr);
-  const u8 *pixels = (const u8 *)pixels_buf;
 
-  // Center: well inside the triangle (NDC bbox [-0.5,0.5] on both axes covers the
-  // middle half of the viewport) -> solid red.
-  s_check_pixel(pixels, size, size / 2, size / 2, 255, 0, 0, 255, tolerance);
-  // Corners, inset by 1px: outside the triangle's bounding box under any backend's
-  // NDC-to-pixel axis convention -> clear color (black).
-  s_check_pixel(pixels, size, 1, 1, 0, 0, 0, 255, tolerance);
-  s_check_pixel(pixels, size, size - 2, 1, 0, 0, 0, 255, tolerance);
-  s_check_pixel(pixels, size, 1, size - 2, 0, 0, 0, 255, tolerance);
-  s_check_pixel(pixels, size, size - 2, size - 2, 0, 0, 0, 255, tolerance);
+  // SDLTest_CompareSurfaces only compares RGB (see its source), so the alpha channel
+  // needs its own spot-check.
+  REQUIRE_PIXEL(pixels_buf, size * 4, size / 2, size / 2, 255, 0, 0, 255, tolerance);
+
+  // The triangle's three edges are the only unpredictable part -- Metal, Vulkan, and
+  // D3D12 can legitimately pick a different pixel right on a rasterized edge.
+  // max_failing_pixels is derived from the edge geometry, not guessed: the triangle in
+  // pixel space is apex (32,16), base corners (16,48) and (48,48) (worked out from
+  // triangle.vert's NDC coords via the same mapping s_build_triangle_reference uses) --
+  // a 32px base plus two ~35.8px slanted sides, about 104px of edge in total. A 1px-wide
+  // disagreement band along that perimeter is at most ~104 failing pixels; 100 stays
+  // under that while remaining far below the triangle's interior area of 512px
+  // (0.5*32*32), so a deleted, shrunk, or recolored triangle still fails by roughly 5x
+  // the budget rather than slipping through it. Measured on this machine's Metal
+  // backend: 0 pixels actually differ (this reference happens to match Metal's
+  // rasterization exactly for this triangle) -- the 100px budget is headroom for
+  // Vulkan/D3D12 backends this dev environment can't measure, not a fudge for an
+  // observed failure.
+  constexpr int allowable_error = 3;
+  constexpr int max_failing_pixels = 100;
+  SDL_Surface *actual =
+      SDL_CreateSurfaceFrom(size, size, SDL_PIXELFORMAT_RGBA32, pixels_buf, size * 4);
+  REQUIRE(actual != nullptr);
+  SDL_Surface *reference = s_build_triangle_reference(size);
+  REQUIRE_SURFACE(actual, reference, allowable_error, max_failing_pixels);
+  SDL_DestroySurface(actual);
+  SDL_DestroySurface(reference);
 
   bk__free(pixels_buf);
 
