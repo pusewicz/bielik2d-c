@@ -839,3 +839,13 @@ other six tests' `max_failing_pixels` budgets exist to absorb — except SDF ant
 has no equivalent hard edge to bound a budget around. §8's probe-pixel argument for
 `bk_draw` therefore still holds; only the rest of the GPU test suite's convention changed
 around it.
+
+## `BK_Allocator` does not build on `SDL_SetMemoryFunctions` (CLAUDE.md Process, task-1-brief.md)
+
+SDL already ships a pluggable-allocator facility, `SDL_SetMemoryFunctions`/
+`SDL_GetMemoryFunctions`, but its function types
+(`void *(*)(size_t)`, `void (*)(void *)`, etc.) carry no `ctx` pointer and pass no size to
+`free`/`realloc`. That is enough for a single process-wide malloc swap but not for
+`BK_Allocator`'s job: an arena or pool per subsystem needs `ctx` to reach its own state, and
+a size-aware `free_fn`/`realloc_fn` is what lets such an allocator avoid per-allocation
+headers. `BK_Allocator` keeps both instead and does not route through SDL's functions.
