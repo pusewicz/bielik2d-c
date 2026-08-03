@@ -1,8 +1,8 @@
 build/
 build-*/
 .cache/
+.worktrees/
 compile_commands.json
-
 # SDLTest_CompareSurfaces dumps the actual and reference images next to whatever the
 # current working directory is whenever a comparison fails, and CLAUDE.md documents
 # running test binaries straight from the repo root. Without this, one failing GPU test

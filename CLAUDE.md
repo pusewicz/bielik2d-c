@@ -17,11 +17,22 @@ layout) before assuming a command exists beyond what's listed here.
 
 Phase 2 (gfx core) is complete, landed as three sub-projects, each with its own spec
 (`docs/superpowers/specs/`) and implementation plan (`docs/superpowers/plans/`) —
-`PLAN.md` only covers Phase 0/1. Phase 3 (draw2d) ships as six sub-projects, P3.1–P3.6
-(see `docs/superpowers/specs/2026-08-02-bk-draw-design.md` §0 for the breakdown); P3.1
-(`bk_math`), P3.2 (gfx substrate), and P3.3 (`bk_draw`, the unified SDF renderer) have
-landed, each with its own spec and plan. P3.4 (runtime atlas cache, `BK_Sprite`) is next;
-see `PLAN.md` §7 for Phase 3's overall scope.
+`PLAN.md` only covers Phase 0/1. Phase 3 (draw2d) ships as **seven** sub-projects, P3.1–P3.7
+— renumbered from the original six when P3.4 was split, so
+`docs/superpowers/specs/2026-08-02-bk-draw-design.md` §0's table is out of date and
+`docs/superpowers/specs/2026-08-03-bk-atlas-design.md` §0 has the current one. Landed, each
+with its own spec and plan: P3.1 (`bk_math`), P3.2 (gfx substrate), P3.3 (`bk_draw`, the
+unified SDF renderer), P3.4 (`bk_atlas`, the runtime residency cache). Remaining: **P3.5**
+(`BK_Sprite`, animation, `bk_draw_sprite`, 9-slice) next, then P3.6 (wide shapes — polyline,
+polygon, bezier, CSG, custom SDFs) and P3.7 (tiled compute path). See `PLAN.md` §7 for
+Phase 3's overall scope.
+
+`bk_atlas` has no caller yet, by design — it is internal (`src/internal/bk_atlas_internal.h`,
+`bk__atlas_*`), and P3.5 is what wires it up. Three things P3.5 owes it, all stated in its
+spec rather than enforceable by the module: call `bk__atlas_tick` once per frame, call
+`bk__atlas_defrag` every N flushes (without it nothing is ever packed and the cache is pure
+indirection), and restore paint order — batching by texture necessarily reorders entries, so
+feeding `submit_batch` straight into `bk_draw` composites overlapping sprites wrongly.
 
 Build: `cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DBK_WERROR=ON && cmake --build build`.
 Test: `ctest --test-dir build --output-on-failure` (or run a single test

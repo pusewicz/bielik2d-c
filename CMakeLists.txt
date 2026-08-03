@@ -33,7 +33,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(SDL3)
 
-add_library(bielik STATIC src/bk_app.c src/bk_draw.c src/bk_gfx.c src/bk_gfx_buffer.c src/bk_gfx_canvas.c src/bk_gfx_pipeline.c src/bk_gfx_texture.c src/bk_task.c src/bk_time.c)
+add_library(bielik STATIC src/bk_app.c src/bk_atlas.c src/bk_draw.c src/bk_gfx.c src/bk_gfx_buffer.c src/bk_gfx_canvas.c src/bk_gfx_pipeline.c src/bk_gfx_texture.c src/bk_task.c src/bk_time.c)
 add_library(Bielik2D::bielik ALIAS bielik)
 
 target_include_directories(bielik PUBLIC include)
