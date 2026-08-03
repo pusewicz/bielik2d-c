@@ -2,3 +2,9 @@ build/
 build-*/
 .cache/
 compile_commands.json
+
+# SDLTest_CompareSurfaces dumps the actual and reference images next to whatever the
+# current working directory is whenever a comparison fails, and CLAUDE.md documents
+# running test binaries straight from the repo root. Without this, one failing GPU test
+# leaves untracked BMPs at the root that a broad `git add` would happily commit.
+CompareSurfaces*.bmp
