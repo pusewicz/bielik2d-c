@@ -112,9 +112,18 @@ infrastructure into a bounded, checkable deliverable.
   it. Implementing against a fixed header is the strong case for an LLM; incrementally
   designing an API while implementing it is the weak one.
 - One module per session, against a written spec.
-- Every module gets a test (pico_unit-style for math/VFS/strings; golden-image tests for
-  the renderer — render to texture, hash, compare) and an example app as living
-  documentation.
+- Every module gets a test (pico_unit-style for math/VFS/strings; for the renderer,
+  render to texture and compare the readback) and an example app as living
+  documentation. For renderer tests: where the expected image is constructible
+  (deterministic per-texel math, flat-colored/axis-aligned geometry, exact-integer
+  pixel boundaries), build it as an in-memory `SDL_Surface` and compare the whole
+  readback with `REQUIRE_SURFACE` (`tests/bk_test.h`, wraps SDL_test's
+  `SDLTest_CompareSurfaces`) — no committed golden-image files. Where it isn't
+  (`bk_draw`'s SDF antialiasing doesn't hash-match across Metal/Vulkan/D3D12 and can't
+  be cheaply reproduced on the CPU without reimplementing the fragment shader), fall
+  back to `REQUIRE_PIXEL` spot-checks. See `DEVIATIONS.md` for why `test_draw_gpu.c`
+  specifically keeps probes after the rest of the GPU test suite moved to whole-image
+  compare.
 - CI should run on Linux + Windows-clang from day one; add an Emscripten leg once the
   webgpu.h web backend (see the locked-in web/graphics backend decision above) lands.
 

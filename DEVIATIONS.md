@@ -794,3 +794,29 @@ One behaviour change rides along: the six `BK_ASSERT(false)` guards at the end o
 exhaustive switches now abort in Release instead of falling through to their safe default
 return. That is intended — a bad enum reaching them is a programmer error — and the
 fallback return survives as the level-0 path.
+
+## test_draw_gpu.c keeps pixel probes after the rest of the GPU tests moved to whole-image compare (CLAUDE.md Development discipline, docs/superpowers/specs/2026-08-02-bk-draw-design.md §8)
+
+`CLAUDE.md`'s testing guidance previously named "render to texture, hash, compare" as
+the renderer-test convention, which `docs/superpowers/specs/2026-08-02-bk-draw-design.md`
+§8 already overrode for `bk_draw`, arguing SDF antialiasing won't hash-match across
+Metal/Vulkan/D3D12. Six other GPU test files (`test_gfx_compute.c`, `test_gfx_capture.c`,
+`test_gfx_canvas.c`, `test_gfx_pipeline.c`, `test_gfx_texture.c`,
+`test_gfx_drawlist_gpu.c`) drew things whose expected image could be worked out exactly
+from shader math or flat, axis-aligned, integer-pixel-boundary geometry, so those moved
+from a handful of `REQUIRE_PIXEL` spot-checks to a whole-image `REQUIRE_SURFACE`
+comparison (`tests/bk_test.h`, wrapping SDL_test's `SDLTest_CompareSurfaces`) against a
+reference built procedurally in memory — never a committed golden-image file, since a
+literal pixel dump would not survive a rasterizer-rule difference between backends
+either.
+
+`test_draw_gpu.c` was deliberately left out of that conversion and still uses
+`REQUIRE_PIXEL`. Its output is `bk_draw`'s SDF-rendered, antialiased shapes: reproducing
+the expected image would mean reimplementing the SDF fragment shader's distance-to-alpha
+math on the CPU, which would make the test tautological (it would really be asserting the
+CPU port and the GPU shader agree, not that the shape is correct), and a committed
+reference bitmap would not survive the same cross-backend rasterization differences the
+other six tests' `max_failing_pixels` budgets exist to absorb — except SDF antialiasing
+has no equivalent hard edge to bound a budget around. §8's probe-pixel argument for
+`bk_draw` therefore still holds; only the rest of the GPU test suite's convention changed
+around it.

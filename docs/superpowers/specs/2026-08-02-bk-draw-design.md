@@ -529,10 +529,12 @@ Debug leg. Asserting is still the right behaviour: a `push`/`pop` imbalance is a
 bug, and `CLAUDE.md` forbids silent failure. The contract is stated in the header (§2) and
 left unexercised rather than softened into something testable.
 
-**`tests/test_draw_gpu.c`** — real device, allow-failure group. Probes specific pixels the
-way `test_gfx_drawlist_gpu.c` does rather than hashing whole frames: SDF antialiasing will
-not hash-match across Metal and Vulkan, so `CLAUDE.md`'s "render to texture, hash, compare"
-is not achievable for this module and the established probe-pixel convention applies. Per
+**`tests/test_draw_gpu.c`** — real device, allow-failure group. Probes specific pixels
+rather than comparing whole frames against a reference image: SDF antialiasing will not
+match pixel-for-pixel across Metal and Vulkan, so the whole-image `REQUIRE_SURFACE`
+comparison the rest of the GPU test suite uses (including `test_gfx_drawlist_gpu.c`,
+which has since moved off pixel probes — see `DEVIATIONS.md`) is not achievable for this
+module, and the probe-pixel convention applies instead. Per
 shape: an interior pixel carries the fill color, a pixel well outside is clear, and for a
 stroked variant the center is clear. Plus one layer-ordering case where a low layer is
 provably overdrawn by a high one recorded before it, and
