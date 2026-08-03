@@ -168,8 +168,8 @@ typedef struct LogCapture {
   i32 count;
 } LogCapture;
 
-static void s_capture_log(void *userdata, int category, SDL_LogPriority priority,
-                          const char *message) {
+static void SDLCALL s_capture_log(void *userdata, int category, SDL_LogPriority priority,
+                                  const char *message) {
   (void)category;
   (void)priority;
   LogCapture *capture = userdata;
@@ -426,6 +426,38 @@ static void test_destroy_releases_every_texture(void) {
 
   // Destroying null is a documented no-op, not a crash.
   bk__atlas_destroy(nullptr);
+
+  s_free_gpu(&gpu);
+}
+
+// The sibling above only ever holds lonely textures. Atlassed records are skipped by
+// bk__atlas_destroy's `!atlassed` guard on the record loop -- on purpose, since an atlassed
+// record shares its handle with others and destroying it once per record would double-free
+// -- but that guard only stays correct if the separate atlas_textures loop actually runs.
+// Delete that loop and this is the only test that notices: fake_destroy_texture's
+// REQUIRE(tex->alive) fires on a double destroy, never on a missing one, so a leaked atlas
+// handle is silent everywhere else.
+static void test_destroy_releases_atlas_textures(void) {
+  FakeGpu gpu = {0};
+  BK_AtlasDesc desc = s_make_desc(&gpu);
+  desc.atlas_size = 256;
+  desc.defrag_lonely_threshold = 2;
+  BK_Atlas *atlas = bk__atlas_create(&desc);
+  REQUIRE(atlas != nullptr);
+
+  constexpr i32 IMAGE_COUNT = 3;
+  for (i32 i = 0; i < IMAGE_COUNT; i++) {
+    s_push(atlas, (u64)(i + 1), 8, 8, (u64)(i + 1));
+  }
+  REQUIRE(bk__atlas_flush(atlas));
+  REQUIRE(bk__atlas_defrag(atlas));
+  REQUIRE(gpu.create_calls == IMAGE_COUNT + 1); // the three lonely textures, then one atlas
+
+  bk__atlas_destroy(atlas);
+  REQUIRE(gpu.destroy_calls == IMAGE_COUNT + 1); // the three lonely ones, plus the atlas
+  for (i32 i = 0; i < gpu.texture_count; i++) {
+    REQUIRE(!gpu.textures[i].alive);
+  }
 
   s_free_gpu(&gpu);
 }
@@ -824,6 +856,11 @@ static void test_an_image_looks_the_same_lonely_and_atlassed(void) {
 
   // Deliberately non-square and mismatched, so a transposed or y-flipped blit cannot
   // coincide with a correct one. This is the guard from spec section 3.3.
+  //
+  // Heights 5/9/14 sort to 14/9/5 by the pack's tallest-first order, and all three still fit
+  // on one shelf, so every placement here lands at min_y == 0 -- a bug that always reported
+  // min_y as 0 would pass this test. test_images_that_do_not_fit_stay_pending is what
+  // actually exercises min_y != 0; do not remove it under the assumption this test covers it.
   s_push(atlas, 11, 12, 5, 1);
   s_push(atlas, 22, 7, 9, 2);
   s_push(atlas, 33, 3, 14, 3);
@@ -1120,6 +1157,10 @@ static void test_a_mostly_decayed_atlas_is_dissolved_and_repacked(void) {
     REQUIRE(bk__atlas_flush(atlas));
   }
 
+  // This call dissolves the atlas but, despite the test's name, does not actually repack:
+  // the three survivors sit exactly at defrag_lonely_threshold (3 <= 3), so the pack pass
+  // returns 0 without placing them. test_dissolved_survivors_repack_within_the_same_defrag
+  // is the one that exercises an in-call repack; this test carries the dissolve half only.
   REQUIRE(bk__atlas_defrag(atlas));
 
   REQUIRE(!s_find_texture(&gpu, first_atlas)->alive); // the old atlas is gone
@@ -1182,6 +1223,63 @@ static void test_a_lightly_decayed_atlas_is_left_alone(void) {
   REQUIRE(entry.min_x == before.min_x && entry.min_y == before.min_y); // not repacked
   // Even the decayed ones are still there: nothing evicts them until the atlas goes.
   REQUIRE(bk__atlas_fetch(atlas, 5, &entry));
+
+  bk__atlas_destroy(atlas);
+  s_free_gpu(&gpu);
+}
+
+// Every other decay/dissolve test above holds at most one live atlas, which makes
+// bk__atlas_defrag's dissolve walk over atlas_textures a self-assignment every time it
+// swap-removes: there is only ever one slot. That leaves its backwards direction
+// undiscriminated -- a forward walk would pass every test above, because dissolving the
+// first of two atlases would swap the second into its slot and then skip past it.
+//
+// atlas_size 64 with eight 32x32 images forces two atlases from one defrag call (four fit
+// per atlas, and a threshold of one keeps the pack loop going for a second). Decaying both
+// fully, rather than just one, is what makes forward and backward walks disagree: if only
+// one atlas decayed, either direction would reach it eventually.
+static void test_defrag_dissolves_every_fully_decayed_atlas(void) {
+  FakeGpu gpu = {0};
+  BK_AtlasDesc desc = s_make_desc(&gpu);
+  desc.atlas_size = 64;
+  desc.ticks_until_decay = 3;
+  desc.defrag_lonely_threshold = 1;
+  BK_Atlas *atlas = bk__atlas_create(&desc);
+  REQUIRE(atlas != nullptr);
+
+  constexpr i32 IMAGE_COUNT = 8;
+  for (i32 i = 0; i < IMAGE_COUNT; i++) {
+    s_push(atlas, (u64)(i + 1), 32, 32, (u64)(i + 1));
+  }
+  REQUIRE(bk__atlas_flush(atlas));
+  REQUIRE(gpu.create_calls == IMAGE_COUNT);
+
+  REQUIRE(bk__atlas_defrag(atlas));
+  REQUIRE(gpu.create_calls == IMAGE_COUNT + 2); // two atlases, four images each
+
+  BK_AtlasEntry entry = {0};
+  REQUIRE(bk__atlas_fetch(atlas, 1, &entry));
+  u64 atlas_a = entry.texture_id;
+  u64 atlas_b = 0;
+  for (u64 image_id = 2; image_id <= IMAGE_COUNT; image_id++) {
+    REQUIRE(bk__atlas_fetch(atlas, image_id, &entry));
+    if (entry.texture_id != atlas_a) {
+      atlas_b = entry.texture_id;
+      break;
+    }
+  }
+  REQUIRE(atlas_b != 0);
+  REQUIRE(atlas_b != atlas_a);
+
+  // Stop drawing all eight, and tick past decay so both atlases are fully decayed.
+  for (i32 i = 0; i < 5; i++) {
+    bk__atlas_tick(atlas);
+  }
+
+  REQUIRE(bk__atlas_defrag(atlas));
+
+  REQUIRE(!s_find_texture(&gpu, atlas_a)->alive);
+  REQUIRE(!s_find_texture(&gpu, atlas_b)->alive);
 
   bk__atlas_destroy(atlas);
   s_free_gpu(&gpu);
@@ -1285,6 +1383,7 @@ int main(void) {
   test_flush_drains_the_push_buffer();
   test_many_images_survive_index_growth();
   test_destroy_releases_every_texture();
+  test_destroy_releases_atlas_textures();
   test_unavailable_image_is_dropped_and_the_frame_continues();
   test_failed_texture_creation_behaves_like_a_missing_image();
   test_a_dropped_image_is_retried_not_remembered();
@@ -1307,6 +1406,7 @@ int main(void) {
   test_defrag_evicts_what_stopped_being_drawn();
   test_a_mostly_decayed_atlas_is_dissolved_and_repacked();
   test_a_lightly_decayed_atlas_is_left_alone();
+  test_defrag_dissolves_every_fully_decayed_atlas();
   test_invalidating_an_atlassed_image_dissolves_its_atlas();
   test_dissolved_survivors_repack_within_the_same_defrag();
   printf("test_atlas: OK\n");
