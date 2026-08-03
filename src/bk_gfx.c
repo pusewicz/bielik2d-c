@@ -202,6 +202,13 @@ SDL_GPUTextureFormat bk__gfx_pending_target_depth_format(void) {
                                    : SDL_GPU_TEXTUREFORMAT_INVALID;
 }
 
+SDL_GPUTextureFormat bk__gfx_pending_target_color_format(void) {
+  if (s_pending_canvas != nullptr) {
+    return bk__gfx_texture_format(bk_gfx_canvas_texture(s_pending_canvas));
+  }
+  return SDL_GetGPUSwapchainTextureFormat(bk_gpu(), bk_window());
+}
+
 static BK_GfxTexture *s_swapchain_depth_texture = nullptr;
 static i32 s_swapchain_depth_w = 0;
 static i32 s_swapchain_depth_h = 0;

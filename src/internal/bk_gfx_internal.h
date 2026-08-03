@@ -90,11 +90,25 @@ BK_GfxCanvas *bk__gfx_get_pending_canvas(void);
 /// with: a pending canvas's own depth format (bk__gfx_canvas_depth_format) if one is
 /// bound, else bk_gfx_depth_stencil_format(bk_gpu()) if the framework-owned swapchain
 /// depth texture is enabled (bk__gfx_configure_swapchain_depth), else
-/// SDL_GPU_TEXTUREFORMAT_INVALID. Framework-internal; used by bk_draw to pick which of
-/// its two pipelines to bind before flush attaches the render pass this frame actually
-/// targets -- bk__gfx_canvas_depth_format alone (what the design spec names) BK_ASSERTs
-/// on a nullptr canvas, so it cannot answer the no-canvas case by itself.
+/// SDL_GPU_TEXTUREFORMAT_INVALID. Framework-internal; used by bk_draw to pick which
+/// pipeline in its (colour, depth)-keyed table to bind before flush attaches the
+/// render pass this frame actually targets -- bk__gfx_canvas_depth_format alone (what
+/// the design spec names) BK_ASSERTs on a nullptr canvas, so it cannot answer the
+/// no-canvas case by itself.
+///
+/// Reads pending per-frame state (s_pending_canvas) that bk__gfx_flush clears at its
+/// top, so this is only valid to call before flush runs -- i.e. from bk_draw's
+/// collate, not from inside flush itself, which computes its own local instead of
+/// calling this (deliberate duplication, not something to unify).
 SDL_GPUTextureFormat bk__gfx_pending_target_depth_format(void);
+
+/// Colour counterpart of bk__gfx_pending_target_depth_format: the colour format the
+/// next bk__gfx_flush will attach its render pass with -- a pending canvas's own
+/// colour texture format if one is bound, else the swapchain's format. Framework-
+/// internal; used by bk_draw to pick which pipeline in its (colour, depth)-keyed
+/// table to bind. Same pending-state caveat as bk__gfx_pending_target_depth_format:
+/// only valid to call before flush runs.
+SDL_GPUTextureFormat bk__gfx_pending_target_color_format(void);
 
 /// Enables or disables the framework-owned swapchain depth-stencil texture (mirrors
 /// BK_AppDesc.window.depth_stencil). Called once by bk__boot after the GPU device is
