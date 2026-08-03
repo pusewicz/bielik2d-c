@@ -12,6 +12,7 @@ struct BK_GfxPipeline {
   SDL_GPUDevice *device;
   SDL_GPUGraphicsPipeline *handle;
   SDL_GPUTextureFormat depth_stencil_format;
+  SDL_GPUTextureFormat color_target_format;
 };
 
 // Picks the variant matching the device's supported shader formats, trying
@@ -260,6 +261,7 @@ BK_GfxPipeline *bk_gfx_pipeline_create(SDL_GPUDevice *device, const BK_GfxPipeli
   pipeline->device = device;
   pipeline->handle = handle;
   pipeline->depth_stencil_format = desc->depth_stencil_format;
+  pipeline->color_target_format = desc->color_target_format;
   return pipeline;
 }
 
@@ -279,6 +281,11 @@ SDL_GPUGraphicsPipeline *bk__gfx_pipeline_handle(const BK_GfxPipeline *pipeline)
 SDL_GPUTextureFormat bk__gfx_pipeline_depth_format(const BK_GfxPipeline *pipeline) {
   BK_ASSERT(pipeline != nullptr);
   return pipeline->depth_stencil_format;
+}
+
+SDL_GPUTextureFormat bk__gfx_pipeline_color_format(const BK_GfxPipeline *pipeline) {
+  BK_ASSERT(pipeline != nullptr);
+  return pipeline->color_target_format;
 }
 
 struct BK_GfxComputePipeline {

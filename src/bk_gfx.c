@@ -303,6 +303,13 @@ void bk__gfx_flush(void) {
   Uint32 target_h = swap_h;
   SDL_GPUTexture *depth_target_texture = nullptr;
   SDL_GPUTextureFormat depth_target_format = SDL_GPU_TEXTUREFORMAT_INVALID;
+  // The canvas branch below reads the real attachment's format straight off the
+  // texture via bk__gfx_texture_format. The swapchain branch can't do that: an
+  // acquired SDL_GPUTexture* has no format accessor of its own, so this has to
+  // re-query SDL_GetGPUSwapchainTextureFormat -- the same query the capture path
+  // further down in this function already relies on for the same reason.
+  SDL_GPUTextureFormat color_target_format =
+      SDL_GetGPUSwapchainTextureFormat(bk_gpu(), bk_window());
   if (pending_canvas != nullptr) {
     color_target_texture = bk__gfx_texture_handle(bk_gfx_canvas_texture(pending_canvas));
     i32 canvas_w = 0, canvas_h = 0;
@@ -311,6 +318,7 @@ void bk__gfx_flush(void) {
     target_h = (Uint32)canvas_h;
     depth_target_texture = bk__gfx_canvas_depth_handle(pending_canvas);
     depth_target_format = bk__gfx_canvas_depth_format(pending_canvas);
+    color_target_format = bk__gfx_texture_format(bk_gfx_canvas_texture(pending_canvas));
   } else if (s_swapchain_depth_enabled) {
     if (s_swapchain_depth_texture == nullptr || s_swapchain_depth_w != (i32)swap_w ||
         s_swapchain_depth_h != (i32)swap_h) {
@@ -367,6 +375,7 @@ void bk__gfx_flush(void) {
       // depth-attachment/pipeline mismatch here instead of as SDL_GPU's opaque
       // "pipeline incompatible with render pass" validation failure.
       BK_ASSERT(bk__gfx_pipeline_depth_format(draw->pipeline) == depth_target_format);
+      BK_ASSERT(bk__gfx_pipeline_color_format(draw->pipeline) == color_target_format);
       SDL_BindGPUGraphicsPipeline(pass, bk__gfx_pipeline_handle(draw->pipeline));
       bound_pipeline = draw->pipeline;
     }
