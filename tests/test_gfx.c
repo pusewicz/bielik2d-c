@@ -3,6 +3,8 @@
 
 #include <bielik/bk_gfx.h>
 
+#include <stdio.h>
+
 static void test_default_clear_color(void) {
   BK_Color color = bk__gfx_get_clear_color();
   REQUIRE_NEAR(color.r, 0.1f, 1e-6);

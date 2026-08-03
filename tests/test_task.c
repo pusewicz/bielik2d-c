@@ -3,6 +3,8 @@
 
 #include <bielik/bk_task.h>
 
+#include <stdio.h>
+
 typedef struct RangeSpy {
   int buf[64];
   int call_count;
