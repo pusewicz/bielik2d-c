@@ -20,7 +20,10 @@ include(FetchContent)
 
 set(SDL_SHARED OFF CACHE BOOL "" FORCE)
 set(SDL_STATIC ON CACHE BOOL "" FORCE)
-set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+# SDL3_test supplies the assertion helpers tests/bk_test.h is built on. Its sources
+# ship in the same archive SDL3 does, so this costs one small extra static library and
+# no additional fetch. Distinct from SDL_TESTS, which builds SDL's own test programs.
+set(SDL_TEST_LIBRARY ON CACHE BOOL "" FORCE)
 set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(SDL_TESTS OFF CACHE BOOL "" FORCE)
 
