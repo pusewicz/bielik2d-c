@@ -118,6 +118,9 @@ typedef void (*BK_AtlasDestroyTextureFn)(u64 texture_id, void *udata);
 /// they were pushed. Called during bk__atlas_flush, once per batch; the array is only
 /// valid for the duration of the call. §4.2 covers the order batches arrive in, and why it
 /// is not the caller's paint order.
+///
+/// Must not call back into this cache. bk__atlas_push in particular is forbidden and
+/// asserts (§4.1); pushing here would write into the buffer flush is still draining.
 typedef void (*BK_AtlasSubmitBatchFn)(const BK_AtlasEntry *entries, i32 count, void *udata);
 
 typedef struct BK_AtlasDesc {
@@ -266,6 +269,13 @@ else clears the buffer. **`bk__atlas_flush` snapshots and clears it before anyth
 can fail** — same discipline P3.3 §5 imposed on the draw chain, and for the same reason: a
 failure partway through must not leave entries buffered to replay against a frame that
 never happened.
+
+Flush reads that buffer in place while it reports batches, so **`bk__atlas_push` is
+forbidden from inside `submit_batch` and asserts.** A push there would either overwrite
+entries not yet reported or grow the buffer out from under the pointer flush is holding —
+the second is a use-after-free, and it is the same one P3.3 shipped twice for the same
+reason. The prohibition costs the caller nothing: a batch handler draws, it does not
+enqueue more work for the frame it is already in the middle of.
 
 An image that cannot be made resident is **dropped, and the frame continues**. There is one
 rule for both ways that can happen — `get_pixels` returning false, or `create_texture`
