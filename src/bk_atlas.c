@@ -11,6 +11,14 @@ constexpr i32 BK_ATLAS_DEFAULT_LONELY_THRESHOLD = 16;
 
 /// One resident image. texture_id is 0 when the image is known but has no texture yet --
 /// the state a defrag leaves behind when it dissolves the atlas an image was living on.
+///
+/// A record is always in exactly one of four states: lonely-with-texture (!atlassed,
+/// texture_id != 0 -- s_make_resident's starting state, owning texture_id alone), atlassed
+/// (atlassed == true -- shares texture_id with others, min_x/min_y meaningful), textureless
+/// survivor (!atlassed, texture_id == 0 -- what a dissolve leaves a non-decayed neighbour
+/// in, until its next push re-uploads it), or permanently lonely (permanent_lonely == true
+/// -- pinned to the first or third state forever, since s_pack_one_atlas never candidates
+/// it; spec section 4.3).
 typedef struct BK_AtlasRecord {
   u64 image_id;
   u64 texture_id;
@@ -577,10 +585,10 @@ static int s_compare_candidates(const void *lhs, const void *rhs) {
 }
 
 /// Builds at most one atlas from pending lonely candidates. Returns 1 if it built an atlas,
-/// 0 if it placed nothing (below threshold, or nothing fit), -1 on a failure that should
-/// make bk__atlas_defrag report false. Sets *dropped to true (never clears it) if any
-/// candidate's get_pixels failed during this pack -- the same "did less than asked" meaning
-/// bk__atlas_flush's return value already carries.
+/// 0 if it placed nothing -- below threshold, nothing fit, or every placed candidate's
+/// get_pixels failed -- -1 on a failure that should make bk__atlas_defrag report false. Sets
+/// *dropped to true (never clears it) if any candidate's get_pixels failed during this pack
+/// -- the same "did less than asked" meaning bk__atlas_flush's return value already carries.
 static i32 s_pack_one_atlas(BK_Atlas *atlas, bool *dropped) {
   // Step 1: collect candidates. Permanently-lonely records can never pack usefully and must
   // not gate the threshold either -- see spec section 4.3.
@@ -683,8 +691,8 @@ static i32 s_pack_one_atlas(BK_Atlas *atlas, bool *dropped) {
     i32 height = record->height;
     // The callback's contract is size == this image's own byte count -- never the scratch
     // buffer's capacity, which is sized to the largest placed image and reused.
-    i32 bytes = width * height * 4;
-    if (!atlas->desc.get_pixels(image_id, scratch, bytes, width, height, atlas->desc.udata)) {
+    usize bytes = (usize)width * (usize)height * 4u;
+    if (!atlas->desc.get_pixels(image_id, scratch, (i32)bytes, width, height, atlas->desc.udata)) {
       s_log_image_failure(atlas, image_id, "get_pixels returned false");
       *dropped = true;
       if (record->texture_id != 0) {
@@ -700,8 +708,8 @@ static i32 s_pack_one_atlas(BK_Atlas *atlas, bool *dropped) {
     i32 min_x = placements[i].min_x;
     i32 min_y = placements[i].min_y;
     for (i32 row = 0; row < height; row++) {
-      SDL_memcpy(image + (((min_y + row) * size) + min_x) * 4,
-                 scratch + (usize)row * (usize)width * 4u, (usize)width * 4u);
+      usize dst_offset = ((usize)(min_y + row) * (usize)size + (usize)min_x) * 4u;
+      SDL_memcpy(image + dst_offset, scratch + (usize)row * (usize)width * 4u, (usize)width * 4u);
     }
     surviving_count++;
   }
@@ -765,8 +773,10 @@ static i32 s_pack_one_atlas(BK_Atlas *atlas, bool *dropped) {
 bool bk__atlas_defrag(BK_Atlas *atlas) {
   BK_ASSERT(atlas != nullptr);
 
-  // 1. Dissolve atlases that are at least half decayed. Snapshot the handles first: the
-  //    dissolve mutates atlas_textures.
+  // 1. Dissolve atlases that are at least half decayed. Walk backwards: s_dissolve_atlas
+  //    swap-removes from atlas_textures, so a forward walk would skip whichever handle it
+  //    swaps into the slot just vacated. Re-reading atlas_textures[i] each iteration (rather
+  //    than a copy taken up front) is what stays correct as the array shrinks under the walk.
   for (i32 i = atlas->atlas_count - 1; i >= 0; i--) {
     u64 texture_id = atlas->atlas_textures[i];
     i32 total = 0, decayed = 0;
