@@ -463,6 +463,16 @@ draw-time class as `CLAUDE.md`'s shader-resource-count gotcha, and exactly what 
 project's "no silent failure" rule exists to prevent. The header documents that callers
 which can produce a zero-scaled transform must skip it rather than lean on the assert.
 
+Sharpened by the tiered-`BK_ASSERT` change below: now that `BK_ASSERT` is live in Release,
+this is the **only** assertion in the project that still vanishes there, and it is the one
+whose failure mode (all-NaN matrix → undefined fragment output, nothing logged) the
+paragraph above argues hardest about. The two families are also on different switches on
+purpose — libc `assert` keys off `NDEBUG`, everything else off `SDL_ASSERT_LEVEL`, which
+keys off `__OPTIMIZE__`. Keeping the module SDL-free is still judged worth that asymmetry,
+since it is what lets `test_math.c` run on every CI leg with no SDL init; the alternative
+is a `bk_math`-private assert macro with its own level knob, which is more machinery than
+one call site justifies. Revisit if `bk_math` ever grows a second assert.
+
 ## `BK_Color` moved from `bk_gfx.h` to `bk_math.h` (PLAN.md §6.1, docs/superpowers/specs/2026-08-01-bk-math-design.md §3)
 
 `PLAN.md` §6.1 defines `BK_Color` in `include/bielik/bk_gfx.h`. It now lives in
@@ -726,3 +736,61 @@ reset, same alignment guarantees. The one thing gained is what §6.6 never state
 consumer assumed anyway — pointers stay valid for the whole frame, now documented on
 `bk_frame_alloc` in `include/bielik/bk_app.h`. Supersedes the "recompute alignment from the
 post-grow base" entry above, whose reasoning no longer applies now that no base moves.
+
+## bk_draw's pipelines are keyed on (colour, depth), not depth alone (docs/superpowers/specs/2026-08-02-bk-draw-design.md §5.0)
+
+§5.0 argued the draw pipeline count is "bounded at two" purely on the depth axis:
+`bk_gfx_depth_stencil_format` returns exactly one format per device, so the reachable
+depth set is `{INVALID, that format}`, and both were created eagerly at init from a
+single cached colour format (`SDL_GetGPUSwapchainTextureFormat`). That argument ignored
+the colour axis entirely — a canvas's colour attachment is unconditionally
+`R8G8B8A8_UNORM` (`src/bk_gfx_texture.c:31`), which need not equal the swapchain's
+backend-dependent format, so a pipeline baked for the swapchain's colour format is the
+wrong pipeline for a bound canvas. Concretely: on macOS/Metal (`B8G8R8A8_UNORM`
+swapchain), `bk_gfx_bind_canvas` followed by any `bk_draw_*` call bound a pipeline whose
+declared colour format didn't match the render pass it drew into — silently on Metal,
+a validation error on Vulkan/D3D12 (pusewicz/bielik2d-c issue #27). The stopgap that
+shipped first (`bk__draw_collate` comparing the canvas's format against the cached
+swapchain format and declining the whole frame's draws) made the failure loud but left
+canvas + `bk_draw` entirely unsupported.
+
+The fix replaces the two named pipeline statics with a small lazily-populated table
+keyed on `(colour, depth)` pairs, bounded at four entries: colour is one of
+`{swapchain format, R8G8B8A8_UNORM}` (which may coincide) and depth is still one of
+`{INVALID, bk_gfx_depth_stencil_format(bk_gpu())}`, so at most 2×2 = 4 distinct pairs
+are reachable. Entries are created on first use rather than eagerly at init, selected
+via new `bk__gfx_pending_target_color_format()` (mirroring the existing
+`bk__gfx_pending_target_depth_format()`) alongside the depth accessor. `bk_gfx.c`'s
+frame flush also gained a colour counterpart to its existing depth-format `BK_ASSERT`,
+so any bound pipeline's declared colour format is checked against the render pass's
+actual attachment the same way depth already was. No public API changed.
+
+## `BK_ASSERT` is three tiers and stays live in Release (CLAUDE.md Conventions)
+
+`CLAUDE.md` specified a single "`BK_ASSERT` wraps `SDL_assert`". Two problems with that,
+both found by auditing rather than by a failure. First, `SDL_assert.h` derives
+`SDL_ASSERT_LEVEL` from `__OPTIMIZE__` and never reads `NDEBUG`, and the project never
+pinned the level — so a Debug build that picked up `-O1`/`-O2` from anywhere silently
+dropped all 78 `BK_ASSERT`s, while `bk_math`'s libc `assert` (which does key off `NDEBUG`)
+stayed live. The two families agreed only because CMake's Release defaults happen to set
+both `-O3` and `-DNDEBUG`. Second, `SDL_assert` compiles out at level 1, and roughly 55 of
+the 78 call sites assert a pointer that the very next line dereferences with no fallback
+(`bk_gfx_canvas.c`'s `BK_ASSERT(canvas != nullptr); return canvas->color;` is the shape) —
+so Release traded a loud abort for undefined behaviour at every one of them.
+
+`BK_ASSERT` now expands to `SDL_assert_release`, live at assert level ≥ 1 and therefore in
+Release too, with `BK_ASSERT_DEBUG` (`SDL_assert`) and `BK_ASSERT_PARANOID`
+(`SDL_assert_paranoid`) added as the tiers to demote an individual check to once profiling
+shows it is hot; both ship with no call sites on purpose. The level is pinned by a
+`BK_ASSERT_LEVEL` CMake cache variable — 2 in Debug, 1 otherwise, `PUBLIC` on the `bielik`
+target so samples and tests cannot disagree with the library about what is checked. The
+cost was accepted deliberately, correctness first, on the understanding that individual
+asserts move down a tier when measurement (not speculation) says to. Verified by building
+and running the full suite at levels 2, 1, and 0 — level 0 matters because
+`SDL_disabled_assert` wraps the condition in `sizeof`, which rejects `void`-typed
+expressions, so a config nobody builds until they ship can fail to compile.
+
+One behaviour change rides along: the six `BK_ASSERT(false)` guards at the end of
+exhaustive switches now abort in Release instead of falling through to their safe default
+return. That is intended — a bad enum reaching them is a programmer error — and the
+fallback return survives as the level-0 path.

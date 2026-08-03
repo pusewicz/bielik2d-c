@@ -4,6 +4,7 @@
 #include <bielik/bk_app.h>
 
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 static void test_alignment_across_powers_of_two(void) {

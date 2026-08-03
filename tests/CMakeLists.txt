@@ -142,7 +142,62 @@ set_tests_properties(test_draw_gpu PROPERTIES TIMEOUT 60)
 
 # CPU-only: the cache reaches the GPU through caller callbacks, so this is a required
 # CI check on every platform (design spec section 5.1).
+#
+# Registered ABOVE the two get_property blocks below on purpose: each reads a directory
+# property at the point it runs, so anything added after them is invisible to them.
+# test_atlas would silently miss SDL3::SDL3_test and the SDL_ASSERT/SDL_LOGGING
+# environment -- the link error would be loud, the missing environment would not be.
 add_executable(test_atlas test_atlas.c)
 target_link_libraries(test_atlas PRIVATE bielik bk_warnings)
 target_include_directories(test_atlas PRIVATE ${PROJECT_SOURCE_DIR}/src)
 add_test(NAME test_atlas COMMAND test_atlas)
+
+# Every test binary here uses bk_test.h, whose REQUIRE macros are built on SDL_test's
+# assertion helpers. Linked via the directory's target list rather than named on each
+# target, so a test added above doesn't have to remember. The header-hygiene OBJECT
+# libraries and the shader-staging custom targets are filtered out by the EXECUTABLE
+# check -- they never include bk_test.h.
+get_property(bk_test_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+foreach(bk_target IN LISTS bk_test_targets)
+    get_target_property(bk_target_type ${bk_target} TYPE)
+    if(bk_target_type STREQUAL "EXECUTABLE")
+        target_link_libraries(${bk_target} PRIVATE SDL3::SDL3_test)
+    endif()
+endforeach()
+
+# Two SDL env-var knobs for every test, both SDL's own mechanisms rather than
+# anything hand-rolled:
+#
+# SDL_ASSERT=abort -- BK_ASSERT is live in Release now (see BK_ASSERT_LEVEL in the
+#   top-level CMakeLists), so every test here can trip one, and SDL's default
+#   assertion handler pops a modal GUI dialog. Nothing dismisses it under CTest, so
+#   the test would hang until its timeout rather than failing. "abort" turns a tripped
+#   assert into a non-zero exit and a normal test failure.
+#
+# SDL_LOGGING=test=error -- bk_test.h's REQUIRE logs through SDLTest, which logs
+#   passes at INFO and failures at ERROR, and the "test" category defaults to
+#   verbose. Left alone, the suite's ~580 passing assertions would each print a line
+#   and bury the one that matters. Failures still print, as does the assert summary.
+#   Run a test binary directly (no CTest, no env) to get the full per-assertion log
+#   back when debugging one.
+#
+# Applied via the directory's TESTS property rather than named per test, so a test
+# added above is covered without remembering to opt in. Keep this LAST in the file:
+# it only sees tests registered before it runs.
+get_property(bk_test_names DIRECTORY PROPERTY TESTS)
+set_tests_properties(${bk_test_names} PROPERTIES
+    ENVIRONMENT "SDL_ASSERT=abort;SDL_LOGGING=test=error")
+
+# Windowed GPU tests still need to present a swapchain, but must never interrupt the
+# developer running ctest from an interactive desktop. SDL_MAC_BACKGROUND_APP is SDL's
+# own hint (SDL_hints.h), read straight from the environment -- no bielik wrapper needed
+# -- and stops the process from being activated (deactivating whatever app, e.g. the
+# terminal, had focus) when one of these windowed tests launches.
+#
+# APPEND, not set_tests_properties(... PROPERTIES ENVIRONMENT ...): that form REPLACES the
+# property, which would drop the SDL_ASSERT/SDL_LOGGING pair set above for exactly these
+# six tests -- silently, since they'd still run, just with a modal assert dialog waiting
+# to hang one of them.
+set_property(TEST test_app_lifecycle test_app_init_failure test_gfx_capture test_gfx_resize
+                  test_gfx_drawlist_gpu test_draw_gpu
+             APPEND PROPERTY ENVIRONMENT "SDL_MAC_BACKGROUND_APP=1")

@@ -700,13 +700,24 @@ typedef struct BK_DrawBatchUniform {
 static_assert(sizeof(BK_DrawBatchUniform) == 16, "std140: one uvec4");
 
 static BK_GfxBuffer *s_corner_buffer = nullptr;
-static BK_GfxPipeline *s_pipeline_no_depth = nullptr;
-static BK_GfxPipeline *s_pipeline_depth = nullptr;
-// Cached at init rather than re-queried at collate time: both pipelines above bake this
-// as their color_target_format, so this is what a bound canvas's format must be compared
-// against -- what the pipelines actually declare, not a fresh SDL query that could in
-// principle disagree.
-static SDL_GPUTextureFormat s_swapchain_color_format = SDL_GPU_TEXTUREFORMAT_INVALID;
+
+/// A pipeline is created lazily per (colour, depth) render-target format pair the
+/// frame actually targets -- a canvas's colour format need not match the swapchain's
+/// (issue #27), so the draw pipeline can no longer bake a single cached colour format
+/// at init. Bounded at 4: bk_gfx_depth_stencil_format probes and returns exactly one
+/// format per device, so depth is one of {INVALID, that format}; colour is one of
+/// {swapchain format, a canvas's colour texture format (always R8G8B8A8_UNORM)},
+/// which may coincide -- at most 2x2 = 4 distinct combinations are reachable.
+constexpr i32 BK_DRAW_MAX_PIPELINES = 4;
+
+static struct {
+  SDL_GPUTextureFormat color;
+  SDL_GPUTextureFormat depth;
+  BK_GfxPipeline *pipeline;
+} s_pipelines[BK_DRAW_MAX_PIPELINES];
+
+static i32 s_pipeline_count = 0;
+
 static BK_GfxSampler *s_sampler = nullptr;
 // Bound for every shape-only batch: draw.frag declares one sampler unconditionally, so
 // a batch with no bk_draw_texture call still needs something bound to that slot -- an
@@ -720,10 +731,12 @@ static BK_GfxTexture *s_white_texture = nullptr;
 static BK_GfxBuffer *s_cmds_buffer = nullptr;
 static BK_GfxBuffer *s_payload_buffer = nullptr;
 
-/// Builds one of the two identical-but-for-depth-format draw pipelines described in the
-/// design spec's §5.0. depth_format is SDL_GPU_TEXTUREFORMAT_INVALID for the no-depth
-/// variant, bk_gfx_depth_stencil_format(bk_gpu()) for the depth variant.
-static BK_GfxPipeline *s_create_pipeline(SDL_GPUTextureFormat depth_format) {
+/// Builds one of the draw pipeline table's entries, identical but for the render
+/// target formats it's baked for. color_format/depth_format are SDL_GPU_TEXTUREFORMAT_
+/// INVALID only in depth_format's case (no depth attachment); color_format is always a
+/// real format -- there is no colourless render target.
+static BK_GfxPipeline *s_create_pipeline(SDL_GPUTextureFormat color_format,
+                                         SDL_GPUTextureFormat depth_format) {
   BK_GfxVertexBufferLayout layout = {.slot = 0, .pitch = sizeof(f32)};
   BK_GfxVertexAttribute attribute = {
       .location = 0, .buffer_slot = 0, .format = BK_GFX_VERTEX_FORMAT_FLOAT, .offset = 0};
@@ -741,16 +754,46 @@ static BK_GfxPipeline *s_create_pipeline(SDL_GPUTextureFormat depth_format) {
       .vertex_attributes = &attribute,
       .num_vertex_attributes = 1,
       .primitive_type = BK_GFX_PRIMITIVE_TRIANGLE_LIST,
-      .color_target_format = s_swapchain_color_format,
+      .color_target_format = color_format,
       .blend_mode = BK_GFX_BLEND_PREMULTIPLIED,
       .depth_stencil_format = depth_format,
   };
   return bk_gfx_pipeline_create(bk_gpu(), &desc);
 }
 
-void bk__draw_init(void) {
-  s_swapchain_color_format = SDL_GetGPUSwapchainTextureFormat(bk_gpu(), bk_window());
+/// Looks up (or lazily creates) the pipeline baked for this (color_format,
+/// depth_format) pair. A cached nullptr (a prior creation failure) is returned as-is,
+/// not retried -- bk_gfx_pipeline_create already logs its own failure unconditionally,
+/// so retrying every frame would spam that log. On a miss with the table already full
+/// (should not happen: the reachable set is bounded at BK_DRAW_MAX_PIPELINES), logs
+/// once and returns nullptr without inserting.
+static BK_GfxPipeline *s_get_pipeline(SDL_GPUTextureFormat color_format,
+                                      SDL_GPUTextureFormat depth_format) {
+  for (i32 i = 0; i < s_pipeline_count; i++) {
+    if (s_pipelines[i].color == color_format && s_pipelines[i].depth == depth_format) {
+      return s_pipelines[i].pipeline;
+    }
+  }
 
+  if (s_pipeline_count >= BK_DRAW_MAX_PIPELINES) {
+    static bool s_logged_table_full = false;
+    if (!s_logged_table_full) {
+      SDL_Log("BK: bk__draw_collate: draw pipeline table is full (%d entries) -- this is "
+              "unexpected, the reachable (colour, depth) set is bounded at %d",
+              s_pipeline_count, BK_DRAW_MAX_PIPELINES);
+      s_logged_table_full = true;
+    }
+    return nullptr;
+  }
+
+  BK_GfxPipeline *pipeline = s_create_pipeline(color_format, depth_format);
+  s_pipelines[s_pipeline_count] =
+      (typeof(s_pipelines[0])){.color = color_format, .depth = depth_format, .pipeline = pipeline};
+  s_pipeline_count++;
+  return pipeline;
+}
+
+void bk__draw_init(void) {
   s_corner_buffer =
       bk_gfx_buffer_create(bk_gpu(), BK_GFX_BUFFER_USAGE_VERTEX, sizeof s_draw_corners);
   if (s_corner_buffer != nullptr &&
@@ -761,9 +804,6 @@ void bk__draw_init(void) {
     bk_gfx_buffer_destroy(s_corner_buffer);
     s_corner_buffer = nullptr;
   }
-
-  s_pipeline_no_depth = s_create_pipeline(SDL_GPU_TEXTUREFORMAT_INVALID);
-  s_pipeline_depth = s_create_pipeline(bk_gfx_depth_stencil_format(bk_gpu()));
 
   s_sampler = bk_gfx_sampler_create(bk_gpu(), BK_GFX_FILTER_LINEAR, BK_GFX_ADDRESS_CLAMP);
 
@@ -795,24 +835,6 @@ void bk__draw_collate(void) {
   i32 target_w = 0, target_h = 0;
   BK_GfxCanvas *canvas = bk__gfx_get_pending_canvas();
   if (canvas != nullptr) {
-    // bk_draw.h documents this combination as unsupported: the pipelines above bake
-    // s_swapchain_color_format, which a canvas's colour texture (always
-    // R8G8B8A8_UNORM) may not share. Detected up front, before packing this frame's
-    // commands at all -- drawing into the mismatched format was silent on Metal and a
-    // validation error on Vulkan/D3D12 (issue #27); decline loudly instead. Logged
-    // once, not every frame, same reasoning as the missing-resource branch below: the
-    // bound canvas's format cannot change frame to frame, so this would otherwise be
-    // an unthrottled log at frame rate for as long as the app keeps this canvas bound.
-    static bool s_logged_canvas_format_mismatch = false;
-    if (bk__gfx_texture_format(bk_gfx_canvas_texture(canvas)) != s_swapchain_color_format) {
-      if (!s_logged_canvas_format_mismatch) {
-        SDL_Log("BK: bk__draw_collate: bound canvas's colour format does not match the "
-                "swapchain's, declining this frame's draws (see bk_draw.h, issue #27)");
-        s_logged_canvas_format_mismatch = true;
-      }
-      bk__draw_reset();
-      return;
-    }
     bk__gfx_texture_size(bk_gfx_canvas_texture(canvas), &target_w, &target_h);
   } else {
     // Not the swapchain texture's size: bk_gfx only learns that from
@@ -827,17 +849,19 @@ void bk__draw_collate(void) {
     // as the selector, but that call BK_ASSERTs on a nullptr canvas -- which is exactly
     // the common, no-canvas-bound case (see DEVIATIONS.md). Selecting from what flush
     // will actually attach covers both that case and BK_AppDesc.window.depth_stencil.
-    SDL_GPUTextureFormat depth_format = bk__gfx_pending_target_depth_format();
-    BK_GfxPipeline *pipeline =
-        depth_format == SDL_GPU_TEXTUREFORMAT_INVALID ? s_pipeline_no_depth : s_pipeline_depth;
+    BK_GfxPipeline *pipeline = s_get_pipeline(bk__gfx_pending_target_color_format(),
+                                              bk__gfx_pending_target_depth_format());
 
     if (pipeline == nullptr || s_corner_buffer == nullptr || s_sampler == nullptr ||
         s_white_texture == nullptr) {
-      // bk__draw_init already logged the underlying SDL_GPU failure (pipeline creation
-      // can fail on a DXIL-only device with no compiled DXIL variant, see
-      // DEVIATIONS.md); bk_gfx_bind_pipeline/bind_texture would otherwise BK_ASSERT on
-      // a nullptr. Logged once, not every frame -- the condition is permanent for the
-      // process's lifetime once init has failed, so this would otherwise be an
+      // Unlike the corner buffer/sampler/white texture above (all created eagerly by
+      // bk__draw_init, which already logged any SDL_GPU failure there), a pipeline is
+      // now created lazily at first use inside s_get_pipeline/s_create_pipeline -- so a
+      // nullptr here can also mean this frame's first attempt at a never-before-seen
+      // (colour, depth) pair just failed, and s_create_pipeline/bk_gfx_pipeline_create
+      // already logged that failure. Logged once, not every frame -- the condition is
+      // permanent for the process's lifetime once a given pair has failed once (a
+      // failed creation is cached, not retried), so this would otherwise be an
       // unthrottled log at frame rate for as long as the app keeps drawing (same
       // pattern as bk_gfx.c's s_logged_acquire_failure).
       static bool s_logged_missing_resource = false;
@@ -917,11 +941,11 @@ void bk__draw_shutdown(void) {
   s_white_texture = nullptr;
   bk_gfx_sampler_destroy(s_sampler);
   s_sampler = nullptr;
-  bk_gfx_pipeline_destroy(s_pipeline_no_depth);
-  s_pipeline_no_depth = nullptr;
-  bk_gfx_pipeline_destroy(s_pipeline_depth);
-  s_pipeline_depth = nullptr;
-  s_swapchain_color_format = SDL_GPU_TEXTUREFORMAT_INVALID;
+  for (i32 i = 0; i < s_pipeline_count; i++) {
+    bk_gfx_pipeline_destroy(s_pipelines[i].pipeline);
+  }
+  s_pipeline_count = 0;
+  SDL_memset(s_pipelines, 0, sizeof s_pipelines);
   bk_gfx_buffer_destroy(s_corner_buffer);
   s_corner_buffer = nullptr;
 }
