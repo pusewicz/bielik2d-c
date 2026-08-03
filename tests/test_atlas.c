@@ -719,9 +719,10 @@ static void test_tick_ages_only_images_that_stop_being_pushed(void) {
   BK_AtlasEntry out = {0};
   REQUIRE(bk__atlas_fetch(atlas, 20, &out));
 
-  // Task 5 asserts that defrag then evicts 20 and keeps 10. What this test pins down is
-  // that the clock advanced and the re-pushed image kept its stamp fresh -- observable
-  // here because a stale stamp on image 10 would make Task 5's eviction test drop it too.
+  // What this test pins down is that ticking is pure bookkeeping: it advances the clock
+  // and evicts nothing on its own, however far an entry has fallen behind. Whether the
+  // stamps it leaves behind are actually correct -- and Task 5 asserts that defrag then
+  // evicts 20 and keeps 10 -- is only observable once defrag exists to consume them.
   REQUIRE(bk__atlas_fetch(atlas, 10, &out));
 
   bk__atlas_destroy(atlas);
