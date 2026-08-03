@@ -2,6 +2,8 @@
 
 #include <bielik/bk_time.h>
 
+#include <stdio.h>
+
 static void test_fixed_60hz_steady_steps(void) {
   BK_Clock clock;
   bk_clock_init(&clock, 60, 8, 0.25, 0);
