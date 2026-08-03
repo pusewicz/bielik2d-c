@@ -504,6 +504,36 @@ static void test_a_dropped_image_is_retried_not_remembered(void) {
   s_free_gpu(&gpu);
 }
 
+static void test_a_dropped_image_can_come_back_at_a_different_size(void) {
+  FakeGpu gpu = {0};
+  gpu.fail_get_pixels = true;
+  gpu.fail_get_pixels_image = 20;
+  BK_AtlasDesc desc = s_make_desc(&gpu);
+  BK_Atlas *atlas = bk__atlas_create(&desc);
+  REQUIRE(atlas != nullptr);
+
+  s_push(atlas, 20, 4, 4, 200);
+  REQUIRE(!bk__atlas_flush(atlas));
+  REQUIRE(gpu.log_count == 0);
+
+  // Available now, and at a different size than the failed attempt. The drop left no
+  // record, so this is a first sighting and adopts 16x8. Had the drop kept the record,
+  // s_make_resident's width/height assert would fire here -- on a caller that did
+  // nothing wrong, because a failed image was never resident and owes no invalidate.
+  gpu.fail_get_pixels = false;
+  s_push(atlas, 20, 16, 8, 201);
+  REQUIRE(bk__atlas_flush(atlas));
+
+  const FakeLogEntry *logged = s_find_log(&gpu, 201);
+  REQUIRE(logged != nullptr);
+  REQUIRE(logged->entry.width == 16 && logged->entry.height == 8);
+  REQUIRE(logged->entry.max_x == 16 && logged->entry.max_y == 8);
+  s_require_rect_matches(&gpu, &logged->entry);
+
+  bk__atlas_destroy(atlas);
+  s_free_gpu(&gpu);
+}
+
 static void test_a_failing_flush_still_drains_the_push_buffer(void) {
   FakeGpu gpu = {0};
   gpu.fail_get_pixels = true;
@@ -568,6 +598,7 @@ int main(void) {
   test_unavailable_image_is_dropped_and_the_frame_continues();
   test_failed_texture_creation_behaves_like_a_missing_image();
   test_a_dropped_image_is_retried_not_remembered();
+  test_a_dropped_image_can_come_back_at_a_different_size();
   test_a_failing_flush_still_drains_the_push_buffer();
   test_a_missing_images_failure_is_logged_once_per_lifetime();
   printf("test_atlas: OK\n");
