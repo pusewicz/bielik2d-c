@@ -156,11 +156,13 @@ void bk__atlas_push(BK_Atlas *atlas, BK_AtlasEntry entry);
 /// that follows reports the same failure through flush.
 bool bk__atlas_prefetch(BK_Atlas *atlas, u64 image_id, i32 width, i32 height);
 
-/// Drops image_id's cached pixels so the next push re-fetches them. If it is lonely, its
-/// texture is destroyed. If it lives in an atlas, that whole atlas is dissolved -- which
-/// invalidates the rects previously reported for every image in it, and is why frequently
-/// updated images are better left lonely (raise defrag_lonely_threshold if that is the
-/// workload). Never fails: it only destroys and forgets.
+/// Forgets image_id entirely, so the next push re-fetches its pixels at whatever size that
+/// push carries. If it is lonely, its texture is destroyed. If it lives in an atlas, that
+/// whole atlas is dissolved -- which invalidates the rects previously reported for every
+/// image in it, and is why frequently updated images are better left lonely (raise
+/// defrag_lonely_threshold if that is the workload). The dissolved neighbours keep their
+/// records and re-upload on their next push; only image_id's record is dropped. Never
+/// fails: it only destroys and forgets. No-op if image_id is not resident.
 void bk__atlas_invalidate(BK_Atlas *atlas, u64 image_id);
 
 /// Looks up a resident image's texture and rect without pushing it, for drawing through
@@ -325,13 +327,15 @@ rect. A cache that is flushed and ticked but never defragged works correctly and
 every image lonely forever — one draw call each, which is the thing this module exists to
 avoid.
 
-**Packing is shelf packing, and the candidate order is most-recently-seen first.** Take the
-pending candidates ordered by last-seen tick, newest first — so images being drawn together
-land in one atlas, which is the whole point — then place that selection into rows, tallest
-first, starting a new row when the current one runs out of width and stopping when the next
-row would exceed `atlas_size`. Whatever did not fit stays pending for the next pack. Named
-here rather than left to the implementer because "as many as fit" has no single answer, and
-the tests need a deterministic one.
+**Packing is shelf packing, over candidates sorted by `(last_tick` descending, `height`
+descending`)`.** Most-recently-seen first is what puts images drawn together into one atlas,
+which is the whole point; height descending is what makes shelf packing behave. As one total
+order they cooperate rather than compete: everything pushed in the same frame shares a
+`last_tick`, so within a frame the order *is* tallest-first, and older images simply queue
+behind. Place each candidate into the current row, start a new row when the row runs out of
+width, and stop when the next row would exceed `atlas_size`. Whatever did not fit stays
+pending for the next pack. Named here rather than left to the implementer because "as many
+as fit" has no single answer, and the tests need a deterministic one.
 
 Deferring the pack is what stops a one-frame image from forcing an atlas build. The
 threshold is a number rather than a heuristic so that a test can drive it exactly. It is 16
@@ -340,7 +344,12 @@ and 64 extra draw calls is a worse steady state than a slightly more eager pack.
 
 Residency is keyed on `image_id` alone. Pushing one `image_id` with different `width`/
 `height` than the resident record is a caller error (`BK_ASSERT`); call
-`bk__atlas_invalidate` first and the next push adopts the new size.
+`bk__atlas_invalidate` first — it drops the record outright, so the next push adopts the new
+size.
+
+`image_id` has no reserved value: 0 is as valid an id as any other. The residency index is
+keyed on the value alone and uses a separate empty marker, so nothing here forces the caller
+to keep an id free.
 
 ### 4.4 Decay and defrag
 
