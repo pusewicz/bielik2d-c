@@ -729,6 +729,271 @@ static void test_tick_ages_only_images_that_stop_being_pushed(void) {
   s_free_gpu(&gpu);
 }
 
+static void test_flush_alone_never_builds_an_atlas(void) {
+  FakeGpu gpu = {0};
+  BK_AtlasDesc desc = s_make_desc(&gpu);
+  desc.atlas_size = 256;
+  desc.defrag_lonely_threshold = 4;
+  BK_Atlas *atlas = bk__atlas_create(&desc);
+  REQUIRE(atlas != nullptr);
+
+  // Far more than the threshold, flushed repeatedly. Without a defrag call, every image
+  // stays on its own texture forever (spec section 4.3).
+  for (i32 frame = 0; frame < 3; frame++) {
+    for (i32 i = 0; i < 20; i++) {
+      s_push(atlas, (u64)(i + 1), 8, 8, (u64)(i + 1));
+    }
+    REQUIRE(bk__atlas_flush(atlas));
+    bk__atlas_tick(atlas);
+  }
+  REQUIRE(gpu.create_calls == 20); // 20 lonely textures, no atlas
+  REQUIRE(gpu.batch_count == 60);  // 20 batches per frame: the thing defrag exists to fix
+
+  bk__atlas_destroy(atlas);
+  s_free_gpu(&gpu);
+}
+
+static void test_defrag_packs_lonely_images_into_one_atlas(void) {
+  FakeGpu gpu = {0};
+  BK_AtlasDesc desc = s_make_desc(&gpu);
+  desc.atlas_size = 256;
+  desc.defrag_lonely_threshold = 4;
+  BK_Atlas *atlas = bk__atlas_create(&desc);
+  REQUIRE(atlas != nullptr);
+
+  constexpr i32 IMAGE_COUNT = 5; // one more than the threshold
+  for (i32 i = 0; i < IMAGE_COUNT; i++) {
+    s_push(atlas, (u64)(i + 1), 8, 8, (u64)(i + 1));
+  }
+  REQUIRE(bk__atlas_flush(atlas));
+  REQUIRE(gpu.create_calls == IMAGE_COUNT);
+  REQUIRE(gpu.batch_count == IMAGE_COUNT);
+
+  REQUIRE(bk__atlas_defrag(atlas));
+
+  // One atlas texture created, and the five individual ones destroyed.
+  REQUIRE(gpu.create_calls == IMAGE_COUNT + 1);
+  REQUIRE(gpu.destroy_calls == IMAGE_COUNT);
+
+  // Now they share a texture: one batch, all five entries, in push order.
+  for (i32 i = 0; i < IMAGE_COUNT; i++) {
+    s_push(atlas, (u64)(i + 1), 8, 8, (u64)(100 + i));
+  }
+  REQUIRE(bk__atlas_flush(atlas));
+  REQUIRE(gpu.batch_count == IMAGE_COUNT + 1); // the five singles, then one shared batch
+  for (i32 i = 0; i < IMAGE_COUNT; i++) {
+    const FakeLogEntry *logged = s_find_log(&gpu, (u64)(100 + i));
+    REQUIRE(logged != nullptr);
+    REQUIRE(logged->batch_index == IMAGE_COUNT); // all in the same, last batch
+  }
+
+  // Packing did not re-fetch: the pack reads pixels once, during defrag.
+  REQUIRE(gpu.get_pixels_calls == IMAGE_COUNT * 2);
+
+  bk__atlas_destroy(atlas);
+  s_free_gpu(&gpu);
+}
+
+static void test_an_image_looks_the_same_lonely_and_atlassed(void) {
+  FakeGpu gpu = {0};
+  BK_AtlasDesc desc = s_make_desc(&gpu);
+  desc.atlas_size = 256;
+  desc.defrag_lonely_threshold = 2;
+  BK_Atlas *atlas = bk__atlas_create(&desc);
+  REQUIRE(atlas != nullptr);
+
+  // Deliberately non-square and mismatched, so a transposed or y-flipped blit cannot
+  // coincide with a correct one. This is the guard from spec section 3.3.
+  s_push(atlas, 11, 12, 5, 1);
+  s_push(atlas, 22, 7, 9, 2);
+  s_push(atlas, 33, 3, 14, 3);
+  REQUIRE(bk__atlas_flush(atlas));
+
+  BK_AtlasEntry lonely_11 = {0};
+  REQUIRE(bk__atlas_fetch(atlas, 11, &lonely_11));
+  REQUIRE(lonely_11.min_x == 0 && lonely_11.min_y == 0);
+  s_require_rect_matches(&gpu, &lonely_11);
+
+  REQUIRE(bk__atlas_defrag(atlas));
+
+  BK_AtlasEntry atlassed_11 = {0};
+  REQUIRE(bk__atlas_fetch(atlas, 11, &atlassed_11));
+  REQUIRE(atlassed_11.texture_id != lonely_11.texture_id); // it really moved
+  REQUIRE(atlassed_11.width == 12 && atlassed_11.height == 5);
+  // Same pixels, same orientation, at the new rect. A y-flip on one path only -- which is
+  // what the donor does -- fails right here.
+  s_require_rect_matches(&gpu, &atlassed_11);
+
+  for (u64 image_id = 22; image_id <= 33; image_id += 11) {
+    BK_AtlasEntry entry = {0};
+    REQUIRE(bk__atlas_fetch(atlas, image_id, &entry));
+    s_require_rect_matches(&gpu, &entry);
+  }
+
+  bk__atlas_destroy(atlas);
+  s_free_gpu(&gpu);
+}
+
+static void test_oversized_images_stay_lonely_and_do_not_gate_the_threshold(void) {
+  FakeGpu gpu = {0};
+  BK_AtlasDesc desc = s_make_desc(&gpu);
+  desc.atlas_size = 256; // half is 128
+  desc.defrag_lonely_threshold = 3;
+  BK_Atlas *atlas = bk__atlas_create(&desc);
+  REQUIRE(atlas != nullptr);
+
+  // Three oversized images -- exactly the threshold. If they counted, the four small ones
+  // below would push the total to seven and pack anyway, hiding the bug. They must not
+  // count, so it is the small images alone that have to cross it (spec section 4.3).
+  s_push(atlas, 1, 200, 8, 1);   // width > 128
+  s_push(atlas, 2, 8, 200, 2);   // height > 128
+  s_push(atlas, 3, 300, 300, 3); // larger than the atlas outright: still legal
+  REQUIRE(bk__atlas_flush(atlas));
+  REQUIRE(bk__atlas_defrag(atlas));
+  REQUIRE(gpu.create_calls == 3); // no atlas: three oversized images are not candidates
+
+  for (i32 i = 0; i < 4; i++) {
+    s_push(atlas, (u64)(10 + i), 8, 8, (u64)(10 + i));
+  }
+  REQUIRE(bk__atlas_flush(atlas));
+  REQUIRE(gpu.create_calls == 7);
+  REQUIRE(bk__atlas_defrag(atlas));
+  REQUIRE(gpu.create_calls == 8);  // four small images crossed the threshold on their own
+  REQUIRE(gpu.destroy_calls == 4); // and only their textures were destroyed
+
+  // The oversized ones are untouched and still report their whole texture.
+  BK_AtlasEntry entry = {0};
+  REQUIRE(bk__atlas_fetch(atlas, 3, &entry));
+  REQUIRE(entry.min_x == 0 && entry.min_y == 0);
+  REQUIRE(entry.max_x == 300 && entry.max_y == 300);
+
+  bk__atlas_destroy(atlas);
+  s_free_gpu(&gpu);
+}
+
+static void test_images_that_do_not_fit_stay_pending(void) {
+  FakeGpu gpu = {0};
+  BK_AtlasDesc desc = s_make_desc(&gpu);
+  desc.atlas_size = 64;
+  desc.defrag_lonely_threshold = 2;
+  BK_Atlas *atlas = bk__atlas_create(&desc);
+  REQUIRE(atlas != nullptr);
+
+  // Each image is 32x32 and the atlas is 64x64, so exactly four fit. Push six.
+  constexpr i32 IMAGE_COUNT = 6;
+  for (i32 i = 0; i < IMAGE_COUNT; i++) {
+    s_push(atlas, (u64)(i + 1), 32, 32, (u64)(i + 1));
+  }
+  REQUIRE(bk__atlas_flush(atlas));
+  REQUIRE(gpu.create_calls == IMAGE_COUNT);
+
+  REQUIRE(bk__atlas_defrag(atlas));
+
+  // Four packed into one atlas; two left over. Their pixels still live on their own
+  // textures, so they are still drawable.
+  i32 atlassed = 0;
+  i32 still_lonely = 0;
+  for (i32 i = 0; i < IMAGE_COUNT; i++) {
+    BK_AtlasEntry entry = {0};
+    REQUIRE(bk__atlas_fetch(atlas, (u64)(i + 1), &entry));
+    s_require_rect_matches(&gpu, &entry);
+    FakeTexture *tex = s_find_texture(&gpu, entry.texture_id);
+    if (tex->width == 64) {
+      atlassed++;
+    } else {
+      still_lonely++;
+    }
+  }
+  REQUIRE(atlassed == 4);
+  REQUIRE(still_lonely == 2);
+
+  bk__atlas_destroy(atlas);
+  s_free_gpu(&gpu);
+}
+
+static void test_a_failed_atlas_leaves_every_image_drawable(void) {
+  FakeGpu gpu = {0};
+  BK_AtlasDesc desc = s_make_desc(&gpu);
+  desc.atlas_size = 256;
+  desc.defrag_lonely_threshold = 2;
+  BK_Atlas *atlas = bk__atlas_create(&desc);
+  REQUIRE(atlas != nullptr);
+
+  constexpr i32 IMAGE_COUNT = 4;
+  for (i32 i = 0; i < IMAGE_COUNT; i++) {
+    s_push(atlas, (u64)(i + 1), 8, 8, (u64)(i + 1));
+  }
+  REQUIRE(bk__atlas_flush(atlas));
+  REQUIRE(gpu.create_calls == IMAGE_COUNT);
+
+  // The next create_texture call is the atlas's, and it fails.
+  gpu.fail_create = true;
+  gpu.fail_create_on_call = IMAGE_COUNT + 1;
+  REQUIRE(!bk__atlas_defrag(atlas));
+
+  // Nothing was destroyed. Destroying the individual textures before the atlas handle
+  // exists would leave four images with no pixels anywhere -- which is why the destroy
+  // loop runs only after create_texture returns non-zero.
+  REQUIRE(gpu.destroy_calls == 0);
+  for (i32 i = 0; i < IMAGE_COUNT; i++) {
+    BK_AtlasEntry entry = {0};
+    REQUIRE(bk__atlas_fetch(atlas, (u64)(i + 1), &entry));
+    REQUIRE(s_find_texture(&gpu, entry.texture_id)->alive);
+    s_require_rect_matches(&gpu, &entry);
+  }
+
+  // And the pack still works once the fault clears.
+  gpu.fail_create = false;
+  REQUIRE(bk__atlas_defrag(atlas));
+  REQUIRE(gpu.destroy_calls == IMAGE_COUNT);
+
+  bk__atlas_destroy(atlas);
+  s_free_gpu(&gpu);
+}
+
+// None of the brief's own tests inject a get_pixels failure mid-pack, which leaves the one
+// hazard the whole image_id-keyed design exists to prevent completely unexercised:
+// s_record_remove swap-removes on a drop, relocating whatever record was last in the array.
+// Here that is image 3's record, moved into the slot image 2 just vacated. Step 7 must
+// re-look-up every survivor by image_id rather than trust an index computed before the
+// drop -- this is the test that would catch a cached-index regression.
+static void test_a_get_pixels_failure_during_pack_does_not_corrupt_neighbors(void) {
+  FakeGpu gpu = {0};
+  BK_AtlasDesc desc = s_make_desc(&gpu);
+  desc.atlas_size = 256;
+  desc.defrag_lonely_threshold = 2;
+  BK_Atlas *atlas = bk__atlas_create(&desc);
+  REQUIRE(atlas != nullptr);
+
+  s_push(atlas, 1, 8, 8, 1);
+  s_push(atlas, 2, 8, 8, 2);
+  s_push(atlas, 3, 8, 8, 3);
+  REQUIRE(bk__atlas_flush(atlas));
+  REQUIRE(gpu.create_calls == 3);
+
+  gpu.fail_get_pixels = true;
+  gpu.fail_get_pixels_image = 2;
+  REQUIRE(bk__atlas_defrag(atlas)); // dropping one image mid-pack is not a defrag failure
+
+  REQUIRE(gpu.create_calls == 4);  // one atlas, built from the two survivors
+  REQUIRE(gpu.destroy_calls == 3); // image 2's lonely texture, plus 1's and 3's
+
+  BK_AtlasEntry dropped = {0};
+  REQUIRE(!bk__atlas_fetch(atlas, 2, &dropped)); // dropped outright, not just its texture
+
+  BK_AtlasEntry entry_1 = {0};
+  BK_AtlasEntry entry_3 = {0};
+  REQUIRE(bk__atlas_fetch(atlas, 1, &entry_1));
+  REQUIRE(bk__atlas_fetch(atlas, 3, &entry_3));
+  // If image 3 had been adopted through a stale index left over from before image 2's
+  // removal, this would either read the wrong record or the wrong pixels.
+  s_require_rect_matches(&gpu, &entry_1);
+  s_require_rect_matches(&gpu, &entry_3);
+
+  bk__atlas_destroy(atlas);
+  s_free_gpu(&gpu);
+}
+
 int main(void) {
   test_flush_makes_pushed_images_resident();
   test_lonely_image_reports_its_whole_texture();
@@ -749,6 +1014,13 @@ int main(void) {
   test_fetch_reports_residency_without_creating_it();
   test_invalidate_forgets_a_lonely_image();
   test_tick_ages_only_images_that_stop_being_pushed();
+  test_flush_alone_never_builds_an_atlas();
+  test_defrag_packs_lonely_images_into_one_atlas();
+  test_an_image_looks_the_same_lonely_and_atlassed();
+  test_oversized_images_stay_lonely_and_do_not_gate_the_threshold();
+  test_images_that_do_not_fit_stay_pending();
+  test_a_failed_atlas_leaves_every_image_drawable();
+  test_a_get_pixels_failure_during_pack_does_not_corrupt_neighbors();
   printf("test_atlas: OK\n");
   return 0;
 }

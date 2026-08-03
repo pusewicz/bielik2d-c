@@ -501,6 +501,233 @@ bool bk__atlas_flush(BK_Atlas *atlas) {
   return complete;
 }
 
-bool bk__atlas_defrag([[maybe_unused]] BK_Atlas *atlas) {
-  return true; // Task 4 implements this.
+/// A candidate for packing. Keyed by image_id rather than record index because
+/// s_record_remove swap-removes, so any index held across a drop is stale.
+typedef struct BK_AtlasCandidate {
+  u64 image_id;
+  i32 last_tick;
+  i32 width, height;
+} BK_AtlasCandidate;
+
+/// Where the shelf packer decided a candidate goes. Separate from BK_AtlasCandidate so the
+/// placement survives a candidate being dropped mid-pack by a get_pixels failure.
+typedef struct BK_AtlasPlacement {
+  u64 image_id;
+  i32 min_x, min_y;
+} BK_AtlasPlacement;
+
+// Most-recently-seen first is what puts images drawn together onto one atlas; height
+// descending is what makes shelf packing behave. As one total order they cooperate:
+// everything pushed in a frame shares a last_tick, so within a frame this IS
+// tallest-first, and older images queue behind (spec section 4.3).
+static int s_compare_candidates(const void *lhs, const void *rhs) {
+  const BK_AtlasCandidate *left = lhs;
+  const BK_AtlasCandidate *right = rhs;
+  if (left->last_tick != right->last_tick) {
+    return left->last_tick > right->last_tick ? -1 : 1;
+  }
+  if (left->height != right->height) {
+    return left->height > right->height ? -1 : 1;
+  }
+  // image_id last, so the order is total and the pack is reproducible run to run.
+  return left->image_id < right->image_id ? -1 : 1;
+}
+
+/// Builds at most one atlas from pending lonely candidates. Returns 1 if it built an atlas,
+/// 0 if it placed nothing (below threshold, or nothing fit), -1 on a failure that should
+/// make bk__atlas_defrag report false.
+static i32 s_pack_one_atlas(BK_Atlas *atlas) {
+  // Step 1: collect candidates. Permanently-lonely records can never pack usefully and must
+  // not gate the threshold either -- see spec section 4.3.
+  i32 candidate_count = 0;
+  for (i32 i = 0; i < atlas->record_count; i++) {
+    const BK_AtlasRecord *record = &atlas->records[i];
+    if (!record->permanent_lonely && !record->atlassed) {
+      candidate_count++;
+    }
+  }
+  if (candidate_count <= atlas->desc.defrag_lonely_threshold) {
+    return 0;
+  }
+
+  BK_AtlasCandidate *candidates = SDL_malloc((usize)candidate_count * sizeof(BK_AtlasCandidate));
+  if (candidates == nullptr) {
+    SDL_Log("BK: bk_atlas: defrag candidate list allocation failed (%d entries)", candidate_count);
+    return -1;
+  }
+  i32 n = 0;
+  for (i32 i = 0; i < atlas->record_count; i++) {
+    const BK_AtlasRecord *record = &atlas->records[i];
+    if (!record->permanent_lonely && !record->atlassed) {
+      candidates[n++] = (BK_AtlasCandidate){
+          .image_id = record->image_id,
+          .last_tick = record->last_tick,
+          .width = record->width,
+          .height = record->height,
+      };
+    }
+  }
+
+  // Step 2: sort.
+  SDL_qsort(candidates, (usize)candidate_count, sizeof(BK_AtlasCandidate), s_compare_candidates);
+
+  // Step 3: shelf-place.
+  BK_AtlasPlacement *placements = SDL_malloc((usize)candidate_count * sizeof(BK_AtlasPlacement));
+  if (placements == nullptr) {
+    SDL_Log("BK: bk_atlas: defrag placement list allocation failed (%d entries)", candidate_count);
+    SDL_free(candidates);
+    return -1;
+  }
+
+  i32 size = atlas->desc.atlas_size;
+  i32 shelf_x = 0, shelf_y = 0, shelf_height = 0;
+  i32 placed_count = 0;
+  i32 max_width = 0, max_height = 0;
+  for (i32 i = 0; i < candidate_count; i++) {
+    i32 width = candidates[i].width;
+    i32 height = candidates[i].height;
+    if (shelf_x + width > size) { // this row is full; start the next
+      shelf_y += shelf_height;
+      shelf_x = 0;
+      shelf_height = 0;
+    }
+    if (shelf_y + height > size) {
+      break; // the atlas is full; the rest stay pending for the next pack
+    }
+    // A candidate is never wider than size / 2, so one wrap always suffices.
+    placements[placed_count++] =
+        (BK_AtlasPlacement){.image_id = candidates[i].image_id, .min_x = shelf_x, .min_y = shelf_y};
+    shelf_x += width;
+    shelf_height = height > shelf_height ? height : shelf_height;
+    max_width = width > max_width ? width : max_width;
+    max_height = height > max_height ? height : max_height;
+  }
+  SDL_free(candidates);
+  if (placed_count == 0) {
+    SDL_free(placements);
+    return 0;
+  }
+
+  // Step 4: allocate the atlas image, zero-filled so unpacked regions are not uninitialized.
+  usize image_bytes = (usize)size * (usize)size * 4u;
+  u8 *image = SDL_calloc(1, image_bytes);
+  if (image == nullptr) {
+    SDL_Log("BK: bk_atlas: defrag atlas image allocation failed (%d x %d)", size, size);
+    SDL_free(placements);
+    return -1;
+  }
+
+  // Step 5: read pixels into scratch, sized to the largest placed image and reused, then
+  // blit each one into the atlas image at its shelf position.
+  usize scratch_bytes = (usize)max_width * (usize)max_height * 4u;
+  u8 *scratch = SDL_malloc(scratch_bytes);
+  if (scratch == nullptr) {
+    SDL_Log("BK: bk_atlas: defrag scratch buffer allocation failed (%zu bytes)", scratch_bytes);
+    SDL_free(image);
+    SDL_free(placements);
+    return -1;
+  }
+
+  i32 surviving_count = 0;
+  for (i32 i = 0; i < placed_count; i++) {
+    u64 image_id = placements[i].image_id;
+    i32 index = s_map_get(&atlas->map, image_id);
+    BK_ASSERT(index >= 0);
+    const BK_AtlasRecord *record = &atlas->records[index];
+    i32 width = record->width;
+    i32 height = record->height;
+    // The callback's contract is size == this image's own byte count -- never the scratch
+    // buffer's capacity, which is sized to the largest placed image and reused.
+    i32 bytes = width * height * 4;
+    if (!atlas->desc.get_pixels(image_id, scratch, bytes, width, height, atlas->desc.udata)) {
+      s_log_image_failure(atlas, image_id, "get_pixels returned false");
+      if (record->texture_id != 0) {
+        atlas->desc.destroy_texture(record->texture_id, atlas->desc.udata);
+      }
+      s_record_remove(atlas, index);
+      // Mark dropped for step 7 to skip. image_id is not a legal sentinel here -- 0 is an
+      // ordinary, valid image_id (spec section 4.3) -- but a real placement's min_x is
+      // always >= 0, so -1 is unambiguous.
+      placements[i].min_x = -1;
+      continue;
+    }
+    i32 min_x = placements[i].min_x;
+    i32 min_y = placements[i].min_y;
+    for (i32 row = 0; row < height; row++) {
+      SDL_memcpy(image + (((min_y + row) * size) + min_x) * 4,
+                 scratch + (usize)row * (usize)width * 4u, (usize)width * 4u);
+    }
+    surviving_count++;
+  }
+  SDL_free(scratch);
+
+  // Step 6: a pack that placed nothing survives is a blank atlas no record points at.
+  if (surviving_count == 0) {
+    SDL_free(image);
+    SDL_free(placements);
+    return 0;
+  }
+
+  u64 texture_id = atlas->desc.create_texture(image, size, size, atlas->desc.udata);
+  SDL_free(image);
+  if (texture_id == 0) {
+    SDL_Log("BK: bk_atlas: defrag atlas texture creation failed (%d x %d)", size, size);
+    SDL_free(placements);
+    // Do not destroy any lonely texture: every image is still drawable from where it was.
+    return -1;
+  }
+
+  // Step 7: only now, with the atlas handle in hand, walk the placements and adopt it.
+  for (i32 i = 0; i < placed_count; i++) {
+    if (placements[i].min_x < 0) {
+      continue; // dropped in step 5
+    }
+    i32 index = s_map_get(&atlas->map, placements[i].image_id);
+    BK_ASSERT(index >= 0);
+    BK_AtlasRecord *record = &atlas->records[index];
+    if (record->texture_id != 0) {
+      atlas->desc.destroy_texture(record->texture_id, atlas->desc.udata);
+    }
+    record->texture_id = texture_id;
+    record->atlassed = true;
+    record->min_x = placements[i].min_x;
+    record->min_y = placements[i].min_y;
+  }
+  SDL_free(placements);
+
+  // Step 8: append the new atlas handle.
+  if (atlas->atlas_count == atlas->atlas_capacity) {
+    i32 wanted = atlas->atlas_capacity == 0 ? 8 : atlas->atlas_capacity * 2;
+    u64 *grown = SDL_realloc(atlas->atlas_textures, (usize)wanted * sizeof(u64));
+    if (grown == nullptr) {
+      // The atlas is already live and every record already points at it; losing the
+      // ability to track it for bk__atlas_destroy would leak the texture, not corrupt
+      // residency. Nothing sensible to do but log and keep going.
+      SDL_Log("BK: bk_atlas: atlas handle list allocation failed (%d handles)", wanted);
+    } else {
+      atlas->atlas_textures = grown;
+      atlas->atlas_capacity = wanted;
+    }
+  }
+  if (atlas->atlas_count < atlas->atlas_capacity) {
+    atlas->atlas_textures[atlas->atlas_count++] = texture_id;
+  }
+
+  return 1;
+}
+
+bool bk__atlas_defrag(BK_Atlas *atlas) {
+  BK_ASSERT(atlas != nullptr);
+  bool ok = true;
+  for (;;) {
+    i32 packed = s_pack_one_atlas(atlas);
+    if (packed < 0) {
+      ok = false;
+      break;
+    }
+    if (packed == 0) {
+      break; // under threshold, or nothing placed: stop rather than spin
+    }
+  }
+  return ok;
 }
