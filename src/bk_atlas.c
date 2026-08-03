@@ -305,6 +305,17 @@ static i32 s_make_resident(BK_Atlas *atlas, u64 image_id, i32 width, i32 height)
   }
 
   usize bytes = (usize)width * (usize)height * 4u;
+  // BK_AtlasGetPixelsFn takes size as i32, so an image whose byte count does not fit one
+  // cannot be described to the callback at all. Reject it here instead of handing over a
+  // truncated or negative size: permanently-lonely images have no upper dimension bound
+  // (spec section 4.3), so this is reachable rather than theoretical. s_make_resident is
+  // the only path that creates a record, so guarding here also guarantees the pack path
+  // never sees an image whose bytes overflow.
+  if (bytes > (usize)INT32_MAX) {
+    s_log_image_failure(atlas, image_id, "image byte count exceeds INT32_MAX");
+    s_record_remove(atlas, index);
+    return -1;
+  }
   void *pixels = SDL_malloc(bytes);
   if (pixels == nullptr) {
     SDL_Log("BK: bk_atlas: pixel buffer allocation failed (%zu bytes)", bytes);
@@ -692,6 +703,9 @@ static i32 s_pack_one_atlas(BK_Atlas *atlas, bool *dropped) {
     // The callback's contract is size == this image's own byte count -- never the scratch
     // buffer's capacity, which is sized to the largest placed image and reused.
     usize bytes = (usize)width * (usize)height * 4u;
+    // Guaranteed by s_make_resident, which rejects an image this large before a record
+    // for it can exist. Asserted rather than re-checked so the invariant is visible here.
+    BK_ASSERT(bytes <= (usize)INT32_MAX);
     if (!atlas->desc.get_pixels(image_id, scratch, (i32)bytes, width, height, atlas->desc.udata)) {
       s_log_image_failure(atlas, image_id, "get_pixels returned false");
       *dropped = true;
@@ -731,7 +745,29 @@ static i32 s_pack_one_atlas(BK_Atlas *atlas, bool *dropped) {
     return -1;
   }
 
-  // Step 7: only now, with the atlas handle in hand, walk the placements and adopt it.
+  // Step 7: reserve the handle slot BEFORE any record adopts the atlas. Growing this list
+  // is the last thing that can fail, and once step 8 has run there is no way back: the
+  // lonely textures are destroyed, so an atlas that never made it into atlas_textures
+  // would be invisible to both the dissolve pass and bk__atlas_destroy, and would leak
+  // for the cache's lifetime. Reserving first leaves the atlas texture as the only thing
+  // to undo.
+  if (atlas->atlas_count == atlas->atlas_capacity) {
+    i32 wanted = atlas->atlas_capacity == 0 ? 8 : atlas->atlas_capacity * 2;
+    u64 *grown = SDL_realloc(atlas->atlas_textures, (usize)wanted * sizeof(u64));
+    if (grown == nullptr) {
+      SDL_Log("BK: bk_atlas: atlas handle list allocation failed (%d handles)", wanted);
+      atlas->desc.destroy_texture(texture_id, atlas->desc.udata);
+      SDL_free(placements);
+      // Every image is still on the lonely texture it came in on: nothing adopted the
+      // atlas, so residency is exactly as it was before this pack started.
+      return -1;
+    }
+    atlas->atlas_textures = grown;
+    atlas->atlas_capacity = wanted;
+  }
+
+  // Step 8: only now, with the atlas handle in hand and its slot reserved, walk the
+  // placements and adopt it.
   for (i32 i = 0; i < placed_count; i++) {
     if (placements[i].min_x < 0) {
       continue; // dropped in step 5
@@ -749,23 +785,9 @@ static i32 s_pack_one_atlas(BK_Atlas *atlas, bool *dropped) {
   }
   SDL_free(placements);
 
-  // Step 8: append the new atlas handle.
-  if (atlas->atlas_count == atlas->atlas_capacity) {
-    i32 wanted = atlas->atlas_capacity == 0 ? 8 : atlas->atlas_capacity * 2;
-    u64 *grown = SDL_realloc(atlas->atlas_textures, (usize)wanted * sizeof(u64));
-    if (grown == nullptr) {
-      // The atlas is already live and every record already points at it; losing the
-      // ability to track it for bk__atlas_destroy would leak the texture, not corrupt
-      // residency. Nothing sensible to do but log and keep going.
-      SDL_Log("BK: bk_atlas: atlas handle list allocation failed (%d handles)", wanted);
-    } else {
-      atlas->atlas_textures = grown;
-      atlas->atlas_capacity = wanted;
-    }
-  }
-  if (atlas->atlas_count < atlas->atlas_capacity) {
-    atlas->atlas_textures[atlas->atlas_count++] = texture_id;
-  }
+  // Step 9: append. Cannot fail -- step 7 reserved the slot.
+  BK_ASSERT(atlas->atlas_count < atlas->atlas_capacity);
+  atlas->atlas_textures[atlas->atlas_count++] = texture_id;
 
   return 1;
 }

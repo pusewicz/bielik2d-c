@@ -538,6 +538,47 @@ static void test_a_dropped_image_is_retried_not_remembered(void) {
   s_free_gpu(&gpu);
 }
 
+// BK_AtlasGetPixelsFn's size parameter is i32, so an image whose byte count does not fit
+// one cannot be described to the callback. The cache must drop it rather than pass a
+// truncated or negative size -- which would make get_pixels write a different number of
+// bytes than the buffer holds. Reachable because permanently-lonely images have no upper
+// dimension bound (spec section 4.3).
+//
+// 65536 x 8192 x 4 == 2147483648, exactly INT32_MAX + 1. Nothing allocates 2 GB here: the
+// guard runs before the pixel buffer is requested, which is the whole point.
+static void test_an_image_too_large_to_describe_is_dropped(void) {
+  FakeGpu gpu = {0};
+  BK_AtlasDesc desc = s_make_desc(&gpu);
+  desc.atlas_size = 256;
+  BK_Atlas *atlas = bk__atlas_create(&desc);
+  REQUIRE(atlas != nullptr);
+
+  s_push(atlas, 1, 8, 8, 100);
+  s_push(atlas, 2, 65536, 8192, 200);
+  s_push(atlas, 3, 8, 8, 300);
+
+  REQUIRE(!bk__atlas_flush(atlas));
+
+  // Dropped without ever asking for its pixels or a texture, and the frame carries on --
+  // entries pushed after it still report (spec section 4.1).
+  REQUIRE(s_find_log(&gpu, 200) == nullptr);
+  REQUIRE(s_find_log(&gpu, 100) != nullptr);
+  REQUIRE(s_find_log(&gpu, 300) != nullptr);
+  REQUIRE(gpu.get_pixels_calls == 2);
+  REQUIRE(gpu.create_calls == 2);
+
+  // No record survived for it, so a later push at a describable size is a first sighting.
+  BK_AtlasEntry out = {0};
+  REQUIRE(!bk__atlas_fetch(atlas, 2, &out));
+  s_push(atlas, 2, 16, 16, 201);
+  REQUIRE(bk__atlas_flush(atlas));
+  REQUIRE(bk__atlas_fetch(atlas, 2, &out));
+  s_require_rect_matches(&gpu, &out);
+
+  bk__atlas_destroy(atlas);
+  s_free_gpu(&gpu);
+}
+
 static void test_a_dropped_image_can_come_back_at_a_different_size(void) {
   FakeGpu gpu = {0};
   gpu.fail_get_pixels = true;
@@ -1387,6 +1428,7 @@ int main(void) {
   test_unavailable_image_is_dropped_and_the_frame_continues();
   test_failed_texture_creation_behaves_like_a_missing_image();
   test_a_dropped_image_is_retried_not_remembered();
+  test_an_image_too_large_to_describe_is_dropped();
   test_a_dropped_image_can_come_back_at_a_different_size();
   test_a_failing_flush_still_drains_the_push_buffer();
   test_a_missing_images_failure_is_logged_once_per_lifetime();
