@@ -1,6 +1,6 @@
-// Drives the wrapper's OOM path: a failing allocator makes bk_alloc log
-// "BK: out of memory" and abort. Registered with PASS_REGULAR_EXPRESSION on
-// that log line -- CTest then ignores the (deliberate) crash exit.
+// Drives the allocator's OOM path: a failing allocator makes bk_alloc log
+// "BK: out of memory" and abort. Invoked via tests/run_oom_test.cmake, a CMake
+// wrapper that captures output, verifies the log line, and exits normally.
 #include <bielik/bk_alloc.h>
 
 #include <stdio.h>
