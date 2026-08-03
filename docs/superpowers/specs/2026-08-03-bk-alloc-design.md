@@ -242,6 +242,41 @@ bk_run(&(BK_AppDesc){
 BK_MemStats gfx = bk_mem_stats(BK_MEM_TAG_GFX);
 ```
 
+**Recipe: a mimalloc-backed base allocator.** Deliberately a documented recipe, not a
+dependency: the framework default stays the SDL heap, and mimalloc stays embedder
+code — after this rework the hot paths are arena/burst-shaped, exactly where
+general-purpose allocator quality matters least, and the web target gets mimalloc via
+Emscripten's own `-sMALLOC=mimalloc` link flag, not our dependency tree. If Space
+Delivery profiling ever shows heap pressure, flipping the default is a one-file change
+in `bk_alloc.c`. Until then:
+
+```c
+// Embedder code; mimalloc is not a Bielik2D dependency.
+// mi_free_size exploits the sized-free interface.
+#include <mimalloc.h>
+
+static void *my_mi_alloc(isize size, void *ctx) {
+  (void)ctx;
+  return mi_malloc((usize)size);
+}
+static void *my_mi_realloc(void *ptr, isize old_size, isize new_size, void *ctx) {
+  (void)old_size;
+  (void)ctx;
+  return mi_realloc(ptr, (usize)new_size);
+}
+static void my_mi_free(void *ptr, isize size, void *ctx) {
+  (void)ctx;
+  mi_free_size(ptr, (usize)size);
+}
+
+bk_run(&(BK_AppDesc){
+    .allocator = {.alloc_fn = my_mi_alloc, .realloc_fn = my_mi_realloc, .free_fn = my_mi_free},
+}, argc, argv);
+```
+
+With a custom base installed, §5's shim routes SDL's internal allocations into it too
+(mimalloc included), at 16 bytes overhead per SDL allocation.
+
 ## §4 Module adoption
 
 - **Atlas (the heavy consumer, retrofit now):** `BK_AtlasDesc` gains
@@ -349,6 +384,9 @@ Five steps, each independently green:
 5. Docs sweep: DEVIATIONS entries, header docs, CLAUDE.md line.
 
 ## §10 Out of scope
+
+- Vendoring mimalloc (or any allocator) as the framework default — covered as an
+  embedder recipe in §3; revisit only if Space Delivery profiling shows heap pressure.
 
 - Frame arena API changes (backing-buffer injection, usage query, double-buffering) —
   the current arena already serves the temp story; extending it is its own effort.
