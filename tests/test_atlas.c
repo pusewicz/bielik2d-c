@@ -158,6 +158,26 @@ static const FakeLogEntry *s_find_log(FakeGpu *gpu, u64 udata) {
   return nullptr;
 }
 
+// Counts SDL_Log lines that mention a watched image_id, so a test can assert on
+// s_log_image_failure's own dedup behavior -- something none of the FakeGpu counters can
+// see, since the log call is entirely separate from get_pixels/create_texture.
+typedef struct LogCapture {
+  u64 watch_image_id;
+  i32 count;
+} LogCapture;
+
+static void s_capture_log(void *userdata, int category, SDL_LogPriority priority,
+                          const char *message) {
+  (void)category;
+  (void)priority;
+  LogCapture *capture = userdata;
+  char needle[32];
+  SDL_snprintf(needle, sizeof(needle), "image %llu:", (unsigned long long)capture->watch_image_id);
+  if (SDL_strstr(message, needle) != nullptr) {
+    capture->count++;
+  }
+}
+
 static void s_push(BK_Atlas *atlas, u64 image_id, i32 width, i32 height, u64 udata) {
   bk__atlas_push(atlas, (BK_AtlasEntry){
                             .image_id = image_id,
@@ -408,6 +428,134 @@ static void test_destroy_releases_every_texture(void) {
   s_free_gpu(&gpu);
 }
 
+static void test_unavailable_image_is_dropped_and_the_frame_continues(void) {
+  FakeGpu gpu = {0};
+  gpu.fail_get_pixels = true;
+  gpu.fail_get_pixels_image = 20;
+  BK_AtlasDesc desc = s_make_desc(&gpu);
+  BK_Atlas *atlas = bk__atlas_create(&desc);
+  REQUIRE(atlas != nullptr);
+
+  s_push(atlas, 10, 4, 4, 100);
+  s_push(atlas, 20, 4, 4, 200); // get_pixels says no
+  s_push(atlas, 30, 4, 4, 300);
+
+  // False means "reported incompletely", not "abandoned" (spec section 4.1).
+  REQUIRE(!bk__atlas_flush(atlas));
+
+  // The entries pushed AFTER the failure still arrive. This is the assertion that
+  // separates drop-and-continue from abandon-the-flush.
+  REQUIRE(s_find_log(&gpu, 100) != nullptr);
+  REQUIRE(s_find_log(&gpu, 300) != nullptr);
+  REQUIRE(s_find_log(&gpu, 200) == nullptr);
+  REQUIRE(gpu.log_count == 2);
+
+  // No texture was created for the failed image.
+  REQUIRE(gpu.create_calls == 2);
+
+  bk__atlas_destroy(atlas);
+  s_free_gpu(&gpu);
+}
+
+static void test_failed_texture_creation_behaves_like_a_missing_image(void) {
+  FakeGpu gpu = {0};
+  gpu.fail_create = true;
+  gpu.fail_create_on_call = 2; // the second image's texture
+  BK_AtlasDesc desc = s_make_desc(&gpu);
+  BK_Atlas *atlas = bk__atlas_create(&desc);
+  REQUIRE(atlas != nullptr);
+
+  s_push(atlas, 10, 4, 4, 100);
+  s_push(atlas, 20, 4, 4, 200); // create_texture returns 0
+  s_push(atlas, 30, 4, 4, 300);
+
+  REQUIRE(!bk__atlas_flush(atlas));
+  REQUIRE(s_find_log(&gpu, 100) != nullptr);
+  REQUIRE(s_find_log(&gpu, 300) != nullptr);
+  REQUIRE(s_find_log(&gpu, 200) == nullptr);
+
+  // fake_submit_batch already asserts no reported entry carries texture_id 0; this is the
+  // path that would violate it if the drop were missing.
+  REQUIRE(gpu.log_count == 2);
+
+  bk__atlas_destroy(atlas);
+  s_free_gpu(&gpu);
+}
+
+static void test_a_dropped_image_is_retried_not_remembered(void) {
+  FakeGpu gpu = {0};
+  gpu.fail_get_pixels = true;
+  gpu.fail_get_pixels_image = 20;
+  BK_AtlasDesc desc = s_make_desc(&gpu);
+  BK_Atlas *atlas = bk__atlas_create(&desc);
+  REQUIRE(atlas != nullptr);
+
+  s_push(atlas, 20, 4, 4, 200);
+  REQUIRE(!bk__atlas_flush(atlas));
+  REQUIRE(gpu.log_count == 0);
+
+  // The image becomes available. The failure was logged, not cached (spec section 4.1).
+  gpu.fail_get_pixels = false;
+  s_push(atlas, 20, 4, 4, 201);
+  REQUIRE(bk__atlas_flush(atlas));
+  REQUIRE(s_find_log(&gpu, 201) != nullptr);
+
+  bk__atlas_destroy(atlas);
+  s_free_gpu(&gpu);
+}
+
+static void test_a_failing_flush_still_drains_the_push_buffer(void) {
+  FakeGpu gpu = {0};
+  gpu.fail_get_pixels = true;
+  gpu.fail_get_pixels_image = 20;
+  BK_AtlasDesc desc = s_make_desc(&gpu);
+  BK_Atlas *atlas = bk__atlas_create(&desc);
+  REQUIRE(atlas != nullptr);
+
+  s_push(atlas, 10, 4, 4, 100);
+  s_push(atlas, 20, 4, 4, 200);
+  REQUIRE(!bk__atlas_flush(atlas));
+  REQUIRE(gpu.log_count == 1);
+
+  // Nothing may replay. A failure partway through must not leave entries buffered against
+  // a frame that never happened (spec section 4.1).
+  gpu.fail_get_pixels = false;
+  REQUIRE(bk__atlas_flush(atlas));
+  REQUIRE(gpu.log_count == 1);
+  REQUIRE(gpu.batch_count == 1);
+
+  bk__atlas_destroy(atlas);
+  s_free_gpu(&gpu);
+}
+
+static void test_a_missing_images_failure_is_logged_once_per_lifetime(void) {
+  FakeGpu gpu = {0};
+  gpu.fail_get_pixels = true;
+  gpu.fail_get_pixels_image = 20;
+  BK_AtlasDesc desc = s_make_desc(&gpu);
+  BK_Atlas *atlas = bk__atlas_create(&desc);
+  REQUIRE(atlas != nullptr);
+
+  SDL_LogOutputFunction prev_fn;
+  void *prev_userdata;
+  SDL_GetLogOutputFunction(&prev_fn, &prev_userdata);
+  LogCapture capture = {.watch_image_id = 20};
+  SDL_SetLogOutputFunction(s_capture_log, &capture);
+
+  s_push(atlas, 20, 4, 4, 200);
+  REQUIRE(!bk__atlas_flush(atlas));
+  // Still failing. A frame loop retries every frame; the log line must not repeat (spec
+  // section 4.1) or a permanently missing asset would spam sixty lines a second.
+  s_push(atlas, 20, 4, 4, 201);
+  REQUIRE(!bk__atlas_flush(atlas));
+
+  SDL_SetLogOutputFunction(prev_fn, prev_userdata);
+  REQUIRE(capture.count == 1);
+
+  bk__atlas_destroy(atlas);
+  s_free_gpu(&gpu);
+}
+
 int main(void) {
   test_flush_makes_pushed_images_resident();
   test_lonely_image_reports_its_whole_texture();
@@ -417,6 +565,11 @@ int main(void) {
   test_flush_drains_the_push_buffer();
   test_many_images_survive_index_growth();
   test_destroy_releases_every_texture();
+  test_unavailable_image_is_dropped_and_the_frame_continues();
+  test_failed_texture_creation_behaves_like_a_missing_image();
+  test_a_dropped_image_is_retried_not_remembered();
+  test_a_failing_flush_still_drains_the_push_buffer();
+  test_a_missing_images_failure_is_logged_once_per_lifetime();
   printf("test_atlas: OK\n");
   return 0;
 }

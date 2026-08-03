@@ -240,6 +240,27 @@ static void s_fill_entry_from_record(const BK_AtlasRecord *record, BK_AtlasEntry
   out->max_y = record->min_y + record->height;
 }
 
+/// Logs image_id's unavailability once per cache lifetime. A missing asset in a frame loop
+/// would otherwise print sixty times a second, which buries every other message.
+static void s_log_image_failure(BK_Atlas *atlas, u64 image_id, const char *reason) {
+  for (i32 i = 0; i < atlas->logged_count; i++) {
+    if (atlas->logged_failures[i] == image_id) {
+      return;
+    }
+  }
+  SDL_Log("BK: bk_atlas: dropping image %llu: %s", (unsigned long long)image_id, reason);
+  if (atlas->logged_count == atlas->logged_capacity) {
+    i32 wanted = atlas->logged_capacity == 0 ? 8 : atlas->logged_capacity * 2;
+    u64 *grown = SDL_realloc(atlas->logged_failures, (usize)wanted * sizeof(u64));
+    if (grown == nullptr) {
+      return; // the log already happened; losing the dedup entry only risks a repeat
+    }
+    atlas->logged_failures = grown;
+    atlas->logged_capacity = wanted;
+  }
+  atlas->logged_failures[atlas->logged_count++] = image_id;
+}
+
 /// Ensures image_id has pixels on a texture, creating a lonely texture if it does not.
 /// Returns the record's index, or -1 if the image could not be made resident (already
 /// logged). The index is invalidated by any later s_record_remove -- do not hold it.
@@ -284,14 +305,16 @@ static i32 s_make_resident(BK_Atlas *atlas, u64 image_id, i32 width, i32 height)
   }
   if (!atlas->desc.get_pixels(image_id, pixels, (i32)bytes, width, height, atlas->desc.udata)) {
     SDL_free(pixels);
+    s_log_image_failure(atlas, image_id, "get_pixels returned false");
     s_record_remove(atlas, index);
-    return -1; // Task 2 adds the dedup log here
+    return -1;
   }
   u64 texture_id = atlas->desc.create_texture(pixels, width, height, atlas->desc.udata);
   SDL_free(pixels);
   if (texture_id == 0) {
+    s_log_image_failure(atlas, image_id, "create_texture returned 0");
     s_record_remove(atlas, index);
-    return -1; // Task 2 adds the dedup log here
+    return -1;
   }
   atlas->records[index].texture_id = texture_id;
   atlas->records[index].atlassed = false;
