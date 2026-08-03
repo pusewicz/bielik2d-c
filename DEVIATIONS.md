@@ -849,3 +849,20 @@ SDL already ships a pluggable-allocator facility, `SDL_SetMemoryFunctions`/
 `BK_Allocator`'s job: an arena or pool per subsystem needs `ctx` to reach its own state, and
 a size-aware `free_fn`/`realloc_fn` is what lets such an allocator avoid per-allocation
 headers. `BK_Allocator` keeps both instead and does not route through SDL's functions.
+
+## test_alloc_oom uses a CMake wrapper script instead of PASS_REGULAR_EXPRESSION (task-3-brief.md)
+
+The task brief specifies `set_tests_properties(test_alloc_oom PROPERTIES PASS_REGULAR_EXPRESSION "BK: out of memory")`,
+which would make CTest pass if the regex is found in the process output, treating the intentional abort as an expected
+termination. On macOS (and many other platforms), CTest's `PASS_REGULAR_EXPRESSION` overrides a non-zero exit code but
+does not override an abnormal termination by signal — when a process is killed by SIGABRT, the test verdict is set
+to failure before the regex check is even evaluated. The test binary exits via SIGABRT (from `s_oom`'s `abort()` call
+after `BK_ASSERT` fires), so the regex match succeeds (as verified in `LastTest.log`) but the test still fails.
+
+The fix: instead of relying on `PASS_REGULAR_EXPRESSION`, the test is registered as a CMake-driven wrapper
+(`tests/run_oom_test.cmake`) that runs the binary via `execute_process`, captures combined output, greps for the log
+line manually using CMake's `string(FIND)`, and exits normally via `return()` on success or `message(FATAL_ERROR)` on
+failure — so CTest judges the test by the wrapper's exit code (which reflects the grep result) rather than the child's
+signal termination. This approach verifies the actual log line (not just that "BK: out of memory" is in some log noise)
+and is portable across platforms where signal-death handling varies. The test passes on the intended OOM path and
+fails if the allocation unexpectedly succeeds (mutation verification confirmed both behaviors).
