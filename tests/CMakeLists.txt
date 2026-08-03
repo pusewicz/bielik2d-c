@@ -175,3 +175,17 @@ endforeach()
 get_property(bk_test_names DIRECTORY PROPERTY TESTS)
 set_tests_properties(${bk_test_names} PROPERTIES
     ENVIRONMENT "SDL_ASSERT=abort;SDL_LOGGING=test=error")
+
+# Windowed GPU tests still need to present a swapchain, but must never interrupt the
+# developer running ctest from an interactive desktop. SDL_MAC_BACKGROUND_APP is SDL's
+# own hint (SDL_hints.h), read straight from the environment -- no bielik wrapper needed
+# -- and stops the process from being activated (deactivating whatever app, e.g. the
+# terminal, had focus) when one of these windowed tests launches.
+#
+# APPEND, not set_tests_properties(... PROPERTIES ENVIRONMENT ...): that form REPLACES the
+# property, which would drop the SDL_ASSERT/SDL_LOGGING pair set above for exactly these
+# six tests -- silently, since they'd still run, just with a modal assert dialog waiting
+# to hang one of them.
+set_property(TEST test_app_lifecycle test_app_init_failure test_gfx_capture test_gfx_resize
+                  test_gfx_drawlist_gpu test_draw_gpu
+             APPEND PROPERTY ENVIRONMENT "SDL_MAC_BACKGROUND_APP=1")
