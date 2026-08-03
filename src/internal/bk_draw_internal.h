@@ -114,11 +114,13 @@ bool bk__draw_pack(BK_DrawPacked *out, i32 target_w, i32 target_h);
 // commands through bk_gfx.
 // ---------------------------------------------------------------------------
 
-/// Creates the corner buffer, both pipelines (no-depth and depth, see bk_gfx.h:80-83's
-/// depth_stencil_format assert), the default texture sampler, and a 1x1 white fallback
+/// Creates the corner buffer, the default texture sampler, and a 1x1 white fallback
 /// texture bound for shape-only batches (draw.frag declares one sampler
-/// unconditionally, so every batch must bind something). Called once from bk_app.c
-/// after the GPU device exists, alongside bk__gfx_configure_swapchain_depth.
+/// unconditionally, so every batch must bind something). Pipelines are not created
+/// here -- they're looked up lazily from a (colour, depth)-keyed table on first use
+/// (see bk_gfx.h's bk_gfx_bind_canvas doc comment for the format-match assert that
+/// table exists to satisfy). Called once from bk_app.c after the GPU device exists,
+/// alongside bk__gfx_configure_swapchain_depth.
 void bk__draw_init(void);
 
 /// Packs this frame's record chain and replays it through bk_gfx: one

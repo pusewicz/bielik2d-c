@@ -624,13 +624,13 @@ static void test_scissor_clips(void) {
 }
 
 // ---------------------------------------------------------------------------
-// Depth pipeline: BK_AppDesc.window.depth_stencil routes bk__draw_collate through
-// s_pipeline_depth instead of s_pipeline_no_depth (PR #43 review, issue #36) -- no
-// case above ever enables it, so neither of the pipeline's two failure modes is
-// exercised: s_pipeline_depth failing to create at all (leaves it null, so collate's
-// missing-resource branch declines every frame), and picking the wrong variant for
-// the active depth target, which bk__gfx_flush's BK_ASSERT (the depth_stencil_format
-// contract bk_gfx_bind_canvas's doc comment in bk_gfx.h, lines 86-88, documents) turns
+// Depth pipeline: BK_AppDesc.window.depth_stencil routes bk__draw_collate through the
+// draw pipeline table's depth-enabled entry instead of its no-depth one (PR #43
+// review, issue #36) -- no case above ever enables it, so neither of that entry's two
+// failure modes is exercised: creation failing outright (leaves it null, so collate's
+// missing-resource branch declines every frame), and picking the wrong entry for the
+// active depth target, which bk__gfx_flush's BK_ASSERT (the depth_stencil_format
+// contract bk_gfx_bind_canvas's doc comment in bk_gfx.h, lines 80-90, documents) turns
 // into a hard crash rather than a quiet misrender.
 // ---------------------------------------------------------------------------
 

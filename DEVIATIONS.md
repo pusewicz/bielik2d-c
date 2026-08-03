@@ -726,3 +726,31 @@ reset, same alignment guarantees. The one thing gained is what §6.6 never state
 consumer assumed anyway — pointers stay valid for the whole frame, now documented on
 `bk_frame_alloc` in `include/bielik/bk_app.h`. Supersedes the "recompute alignment from the
 post-grow base" entry above, whose reasoning no longer applies now that no base moves.
+
+## bk_draw's pipelines are keyed on (colour, depth), not depth alone (docs/superpowers/specs/2026-08-02-bk-draw-design.md §5.0)
+
+§5.0 argued the draw pipeline count is "bounded at two" purely on the depth axis:
+`bk_gfx_depth_stencil_format` returns exactly one format per device, so the reachable
+depth set is `{INVALID, that format}`, and both were created eagerly at init from a
+single cached colour format (`SDL_GetGPUSwapchainTextureFormat`). That argument ignored
+the colour axis entirely — a canvas's colour attachment is unconditionally
+`R8G8B8A8_UNORM` (`src/bk_gfx_texture.c:31`), which need not equal the swapchain's
+backend-dependent format, so a pipeline baked for the swapchain's colour format is the
+wrong pipeline for a bound canvas. Concretely: on macOS/Metal (`B8G8R8A8_UNORM`
+swapchain), `bk_gfx_bind_canvas` followed by any `bk_draw_*` call bound a pipeline whose
+declared colour format didn't match the render pass it drew into — silently on Metal,
+a validation error on Vulkan/D3D12 (pusewicz/bielik2d-c issue #27). The stopgap that
+shipped first (`bk__draw_collate` comparing the canvas's format against the cached
+swapchain format and declining the whole frame's draws) made the failure loud but left
+canvas + `bk_draw` entirely unsupported.
+
+The fix replaces the two named pipeline statics with a small lazily-populated table
+keyed on `(colour, depth)` pairs, bounded at four entries: colour is one of
+`{swapchain format, R8G8B8A8_UNORM}` (which may coincide) and depth is still one of
+`{INVALID, bk_gfx_depth_stencil_format(bk_gpu())}`, so at most 2×2 = 4 distinct pairs
+are reachable. Entries are created on first use rather than eagerly at init, selected
+via new `bk__gfx_pending_target_color_format()` (mirroring the existing
+`bk__gfx_pending_target_depth_format()`) alongside the depth accessor. `bk_gfx.c`'s
+frame flush also gained a colour counterpart to its existing depth-format `BK_ASSERT`,
+so any bound pipeline's declared colour format is checked against the render pass's
+actual attachment the same way depth already was. No public API changed.
