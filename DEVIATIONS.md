@@ -941,13 +941,18 @@ the framework's own default heap calls libc `malloc`/`realloc`/`free` directly �
 SDL's (see "Default heap backs onto libc malloc, not SDL_malloc" above). SDL is wired into
 `BK_Allocator`, not the other way around: `bk__alloc_route_sdl` (`bk_alloc.c`) installs a
 size-header shim via `SDL_SetMemoryFunctions` that forwards SDL's own internal allocations
-back through the installed base allocator, tagged `BK_MEM_TAG_SDL`, but only when doing so
-is worth it. A pre-boot probe decides which: measured on this platform, `SDL_GetNumAllocations()`
-was 0 before `bk__boot` ran, which per the design spec selects the routed variant over the
-no-op fallback — that 0-count probe is what triggered the recursion bug the entry above
-documents, and why `s_default_alloc` had to move off `SDL_malloc`. See also "`BK_Allocator`
-does not build on `SDL_SetMemoryFunctions`" above for why the interface itself doesn't just
-delegate to SDL's narrower facility in the first place.
+back through the installed base allocator, tagged `BK_MEM_TAG_SDL`. The only runtime gate
+on this is whether a custom base allocator is installed at all (`s_base.alloc_fn ==
+s_default_alloc` skips routing as a no-op) — there is no probe or fallback branch in
+shipped code. That gate's shape traces back to a one-time measurement made during
+implementation: a temporary `SDL_GetNumAllocations()` probe at the top of `bk__boot` read 0
+pre-boot SDL allocations on this platform, which per the design spec selected building the
+routed variant rather than the no-op-fallback alternative the spec also considered; the
+probe line itself was reverted before commit and never shipped. Wiring up routing is what
+triggered the recursion bug the entry above documents, and why `s_default_alloc` had to move
+off `SDL_malloc`. See also "`BK_Allocator` does not build on `SDL_SetMemoryFunctions`" above
+for why the interface itself doesn't just delegate to SDL's narrower facility in the first
+place.
 
 ## Two OOM policies were planned; only one is reachable today (docs/superpowers/specs/2026-08-03-bk-alloc-design.md §6, task-4-brief.md)
 

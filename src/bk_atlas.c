@@ -276,8 +276,11 @@ static void s_log_image_failure(BK_Atlas *atlas, u64 image_id, const char *reaso
 }
 
 /// Ensures image_id has pixels on a texture, creating a lonely texture if it does not.
-/// Returns the record's index, or -1 if the image could not be made resident (already
-/// logged). The index is invalidated by any later s_record_remove -- do not hold it.
+/// Returns the record's index, or -1 if the image could not be made resident: an oversized
+/// byte count, get_pixels returning false, or create_texture returning 0 (each logged via
+/// s_log_image_failure) -- or, defensively, s_record_add failing, which the allocator seam's
+/// abort-on-OOM contract no longer allows (see s_record_add's own comment). The index is
+/// invalidated by any later s_record_remove -- do not hold it.
 static i32 s_make_resident(BK_Atlas *atlas, u64 image_id, i32 width, i32 height) {
   BK_ASSERT(width > 0 && height > 0);
 
@@ -306,7 +309,7 @@ static i32 s_make_resident(BK_Atlas *atlas, u64 image_id, i32 width, i32 height)
     };
     index = s_record_add(atlas, &fresh);
     if (index < 0) {
-      return -1; // s_record_add logged
+      return -1; // defense-in-depth, not reachable today -- see s_record_add's own comment
     }
   }
 
