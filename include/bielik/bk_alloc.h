@@ -102,15 +102,21 @@ const char *bk_mem_tag_name(BK_MemTag tag);
 /// allocate?" into a testable assertion.
 BK_Allocator bk_allocator_panic(void);
 
-/// State for bk_allocator_counting. Counters are plain, not atomic: use from
-/// one thread at a time (tests, HUD probes). inner all-zero means the default
-/// heap serves the actual memory. Zero-initialize before use.
+/// State for bk_allocator_counting. Each counter is updated and read
+/// atomically (relaxed), so the allocator may serve several threads at once --
+/// which it must when installed as BK_AppDesc.allocator, since SDL allocates
+/// off the main thread. Reading all four is still not a mutually-consistent
+/// snapshot: fine for leak asserts and HUDs, not for arithmetic that assumes
+/// the four agree. inner all-zero means the installed base allocator serves
+/// the actual memory (the framework default heap when no custom base was
+/// installed, and always that default when this allocator is itself the base,
+/// since anything else would be self-reference). Zero-initialize before use.
 typedef struct BK_CountingAllocator {
   BK_Allocator inner;
-  isize live_bytes;
-  isize live_allocs;
-  isize peak_bytes;
-  isize total_allocs;
+  _Atomic isize live_bytes;
+  _Atomic isize live_allocs;
+  _Atomic isize peak_bytes;
+  _Atomic isize total_allocs;
 } BK_CountingAllocator;
 
 /// Returns an allocator that forwards to state->inner and maintains the

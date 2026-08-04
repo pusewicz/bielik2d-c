@@ -85,9 +85,16 @@ BK_Allocator bk_allocator_panic(void) {
       .alloc_fn = s_panic_alloc, .realloc_fn = s_panic_realloc, .free_fn = s_panic_free};
 }
 
-static void s_counting_bump_peak(BK_CountingAllocator *c) {
-  if (c->live_bytes > c->peak_bytes) {
-    c->peak_bytes = c->live_bytes;
+// The counters are relaxed atomics because a counting allocator installed as the app-wide
+// base serves whatever thread SDL allocates on (the Windows joystick thread, with gamepad
+// support initialized). `live` is passed in rather than re-read: reloading live_bytes here
+// could see another thread's subtraction and record a peak below the one this call
+// actually reached.
+static void s_counting_bump_peak(BK_CountingAllocator *c, isize live) {
+  isize peak = atomic_load_explicit(&c->peak_bytes, memory_order_relaxed);
+  while (live > peak &&
+         !atomic_compare_exchange_weak_explicit(&c->peak_bytes, &peak, live, memory_order_relaxed,
+                                                memory_order_relaxed)) {
   }
 }
 
@@ -96,10 +103,10 @@ static void *s_counting_alloc(isize size, void *ctx) {
   const BK_Allocator *inner = s_resolve(&c->inner);
   void *ptr = inner->alloc_fn(size, inner->ctx);
   if (ptr != nullptr) {
-    c->live_bytes += size;
-    c->live_allocs++;
-    c->total_allocs++;
-    s_counting_bump_peak(c);
+    isize live = atomic_fetch_add_explicit(&c->live_bytes, size, memory_order_relaxed) + size;
+    atomic_fetch_add_explicit(&c->live_allocs, 1, memory_order_relaxed);
+    atomic_fetch_add_explicit(&c->total_allocs, 1, memory_order_relaxed);
+    s_counting_bump_peak(c, live);
   }
   return ptr;
 }
@@ -110,11 +117,12 @@ static void *s_counting_realloc(void *ptr, isize old_size, isize new_size, void 
   void *grown = inner->realloc_fn(ptr, old_size, new_size, inner->ctx);
   if (grown != nullptr) {
     if (ptr == nullptr) { // realloc-from-null is an allocation
-      c->live_allocs++;
-      c->total_allocs++;
+      atomic_fetch_add_explicit(&c->live_allocs, 1, memory_order_relaxed);
+      atomic_fetch_add_explicit(&c->total_allocs, 1, memory_order_relaxed);
     }
-    c->live_bytes += new_size - old_size;
-    s_counting_bump_peak(c);
+    isize delta = new_size - old_size;
+    isize live = atomic_fetch_add_explicit(&c->live_bytes, delta, memory_order_relaxed) + delta;
+    s_counting_bump_peak(c, live);
   }
   return grown;
 }
@@ -123,9 +131,9 @@ static void s_counting_free(void *ptr, isize size, void *ctx) {
   BK_CountingAllocator *c = ctx;
   const BK_Allocator *inner = s_resolve(&c->inner);
   inner->free_fn(ptr, size, inner->ctx);
-  c->live_bytes -= size;
-  c->live_allocs--;
-  BK_ASSERT(c->live_bytes >= 0 && c->live_allocs >= 0);
+  isize live = atomic_fetch_add_explicit(&c->live_bytes, -size, memory_order_relaxed) - size;
+  isize allocs = atomic_fetch_add_explicit(&c->live_allocs, -1, memory_order_relaxed) - 1;
+  BK_ASSERT(live >= 0 && allocs >= 0);
 }
 
 BK_Allocator bk_allocator_counting(BK_CountingAllocator *state) {

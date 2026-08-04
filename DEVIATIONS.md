@@ -995,6 +995,17 @@ of SDL's narrower types costs nothing portability-wise. `bk_alloc.c`'s per-tag
 `memory_order_relaxed` — the counters are independent tallies, not a synchronization
 mechanism, so nothing stronger is needed.
 
+`BK_CountingAllocator`'s four counters (`bk_alloc.h`, public) are the same `_Atomic isize`
+for the same reason, which the module's own design spec did not anticipate: it described
+them as plain fields to be used from one thread at a time. That restriction is not
+satisfiable in the one configuration the spec itself recommends — a counting allocator as
+`BK_AppDesc.allocator` — because Task 7's SDL routing sends SDL's own allocations through
+the base, and SDL allocates off the main thread (the Windows joystick thread, live in every
+`SDL_INIT_GAMEPAD` app, which is all of them here). Plain `isize` counters would be racy
+read-modify-writes, i.e. UB, in `test_app_lifecycle` on Windows CI. Note the knock-on for
+the public header: `_Atomic` is C-only, so `bk_alloc.h` can no longer be included from the
+future ImGui C++ translation unit without a shim. Nothing includes it from C++ today.
+
 ## The OOM diagnostic goes to stderr with `fprintf`, not `SDL_Log` (docs/superpowers/specs/2026-08-03-bk-alloc-design.md §6)
 
 The spec's §6 spells the OOM report as `SDL_Log("BK: out of memory ...")`. Shipped:
