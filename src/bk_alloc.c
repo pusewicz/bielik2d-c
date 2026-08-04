@@ -233,6 +233,7 @@ typedef struct BK_TagCounters {
 static BK_TagCounters s_tags[BK_MEM_TAG_COUNT];
 
 static void s_stats_add(BK_MemTag tag, isize bytes_delta, isize allocs_delta, isize total_delta) {
+  BK_ASSERT(tag >= 0 && tag < BK_MEM_TAG_COUNT);
   BK_TagCounters *c = &s_tags[tag];
   isize live =
       atomic_fetch_add_explicit(&c->live_bytes, bytes_delta, memory_order_relaxed) + bytes_delta;
