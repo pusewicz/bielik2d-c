@@ -110,7 +110,7 @@ typedef struct BK_AppDesc {
   BK_WindowDesc window;
   BK_TimeDesc time;
   BK_TaskSystemDesc tasks;
-  BK_Allocator allocator; // base allocator for all framework allocation; all-zero => SDL heap
+  BK_Allocator allocator; // base allocator for all framework allocation; all-zero => libc heap
   BK_Result (*init)(void **state, int argc, char **argv); // *state pre-seeded from .userdata
   BK_Result (*update)(void *state,
                       const BK_FrameInfo *frame); // fixed step (or once/frame in variable mode)

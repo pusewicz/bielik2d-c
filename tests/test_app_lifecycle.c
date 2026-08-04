@@ -6,7 +6,10 @@
 #include <stdio.h>
 
 static int s_update_calls = 0;
-static BK_CountingAllocator s_counter; // zero-initialized static; inner all-zero => default heap
+// Zero-initialized static. Its inner stays all-zero: installing this as the app's base
+// allocator makes boot pin the inner to the framework default heap, since an all-zero
+// inner would otherwise resolve back to the base and recurse into itself.
+static BK_CountingAllocator s_counter;
 
 static BK_Result test_init(void **state, int argc, char **argv) {
   (void)state;

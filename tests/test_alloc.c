@@ -148,7 +148,8 @@ static void test_install_validation(void) {
 }
 
 static void test_counting_allocator(void) {
-  BK_CountingAllocator counter = {0}; // inner all-zero => default heap
+  BK_CountingAllocator counter = {0}; // inner all-zero => the installed base, reset to the
+                                      // default heap by the test above
   BK_Allocator a = bk_allocator_counting(&counter);
 
   void *p = bk_alloc(&a, 100);
