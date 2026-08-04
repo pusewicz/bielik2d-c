@@ -11,6 +11,12 @@ bool bk__allocator_valid(const BK_Allocator *a);
 /// bk__boot before SDL_Init; tests call it directly.
 bool bk__alloc_install(const BK_Allocator *base);
 
+/// Routes SDL's internal allocations through the installed base allocator via
+/// SDL_SetMemoryFunctions. Call after bk__alloc_install and before SDL_Init,
+/// only. Returns false (already logged where warranted) when routing is
+/// skipped: default-heap base, pre-boot SDL allocations, or SDL refusal.
+bool bk__alloc_route_sdl(void);
+
 // Framework-internal allocation: the public call layer plus a tag and an
 // allocator choice. a == nullptr (or all-zero *a) means the installed base
 // allocator. Same OOM-aborts, sized-free contract as the public layer.

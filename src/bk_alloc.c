@@ -8,21 +8,28 @@
 #include <stdatomic.h>
 #include <stdlib.h>
 
+// Deliberately libc malloc/realloc/free, not SDL_malloc/SDL_realloc/SDL_free: this is
+// "the default heap" and must stay a fixed primitive that SDL_SetMemoryFunctions cannot
+// redirect. bk__alloc_route_sdl (below) makes SDL_malloc itself dispatch through the base
+// allocator when routing is active -- if the default heap's own implementation called
+// SDL_malloc, resolving to the default heap through any wrapper (bk_allocator_counting
+// with an unset inner, the common case) would recurse into the shim forever. See
+// DEVIATIONS.md.
 static void *s_default_alloc(isize size, void *ctx) {
   (void)ctx;
-  return SDL_malloc((usize)size);
+  return malloc((usize)size);
 }
 
 static void *s_default_realloc(void *ptr, isize old_size, isize new_size, void *ctx) {
   (void)old_size;
   (void)ctx;
-  return SDL_realloc(ptr, (usize)new_size);
+  return realloc(ptr, (usize)new_size);
 }
 
 static void s_default_free(void *ptr, isize size, void *ctx) {
   (void)size;
   (void)ctx;
-  SDL_free(ptr);
+  free(ptr);
 }
 
 static const BK_Allocator s_default_allocator = {
@@ -159,7 +166,8 @@ void *bk__alloc_site(const BK_Allocator *a, isize size, bool zero, const char *f
   const BK_Allocator *r = s_resolve(a);
   void *ptr;
   if (zero && r->alloc_fn == s_default_alloc) {
-    ptr = SDL_calloc(1, (usize)size); // let the libc zero fresh pages for free
+    ptr = calloc(1, (usize)size); // let the libc zero fresh pages for free; see
+                                  // s_default_alloc's comment on why not SDL_calloc
   } else {
     ptr = r->alloc_fn(size, r->ctx);
     if (ptr != nullptr && zero) {
@@ -253,4 +261,66 @@ void bk__free(const BK_Allocator *a, BK_MemTag tag, void *ptr, isize size) {
   }
   bk__free_site(a, ptr, size);
   s_stats_add(tag, -size, -1, 0);
+}
+
+// ---------------------------------------------------------------------------
+// SDL routing (design spec section 5). SDL's memory-function signatures carry
+// no ctx and its free carries no size, so each SDL allocation gets a
+// max_align_t-sized header storing its total size. Installed only before
+// SDL_Init and only when the embedder supplied a custom base allocator.
+// ---------------------------------------------------------------------------
+
+typedef union BK_SdlShimHeader {
+  isize size; // total size including this header
+  max_align_t align;
+} BK_SdlShimHeader; // max_align_t: <stddef.h>, already reachable via bk_types.h
+
+static void *s_sdl_shim_malloc(size_t size) {
+  isize total = (isize)size + (isize)sizeof(BK_SdlShimHeader);
+  BK_SdlShimHeader *header = bk__alloc(nullptr, BK_MEM_TAG_SDL, total, false, __FILE__, __LINE__);
+  header->size = total;
+  return header + 1;
+}
+
+static void *s_sdl_shim_calloc(size_t nmemb, size_t size) {
+  if (nmemb != 0 && size > SDL_SIZE_MAX / nmemb) {
+    return nullptr; // overflow is a caller error, not OOM -- let SDL handle null
+  }
+  isize total = (isize)(nmemb * size) + (isize)sizeof(BK_SdlShimHeader);
+  BK_SdlShimHeader *header = bk__alloc(nullptr, BK_MEM_TAG_SDL, total, true, __FILE__, __LINE__);
+  header->size = total;
+  return header + 1;
+}
+
+static void *s_sdl_shim_realloc(void *mem, size_t size) {
+  if (mem == nullptr) {
+    return s_sdl_shim_malloc(size);
+  }
+  BK_SdlShimHeader *header = (BK_SdlShimHeader *)mem - 1;
+  isize old_total = header->size;
+  isize new_total = (isize)size + (isize)sizeof(BK_SdlShimHeader);
+  BK_SdlShimHeader *grown =
+      bk__realloc(nullptr, BK_MEM_TAG_SDL, header, old_total, new_total, __FILE__, __LINE__);
+  grown->size = new_total;
+  return grown + 1;
+}
+
+static void s_sdl_shim_free(void *mem) {
+  if (mem == nullptr) {
+    return;
+  }
+  BK_SdlShimHeader *header = (BK_SdlShimHeader *)mem - 1;
+  bk__free(nullptr, BK_MEM_TAG_SDL, header, header->size);
+}
+
+bool bk__alloc_route_sdl(void) {
+  if (s_base.alloc_fn == s_default_alloc) {
+    return false; // default heap: routing would be a no-op with overhead
+  }
+  if (!SDL_SetMemoryFunctions(s_sdl_shim_malloc, s_sdl_shim_calloc, s_sdl_shim_realloc,
+                              s_sdl_shim_free)) {
+    SDL_Log("BK: SDL_SetMemoryFunctions failed: %s", SDL_GetError());
+    return false;
+  }
+  return true;
 }

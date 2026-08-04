@@ -877,3 +877,40 @@ normally via `return()` on success or `message(FATAL_ERROR)` on failure — so C
 exit code (which reflects the grep result) rather than the child's signal termination. This approach verifies the
 actual log line and is portable across platforms where signal-death handling varies. The test passes on the intended
 OOM path and fails if the allocation unexpectedly succeeds (mutation verification confirmed both behaviors).
+
+## Default heap backs onto libc malloc, not SDL_malloc (task-7-brief.md)
+
+Task 7's SDL routing (`bk__alloc_route_sdl`, `SDL_SetMemoryFunctions`) turns `SDL_malloc`/
+`SDL_calloc`/`SDL_realloc`/`SDL_free` into a shim that resolves back through the installed
+base allocator. `s_default_alloc`/`s_default_realloc`/`s_default_free` previously called
+`SDL_malloc`/`SDL_realloc`/`SDL_free` directly, on the assumption that "the default heap"
+just means "whatever SDL_malloc does." Once routing is active that assumption breaks: any
+base allocator whose implementation transitively bottoms out in `s_default_alloc` (which
+includes `bk_allocator_counting` with an unset `inner` — `bk__alloc_install`'s existing
+self-reference guard pins exactly that case to the default allocator, and every current
+test uses this shape) now recurses forever — `SDL_malloc` calls the shim, the shim resolves
+to the base, the base's default-heap path calls `SDL_malloc` again. Confirmed empirically:
+routing `tests/test_app_lifecycle`'s counting allocator through the literal shim from the
+task brief produced a reproducible AddressSanitizer stack-overflow, the same four-frame
+cycle every time (`s_sdl_shim_malloc` → `bk__alloc` → `s_counting_alloc` → `s_default_alloc`
+→ `SDL_malloc` → `s_sdl_shim_malloc`).
+
+The fix: `s_default_alloc`/`s_default_realloc`/`s_default_free`, and the zero-fastpath in
+`bk__alloc_site` that special-cases the default allocator, now call libc `malloc`/`realloc`/
+`free`/`calloc` (`<stdlib.h>`, already included) directly instead of going through SDL's
+dispatch table. "The default heap" is a fixed primitive that `SDL_SetMemoryFunctions`
+cannot redirect, so the cycle cannot form regardless of how many wrapper allocators sit
+between the base and the default. This is a narrower version of the same reasoning behind
+`bk_math`'s libc `assert` deviation above: where routing SDL-ward would create a dependency
+cycle, go around SDL instead of through it. Verified by re-running the full suite (22/22
+green) and rerunning `test_app_lifecycle` five times consecutively with no recursion.
+
+A related, expected (not a bug) behavior: `test_app_lifecycle`'s counting allocator no
+longer nets to zero live allocations after `bk_run` returns, because SDL retains
+process-global state past `SDL_Quit` (measured on this platform: allocation counts varied
+run-to-run in the 90s, a handful of KB — SDL_GetEnvironment's hash table and similar
+one-time global caches). The `BK_MEM_TAG_SDL` counter grows with that retained set, so the
+lifecycle test's leak assertions now compare `s_counter.live_allocs`/`live_bytes` against
+`bk_mem_stats(BK_MEM_TAG_SDL)`'s corresponding fields and assert the *difference* is zero,
+instead of asserting the raw counters are zero — every non-SDL tag was independently
+confirmed to fully net to zero in the same run.

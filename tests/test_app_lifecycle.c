@@ -52,10 +52,16 @@ int main(int argc, char **argv) {
   int result = bk_run(&desc, argc, argv);
   REQUIRE(result == 0);
   REQUIRE(s_update_calls == 3);
-  REQUIRE(s_counter.total_allocs > 0);           // the framework routed through it
-  REQUIRE_EQ_U64((u64)s_counter.live_allocs, 0); // and freed everything it allocated
-  REQUIRE_EQ_U64((u64)s_counter.live_bytes, 0);
+  REQUIRE(s_counter.total_allocs > 0); // the framework routed through it
+  // SDL keeps process-global state alive past bk_run/SDL_Quit (measured: dozens of
+  // allocations, a few KB, on this platform) -- s_counter.live_allocs/live_bytes is no
+  // longer 0 with SDL routed through it, so the leak check has to exclude the SDL tag's
+  // contribution and assert everything *else* the framework allocated was freed.
+  BK_MemStats sdl_stats = bk_mem_stats(BK_MEM_TAG_SDL);
+  REQUIRE_EQ_U64((u64)(s_counter.live_allocs - sdl_stats.live_allocs), 0);
+  REQUIRE_EQ_U64((u64)(s_counter.live_bytes - sdl_stats.live_bytes), 0);
   REQUIRE(bk_mem_stats(BK_MEM_TAG_FRAME).total_allocs > 0); // arena chunks were tagged
+  REQUIRE(sdl_stats.total_allocs > 0);                      // SDL routed through the base too
   printf("test_app_lifecycle: OK\n");
   return 0;
 }
