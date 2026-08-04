@@ -40,7 +40,7 @@ static void s_log_free(void *ptr, isize size, void *ctx) {
 }
 
 static void test_default_roundtrip(void) {
-  // a == nullptr and all-zero struct both mean the default SDL heap.
+  // a == nullptr and all-zero struct both mean the default heap (libc malloc/free).
   void *p = bk_alloc(nullptr, 64);
   REQUIRE(p != nullptr);
   bk_free(nullptr, p, 64);
