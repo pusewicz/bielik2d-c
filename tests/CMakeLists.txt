@@ -22,8 +22,8 @@ target_include_directories(test_alloc PRIVATE ${PROJECT_SOURCE_DIR}/src)
 add_test(NAME test_alloc COMMAND test_alloc)
 
 # Deliberately aborts (OOM policy); passes on the log line, so the crash exit
-# is expected. SDL logs to stderr. A CMake wrapper script captures output and
-# exits normally so CTest judges by exit code instead of signal status.
+# is expected. A CMake wrapper script captures output and exits normally so
+# CTest judges by exit code instead of signal status.
 add_executable(test_alloc_oom test_alloc_oom.c)
 target_link_libraries(test_alloc_oom PRIVATE bielik bk_warnings)
 add_test(NAME test_alloc_oom COMMAND ${CMAKE_COMMAND}
