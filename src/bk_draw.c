@@ -687,11 +687,12 @@ static constexpr f32 s_draw_corners[6] = {0.0f, 1.0f, 2.0f, 0.0f, 2.0f, 3.0f};
 /// Mirrors draw.vert's batch_uniform block: a single batch-base command index, padded
 /// to a uvec4 (16 bytes) so std140's block-size rule is satisfied trivially rather than
 /// relying on implicit tail padding. Pushed once per batch, before that batch's draw --
-/// see bk__draw_collate. Not SDL_DrawGPUPrimitives' first_instance: gl_InstanceIndex's
-/// relationship to baseInstance differs across backends (Vulkan folds it in; the MSL
-/// translation maps it to a zero-based [[instance_id]], which does not), so the offset
-/// travels as a uniform instead of relying on either driver convention. See
-/// DEVIATIONS.md.
+/// see bk__draw_collate. Not SDL_DrawGPUPrimitives' first_instance: SDL_gpu.h documents
+/// first_instance as incompatible with shader built-in instance IDs and says to always
+/// pass 0, since it forwards the value to each backend unnormalized and HLSL's
+/// SV_InstanceID is zero-based where Vulkan's and Metal's equivalents fold the offset
+/// in. So the offset travels as a uniform instead of relying on a driver convention SDL
+/// itself declines to guarantee. See DEVIATIONS.md.
 typedef struct BK_DrawBatchUniform {
   u32 base_index;
   u32 _pad[3];

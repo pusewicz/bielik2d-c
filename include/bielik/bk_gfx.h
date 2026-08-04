@@ -60,9 +60,10 @@ void bk_gfx_push_fragment_uniform(const void *data, u32 size);
 /// vertex shader reads gl_InstanceIndex (SV_InstanceID) to pick per-instance data,
 /// typically out of a bound vertex storage buffer. Instances are always numbered from
 /// 0 within this draw -- there is no first_instance parameter here, and there
-/// deliberately never will be: gl_InstanceIndex's relationship to a base-instance
-/// offset differs across backends (folded in on Vulkan, excluded from Metal's
-/// [[instance_id]] after spirv-cross translation), so a caller slicing one shared
+/// deliberately never will be: SDL_gpu.h documents first_instance as incompatible with
+/// shader built-in instance IDs and says to always pass 0, because SDL forwards it to
+/// each backend unnormalized and HLSL's SV_InstanceID is zero-based where Vulkan's,
+/// Metal's, and WebGPU's equivalents fold the offset in. A caller slicing one shared
 /// buffer across several draws (as bk_draw's batches do) must push the base offset as
 /// a uniform instead -- see BK_DrawBatchUniform in src/bk_draw.c for a worked example.
 void bk_gfx_draw_instanced(i32 vertex_count, i32 instance_count);

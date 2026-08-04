@@ -26,9 +26,9 @@ layout (std430, set = 0, binding = 1) readonly buffer payload_buffer { vec4 payl
 // The batch's first command index. cmds/payload hold every batch's data back to back
 // in one buffer pair (bk__draw_collate), so a batch after the first must offset its
 // read by this rather than starting at cmds[0] again. Not SDL_DrawGPUPrimitives'
-// first_instance: gl_InstanceIndex's relationship to baseInstance differs across
-// backends (Vulkan folds baseInstance in; spirv-cross's Metal translation maps it to
-// [[instance_id]], which does not) -- see DEVIATIONS.md.
+// first_instance: SDL_gpu.h documents first_instance as incompatible with shader
+// built-in instance IDs and says to always pass 0, since SDL forwards the value to
+// each backend unnormalized -- see DEVIATIONS.md.
 layout (set = 1, binding = 0) uniform batch_uniform { uvec4 u_batch_base; };
 
 layout (location = 0) out vec4 v_pos_uv;   // world pos.xy, uv.zw

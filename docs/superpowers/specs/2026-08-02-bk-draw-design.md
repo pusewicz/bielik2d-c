@@ -443,9 +443,9 @@ aa` so the antialias band is never clipped. `u_batch_base` is a `set = 1, bindin
 uniform block (a single `uint`, padded to a `uvec4` for std140's block-size rule) carrying
 the batch's first command index — needed because collate packs every batch's commands
 into one shared `cmds` array back to back, but `SDL_DrawGPUPrimitives`' `first_instance` is
-hardcoded to 0 (`bk_gfx_draw_instanced`, `src/bk_gfx.c`) and `gl_InstanceIndex` is not a
-portable substitute: spirv-cross translates it to Metal's zero-based `[[instance_id]]`,
-which excludes `baseInstance` entirely, unlike Vulkan's convention. See `DEVIATIONS.md`.
+hardcoded to 0 (`bk_gfx_draw_instanced`, `src/bk_gfx.c`), and `SDL_gpu.h` itself documents
+`first_instance` as incompatible with shader built-in instance IDs, saying to always pass 0
+since SDL forwards the value to each backend unnormalized. See `DEVIATIONS.md`.
 
 **Fragment.** Evaluates the shape's SDF at the interpolated world-space position, applies
 the antialias band, samples `u_image` for texture records, and outputs premultiplied
