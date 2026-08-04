@@ -631,15 +631,14 @@ overpainted by a duplicate of the first block's geometry.
 
 The obvious-looking fix — passing `batch->first` as `SDL_DrawGPUPrimitives`'s
 `first_instance` parameter and reading `gl_InstanceIndex` unmodified — was tried and
-rejected before implementation, because it is a portability trap that only fails on
-one of the two backends this project ships today: on Vulkan, `gl_InstanceIndex` equals
-`gl_InstanceID + gl_BaseInstance` (folds the offset in), but spirv-cross translates it
-to Metal's `[[instance_id]]`, which is zero-based within the draw and excludes
-`baseInstance` entirely (confirmed by inspecting the generated `shaders/draw.vertex.msl`:
-`uint gl_InstanceIndex [[instance_id]]`). Passing `first_instance` would render correctly
-on Vulkan and silently produce the same duplicate-block bug on Metal — this machine's
-own default backend — which is exactly the class of bug this fix exists to close, not
-one it should reintroduce.
+rejected before implementation, because `SDL_gpu.h` documents `first_instance` as
+incompatible with shader built-in instance IDs and says to always pass 0: SDL forwards
+the value to each backend unnormalized (`vkCmdDraw`'s `firstInstance`,
+`drawPrimitives:...baseInstance:`, D3D12's `DrawInstanced`) rather than guaranteeing any
+particular `gl_InstanceIndex`/`[[instance_id]]` convention on the other side. Relying on
+it anyway would work by accident on whichever backend happens to match the assumption
+and break silently on whichever doesn't — exactly the class of bug this fix exists to
+close, not one it should reintroduce.
 
 Implemented instead: the batch's first command index travels as a vertex uniform,
 portable across both `gl_InstanceIndex` conventions because it never relies on either.
@@ -679,6 +678,26 @@ regenerating the bytecode: the test failed at the second box's probe
 box — a box entirely outside batch 1's own scissor rect — rather than a duplicate
 appearing at the wrong place, which is itself a discriminating signal, not a coincidence
 of this particular test's geometry. Restored the fix, regenerated, confirmed pass.
+
+**Correction (resolving issue #31, 2026-08-04):** an earlier version of this entry claimed
+Metal's `[[instance_id]]` "is zero-based within the draw and excludes `baseInstance`
+entirely," inferred from inspecting generated MSL (`uint gl_InstanceIndex [[instance_id]]`)
+rather than from measured behavior — that only shows the *mapping*, not the *semantics* on
+the other side of it. The inference was backwards. SPIRV-Cross's
+`CompilerMSL::Options::enable_base_index_zero` defaults to `false`, and its own comment
+reads "Ensures vertex and instance indices start at zero. This reflects the behavior of
+HLSL with SV_VertexID and SV_InstanceID" — so the *default* (what this repo's committed
+bytecode uses) is the non-zero-based mapping, meaning Metal's `[[instance_id]]` folds
+`baseInstance` in, the same as Vulkan. HLSL/D3D12's zero-based `SV_InstanceID` is the actual
+outlier, not Metal. Confirmed empirically on this machine rather than re-guessed: patched
+`bk__gfx_flush` to pass `first_instance = 1` and `tests/test_gfx_drawlist_gpu.c`'s instanced
+test (`inst_render`) to draw 2 of its 3 uploaded quads (red/green/blue at indices 0/1/2).
+The first (red) quad vanished; green and blue rendered — the read shifted forward by one,
+meaning `baseInstance` was folded into `[[instance_id]]` before the shader ever saw it. Both
+edits were reverted after the measurement; neither shipped. The decision itself — route the
+batch offset through a uniform rather than `first_instance` — stands unchanged, since
+`SDL_gpu.h`'s own documented rule is reason enough on its own; only the Metal-specific
+rationale above was corrected, not the fix.
 
 ## Issue #21 reassigned from P3.3 to P3.6 (docs/superpowers/specs/2026-08-01-gfx-substrate-design.md §5, docs/superpowers/specs/2026-08-02-bk-draw-design.md §7)
 
