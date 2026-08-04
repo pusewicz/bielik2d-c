@@ -60,7 +60,8 @@ typedef struct BK_AtlasDesc {
 } BK_AtlasDesc;
 
 /// Creates a cache. Every callback in desc must be non-null (BK_ASSERT). Returns nullptr
-/// and logs via SDL_Log on allocation failure.
+/// and logs via SDL_Log if desc->allocator is partially set (some but not all three
+/// functions).
 [[nodiscard]] BK_Atlas *bk__atlas_create(const BK_AtlasDesc *desc);
 
 /// Destroys the cache, calling destroy_texture for every texture it still owns. No-op if
