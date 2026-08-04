@@ -12,20 +12,28 @@
 // ctx parameter and no allocation size passed back to free/realloc -- it
 // can't express a per-instance allocator (e.g. one arena per subsystem) or
 // the size-aware free that a bump/pool allocator needs. BK_Allocator is a
-// different shape for a different job; wiring bk_alloc's default heap path
-// through SDL's functions instead of straight to SDL_malloc/SDL_free is a
-// later task, not this one.
+// different shape for a different job. The framework's own default heap
+// (what a == nullptr resolves to) calls libc malloc/realloc/free directly,
+// never SDL_malloc/SDL_free: bk_alloc.c's SDL routing (bk__alloc_route_sdl)
+// makes SDL_malloc itself dispatch through the installed base allocator, so
+// the default heap has to stay a fixed primitive that routing can never loop
+// back through -- see DEVIATIONS.md.
 // ---------------------------------------------------------------------------
 
-/// A pluggable allocator. All-zero means: use the framework default (SDL heap).
-/// If any function is set, all three must be set -- partial override is
-/// rejected wherever an allocator is installed. free_fn receives the original
-/// allocation size and realloc_fn both sizes, so implementations never need
-/// per-allocation headers. Returned memory is uninitialized (zeroing is the
-/// call layer's job) and must be aligned for max_align_t. Returning nullptr
-/// means failure; the framework logs and aborts. Thread-safety is the
-/// implementation's concern: the base allocator (BK_AppDesc) must be
-/// thread-safe if app callbacks allocate off the main thread.
+/// A pluggable allocator. All-zero means: use the framework default (the
+/// process's libc heap). If any function is set, all three must be set --
+/// partial override is rejected wherever an allocator is installed. free_fn
+/// receives the original allocation size and realloc_fn both sizes, so
+/// implementations never need per-allocation headers. Returned memory is
+/// uninitialized (zeroing is the call layer's job) and must be aligned for
+/// max_align_t. Returning nullptr means failure; the framework logs and
+/// aborts. Thread-safety is the implementation's concern: the base allocator
+/// (BK_AppDesc) must be thread-safe if app callbacks allocate off the main
+/// thread. Implementations must never call SDL_malloc/SDL_calloc/SDL_realloc/
+/// SDL_free (libc or anything else not routed through SDL is fine): once SDL
+/// routing is active (bk_alloc.c's bk__alloc_route_sdl), those functions
+/// dispatch through the installed base allocator, so an implementation that
+/// calls them recurses into itself with no diagnostic.
 typedef struct BK_Allocator {
   void *(*alloc_fn)(isize size, void *ctx);
   void *(*realloc_fn)(void *ptr, isize old_size, isize new_size, void *ctx);

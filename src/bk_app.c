@@ -215,7 +215,7 @@ SDL_AppResult bk__boot(BK_AppDesc (*get_desc)(void), void **appstate, int argc, 
   if (!bk__alloc_install(&s_app.desc.allocator)) {
     return s_boot_fail("BK_AppDesc.allocator is partially set (all three functions or none)");
   }
-  bk__alloc_route_sdl(); // best-effort; skipped cases are logged
+  bk__alloc_route_sdl(); // best-effort: silent no-op with the default heap; SDL refusal logs
 
   if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_GAMEPAD)) {
     char msg[256];

@@ -7,7 +7,7 @@ bool bk__allocator_valid(const BK_Allocator *a);
 
 /// Installs the app-wide base allocator (what a == nullptr resolves to).
 /// Validates all-or-nothing; returns false and logs on a partial struct.
-/// nullptr or all-zero resets to the SDL-heap default. Called once from
+/// nullptr or all-zero resets to the libc-heap default. Called once from
 /// bk__boot before SDL_Init; tests call it directly.
 bool bk__alloc_install(const BK_Allocator *base);
 
@@ -15,6 +15,11 @@ bool bk__alloc_install(const BK_Allocator *base);
 /// SDL_SetMemoryFunctions. Call after bk__alloc_install and before SDL_Init,
 /// only. Returns false (already logged where warranted) when routing is
 /// skipped: default-heap base, pre-boot SDL allocations, or SDL refusal.
+/// Narrow gap: get_desc() runs before this call, so any SDL allocation an
+/// embedder's get_desc triggers happens before the shim installs and is never
+/// routed. Once installed, the base allocator (and its ctx) must outlive the
+/// process: SDL keeps some allocations alive past SDL_Quit, and nothing ever
+/// un-routes SDL's memory functions back off the shim.
 bool bk__alloc_route_sdl(void);
 
 // Framework-internal allocation: the public call layer plus a tag and an
