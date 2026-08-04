@@ -144,8 +144,10 @@ static bool s_map_rebuild(BK_Atlas *atlas) {
   return true;
 }
 
-/// Appends a record and indexes it. Returns the new record's index, or -1 on allocation
-/// failure (already logged).
+/// Appends a record and indexes it. Returns the new record's index. The -1 return guards
+/// against s_map_rebuild failing, which cannot happen under the allocator seam's
+/// abort-on-OOM contract (see s_map_rebuild's own comment) -- kept as defense-in-depth, not
+/// a path either call reaches today.
 static i32 s_record_add(BK_Atlas *atlas, const BK_AtlasRecord *record) {
   if (atlas->record_count == atlas->record_capacity) {
     i32 wanted = atlas->record_capacity == 0 ? 16 : atlas->record_capacity * 2;

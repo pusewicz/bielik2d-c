@@ -287,7 +287,9 @@ with a `"BK: "` prefix, deduplicated per `image_id` so a permanently missing ima
 spam a frame loop. The failure is **not** remembered: a later push retries.
 
 `bk__atlas_flush` returns **false when the frame was reported incompletely** — at least one
-entry was dropped, or an internal allocation failed. It is not "the frame was abandoned".
+entry was dropped (an internal allocation failing is not a live cause: the allocator seam
+aborts on OOM rather than returning failure, see `DEVIATIONS.md`). It is not "the frame was
+abandoned".
 These hold whichever value it returns:
 
 - The push buffer is empty.

@@ -219,8 +219,8 @@ BK_Rect bk_draw_peek_scissor(void) {
 
 /// Snapshots the current stacks into a new BK_DrawGeom, links it into the frame's chain,
 /// and returns it for the caller to fill in the shape payload. Returns nullptr if the
-/// camera transform is singular (culled -- not an error) or the frame arena is
-/// exhausted (already logged and asserted by bk_frame_alloc).
+/// camera transform is singular (culled -- not an error), or defensively if
+/// bk_frame_alloc ever returns null -- which real OOM no longer reaches (DEVIATIONS.md).
 static BK_DrawGeom *s_record(BK_DrawType type) {
   s_ensure_stacks();
   BK_M3x2 transform = s_draw.transforms[s_draw.transform_count - 1];
@@ -581,9 +581,11 @@ bool bk__draw_pack(BK_DrawPacked *out, i32 target_w, i32 target_h) {
   out->batches = bk_frame_alloc((usize)cmd_count * sizeof *out->batches, alignof(BK_DrawBatch));
   if (sorted == nullptr || out->cmds == nullptr || out->payload == nullptr ||
       out->batches == nullptr) {
-    // bk_frame_alloc already BK_ASSERTs on failure, but BK_ASSERT wraps SDL_assert,
-    // which compiles to nothing in Release -- log unconditionally so a frame that
-    // silently renders nothing still leaves a trace.
+    // Defense-in-depth, not a reachable path today: bk_frame_alloc's growth allocation
+    // aborts on real OOM (DEVIATIONS.md), and BK_ASSERT is live in Release too -- it no
+    // longer "wraps SDL_assert and compiles to nothing" (see the assert-tiers entry).
+    // Logging unconditionally anyway costs nothing and covers a future non-aborting
+    // allocator.
     SDL_Log("BK: bk__draw_pack: frame arena allocation failed, dropping %d commands", cmd_count);
     *out = (BK_DrawPacked){0};
     return false;

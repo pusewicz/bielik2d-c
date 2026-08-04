@@ -914,3 +914,77 @@ lifecycle test's leak assertions now compare `s_counter.live_allocs`/`live_bytes
 `bk_mem_stats(BK_MEM_TAG_SDL)`'s corresponding fields and assert the *difference* is zero,
 instead of asserting the raw counters are zero — every non-SDL tag was independently
 confirmed to fully net to zero in the same run.
+
+## `BK_Allocator` uses signed `isize`, not `size_t` (include/bielik/bk_alloc.h)
+
+`BK_Allocator`'s three function pointers and the whole call layer (`bk_alloc`/`bk_realloc`/
+`bk_free`/`BK_NEW`/`BK_NEW_ARRAY`, `bk__alloc_site`/`bk__realloc_site`/`bk__free_site`) take
+`isize`, not the `size_t` SDL and libc use for the same job. The point: a negative size
+becomes an assertable bug (`BK_ASSERT(size >= 0)` in `bk__alloc_site`, `old_size >= 0 &&
+new_size >= 0` in `bk__realloc_site`) instead of a silently-wrapped huge unsigned. The
+concrete case is an overflowed `BK_NEW_ARRAY(a, T, n)` product
+(`(isize)sizeof(T) * (n)`): with `size_t` arithmetic the overflow wraps positive and sails
+past every check into a too-small allocation; with `isize` the same overflow goes negative,
+which the assert catches before a single byte moves. Cost: a cast at every SDL/libc boundary
+in both directions — `(usize)size` going into `malloc`/`realloc`/`calloc`
+(`s_default_alloc` and friends, `bk_alloc.c`), and `(isize)size` coming back out of the
+`SDL_SetMemoryFunctions` shim's `size_t` parameters (`s_sdl_shim_malloc` and friends, same
+file).
+
+## PLAN.md §2's memory strategy is inverted (PLAN.md:52-54)
+
+`PLAN.md` §2 said: wrap `SDL_malloc`/`SDL_free` (`bk__alloc`/`bk__free`, internal) so
+`SDL_SetMemoryFunctions` covers everything the framework allocates. Shipped: the reverse.
+`BK_Allocator` (`bk_alloc.h`) is the source of truth for every persistent allocation, and
+the framework's own default heap calls libc `malloc`/`realloc`/`free` directly — never
+SDL's (see "Default heap backs onto libc malloc, not SDL_malloc" above). SDL is wired into
+`BK_Allocator`, not the other way around: `bk__alloc_route_sdl` (`bk_alloc.c`) installs a
+size-header shim via `SDL_SetMemoryFunctions` that forwards SDL's own internal allocations
+back through the installed base allocator, tagged `BK_MEM_TAG_SDL`, but only when doing so
+is worth it. A pre-boot probe decides which: measured on this platform, `SDL_GetNumAllocations()`
+was 0 before `bk__boot` ran, which per the design spec selects the routed variant over the
+no-op fallback — that 0-count probe is what triggered the recursion bug the entry above
+documents, and why `s_default_alloc` had to move off `SDL_malloc`. See also "`BK_Allocator`
+does not build on `SDL_SetMemoryFunctions`" above for why the interface itself doesn't just
+delegate to SDL's narrower facility in the first place.
+
+## Two OOM policies were planned; only one is reachable today (docs/superpowers/specs/2026-08-03-bk-alloc-design.md §6, task-4-brief.md)
+
+The design spec's §6 states this as a deliberate, "pre-existing, unchanged" exception:
+`bk_alloc`/`bk_realloc` abort on OOM (`BK_ASSERT` + `abort()` — `s_oom` in `bk_alloc.c` is
+`[[noreturn]]`, "deterministic even when the assert is disabled or ignored" per its own
+comment), but `bk_frame_alloc` keeps its shipped contract of assert-then-return-nullptr,
+and every call site (`bk_gfx.c`'s `s_record_draw`/`s_copy_uniform`, `bk_draw.c`'s
+`s_record`/`bk__draw_pack`) drops its own unit of work and lets the frame continue. The
+reasoning: a dropped draw call is a glitch, a mid-frame abort is a crash.
+
+That contract predates Task 4. Task 4 rerouted the frame arena's own chunk-growth
+allocations (`s_chunk_create` in `bk_app.c`) onto the same `BK__ALLOC` seam every other
+allocation now uses, and that seam's OOM policy is unconditional abort. `s_chunk_create`
+dereferences the chunk it just allocated (`*chunk = (BK_ArenaChunk){...}`) on the very next
+line with no null check — proof in the code itself that the call can no longer return null.
+So the one allocation that used to be able to fail on genuine memory exhaustion now aborts
+before `bk_frame_alloc` ever gets a nullptr to check. `task-4-brief.md`'s Step 4
+self-corrects on exactly this point mid-sentence ("growth allocation now aborts rather than
+returning null") and explicitly chooses to leave `bk_frame_alloc`'s null-checks and every
+caller's drop-work branch in place anyway, as free defense-in-depth against a future
+non-aborting base allocator — not because the path is live today.
+
+The comments at those call sites (`bk_gfx.c:37-38`, `bk_gfx.c:147`, `bk_draw.c:221-223`,
+`bk_draw.c:584-587`) still read as if arena exhaustion were reachable and logged; corrected
+in this same pass to say what is actually true — genuine memory exhaustion aborts inside
+`BK__ALLOC` before `bk_frame_alloc` ever sees a nullptr to check. See "Frame arena is a
+chunk chain, not a single doubling block" above for the arena's growth mechanics.
+
+## `<stdatomic.h>` for the per-tag counters, not SDL's atomics (include/bielik/bk_alloc.h, src/bk_alloc.c)
+
+House rule: check SDL first. SDL3's `SDL_atomic.h` has `SDL_AtomicInt` and `SDL_AtomicU32`
+— both effectively 32-bit — and no 64-bit atomic add. `BK_MemStats`'s four counters
+(`live_bytes`, `live_allocs`, `peak_bytes`, `total_allocs`) are `isize`, which is
+`ptrdiff_t` and therefore 64-bit on every target in the toolchain baseline. C23
+`<stdatomic.h>` is already in that baseline (clang-everywhere), so reaching for it instead
+of SDL's narrower types costs nothing portability-wise. `bk_alloc.c`'s per-tag
+`BK_TagCounters` uses `_Atomic isize` fields with `atomic_fetch_add_explicit`/
+`atomic_load_explicit`/`atomic_compare_exchange_weak_explicit`, all at
+`memory_order_relaxed` — the counters are independent tallies, not a synchronization
+mechanism, so nothing stronger is needed.
