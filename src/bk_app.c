@@ -212,6 +212,10 @@ SDL_AppResult bk__boot(BK_AppDesc (*get_desc)(void), void **appstate, int argc, 
     s_app.desc.time.max_frame_dt = 0.25;
   }
 
+  if (!bk__alloc_install(&s_app.desc.allocator)) {
+    return s_boot_fail("BK_AppDesc.allocator is partially set (all three functions or none)");
+  }
+
   if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_GAMEPAD)) {
     char msg[256];
     SDL_snprintf(msg, sizeof msg, "SDL_Init failed: %s", SDL_GetError());
