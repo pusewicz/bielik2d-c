@@ -1,3 +1,4 @@
+#include "internal/bk_alloc_internal.h"
 #include "internal/bk_atlas_internal.h"
 
 #include <bielik/bk_app.h>
@@ -53,7 +54,6 @@ struct BK_Atlas {
 
   BK_AtlasEntry *pushed;
   i32 push_count, push_capacity;
-  bool push_dropped;
   bool in_flush;
 
   BK_AtlasEntry *flush_batch; // scratch for one submit_batch call, grown across flushes
@@ -123,25 +123,22 @@ static void s_map_reindex(BK_Atlas *atlas) {
   }
 }
 
-/// Grows the table and reindexes. Returns false and logs on allocation failure, leaving
-/// the old table intact so the caller can bail without corrupting state -- which only
-/// works because the caller has not yet mutated the record array. Growth only, so only
-/// s_record_add calls this.
+/// Grows the table and reindexes. Growth only, so only s_record_add calls this. Always
+/// succeeds: the allocator seam aborts rather than returning failure here.
 static bool s_map_rebuild(BK_Atlas *atlas) {
   i32 wanted = 16;
   while (wanted * 3 < (atlas->record_count + 1) * 4) {
     wanted *= 2;
   }
-  u64 *keys = SDL_calloc((usize)wanted, sizeof(u64));
-  i32 *values = SDL_malloc((usize)wanted * sizeof(i32));
-  if (keys == nullptr || values == nullptr) {
-    SDL_free(keys);
-    SDL_free(values);
-    SDL_Log("BK: bk_atlas: residency index allocation failed (%d slots)", wanted);
-    return false;
-  }
-  SDL_free(atlas->map.keys);
-  SDL_free(atlas->map.values);
+  u64 *keys =
+      BK__ALLOC_ZERO(&atlas->desc.allocator, BK_MEM_TAG_ATLAS, (isize)wanted * (isize)sizeof(u64));
+  i32 *values =
+      BK__ALLOC(&atlas->desc.allocator, BK_MEM_TAG_ATLAS, (isize)wanted * (isize)sizeof(i32));
+  i32 old_capacity = atlas->map.capacity;
+  BK__FREE(&atlas->desc.allocator, BK_MEM_TAG_ATLAS, atlas->map.keys,
+           (isize)old_capacity * (isize)sizeof(u64));
+  BK__FREE(&atlas->desc.allocator, BK_MEM_TAG_ATLAS, atlas->map.values,
+           (isize)old_capacity * (isize)sizeof(i32));
   atlas->map = (BK_AtlasMap){.keys = keys, .values = values, .capacity = wanted};
   s_map_reindex(atlas);
   return true;
@@ -152,12 +149,9 @@ static bool s_map_rebuild(BK_Atlas *atlas) {
 static i32 s_record_add(BK_Atlas *atlas, const BK_AtlasRecord *record) {
   if (atlas->record_count == atlas->record_capacity) {
     i32 wanted = atlas->record_capacity == 0 ? 16 : atlas->record_capacity * 2;
-    BK_AtlasRecord *grown = SDL_realloc(atlas->records, (usize)wanted * sizeof(BK_AtlasRecord));
-    if (grown == nullptr) {
-      SDL_Log("BK: bk_atlas: record array allocation failed (%d records)", wanted);
-      return -1;
-    }
-    atlas->records = grown;
+    atlas->records = BK__REALLOC(&atlas->desc.allocator, BK_MEM_TAG_ATLAS, atlas->records,
+                                 (isize)atlas->record_capacity * (isize)sizeof(BK_AtlasRecord),
+                                 (isize)wanted * (isize)sizeof(BK_AtlasRecord));
     atlas->record_capacity = wanted;
   }
   atlas->records[atlas->record_count] = *record;
@@ -194,11 +188,12 @@ BK_Atlas *bk__atlas_create(const BK_AtlasDesc *desc) {
   BK_ASSERT(desc->destroy_texture != nullptr);
   BK_ASSERT(desc->submit_batch != nullptr);
 
-  BK_Atlas *atlas = SDL_calloc(1, sizeof(BK_Atlas));
-  if (atlas == nullptr) {
-    SDL_Log("BK: bk__atlas_create: allocation failed");
+  if (!bk__allocator_valid(&desc->allocator)) {
+    SDL_Log("BK: bk__atlas_create: allocator is partially set (all three functions or none)");
     return nullptr;
   }
+
+  BK_Atlas *atlas = BK__ALLOC_ZERO(&desc->allocator, BK_MEM_TAG_ATLAS, (isize)sizeof(BK_Atlas));
   atlas->desc = *desc;
   if (atlas->desc.atlas_size <= 0) {
     atlas->desc.atlas_size = BK_ATLAS_DEFAULT_SIZE;
@@ -225,14 +220,25 @@ void bk__atlas_destroy(BK_Atlas *atlas) {
       atlas->desc.destroy_texture(atlas->records[i].texture_id, atlas->desc.udata);
     }
   }
-  SDL_free(atlas->records);
-  SDL_free(atlas->map.keys);
-  SDL_free(atlas->map.values);
-  SDL_free(atlas->atlas_textures);
-  SDL_free(atlas->pushed);
-  SDL_free(atlas->flush_batch);
-  SDL_free(atlas->logged_failures);
-  SDL_free(atlas);
+  BK__FREE(&atlas->desc.allocator, BK_MEM_TAG_ATLAS, atlas->records,
+           (isize)atlas->record_capacity * (isize)sizeof(BK_AtlasRecord));
+  BK__FREE(&atlas->desc.allocator, BK_MEM_TAG_ATLAS, atlas->map.keys,
+           (isize)atlas->map.capacity * (isize)sizeof(u64));
+  BK__FREE(&atlas->desc.allocator, BK_MEM_TAG_ATLAS, atlas->map.values,
+           (isize)atlas->map.capacity * (isize)sizeof(i32));
+  BK__FREE(&atlas->desc.allocator, BK_MEM_TAG_ATLAS, atlas->atlas_textures,
+           (isize)atlas->atlas_capacity * (isize)sizeof(u64));
+  BK__FREE(&atlas->desc.allocator, BK_MEM_TAG_ATLAS, atlas->pushed,
+           (isize)atlas->push_capacity * (isize)sizeof(BK_AtlasEntry));
+  BK__FREE(&atlas->desc.allocator, BK_MEM_TAG_ATLAS, atlas->flush_batch,
+           (isize)atlas->flush_batch_capacity * (isize)sizeof(BK_AtlasEntry));
+  BK__FREE(&atlas->desc.allocator, BK_MEM_TAG_ATLAS, atlas->logged_failures,
+           (isize)atlas->logged_capacity * (isize)sizeof(u64));
+  // The allocator lives inside the block being freed, so take a stack copy before freeing
+  // atlas itself -- freeing through &atlas->desc.allocator after this point would read
+  // memory that is no longer valid.
+  BK_Allocator allocator = atlas->desc.allocator;
+  BK__FREE(&allocator, BK_MEM_TAG_ATLAS, atlas, (isize)sizeof(BK_Atlas));
 }
 
 /// Copies a record's identity and placement into a caller-facing entry. udata is left
@@ -259,11 +265,9 @@ static void s_log_image_failure(BK_Atlas *atlas, u64 image_id, const char *reaso
   SDL_Log("BK: bk_atlas: dropping image %llu: %s", (unsigned long long)image_id, reason);
   if (atlas->logged_count == atlas->logged_capacity) {
     i32 wanted = atlas->logged_capacity == 0 ? 8 : atlas->logged_capacity * 2;
-    u64 *grown = SDL_realloc(atlas->logged_failures, (usize)wanted * sizeof(u64));
-    if (grown == nullptr) {
-      return; // the log already happened; losing the dedup entry only risks a repeat
-    }
-    atlas->logged_failures = grown;
+    atlas->logged_failures = BK__REALLOC(
+        &atlas->desc.allocator, BK_MEM_TAG_ATLAS, atlas->logged_failures,
+        (isize)atlas->logged_capacity * (isize)sizeof(u64), (isize)wanted * (isize)sizeof(u64));
     atlas->logged_capacity = wanted;
   }
   atlas->logged_failures[atlas->logged_count++] = image_id;
@@ -316,20 +320,15 @@ static i32 s_make_resident(BK_Atlas *atlas, u64 image_id, i32 width, i32 height)
     s_record_remove(atlas, index);
     return -1;
   }
-  void *pixels = SDL_malloc(bytes);
-  if (pixels == nullptr) {
-    SDL_Log("BK: bk_atlas: pixel buffer allocation failed (%zu bytes)", bytes);
-    s_record_remove(atlas, index);
-    return -1;
-  }
+  void *pixels = BK__ALLOC(&atlas->desc.allocator, BK_MEM_TAG_ATLAS, (isize)bytes);
   if (!atlas->desc.get_pixels(image_id, pixels, (i32)bytes, width, height, atlas->desc.udata)) {
-    SDL_free(pixels);
+    BK__FREE(&atlas->desc.allocator, BK_MEM_TAG_ATLAS, pixels, (isize)bytes);
     s_log_image_failure(atlas, image_id, "get_pixels returned false");
     s_record_remove(atlas, index);
     return -1;
   }
   u64 texture_id = atlas->desc.create_texture(pixels, width, height, atlas->desc.udata);
-  SDL_free(pixels);
+  BK__FREE(&atlas->desc.allocator, BK_MEM_TAG_ATLAS, pixels, (isize)bytes);
   if (texture_id == 0) {
     s_log_image_failure(atlas, image_id, "create_texture returned 0");
     s_record_remove(atlas, index);
@@ -351,13 +350,9 @@ void bk__atlas_push(BK_Atlas *atlas, BK_AtlasEntry entry) {
 
   if (atlas->push_count == atlas->push_capacity) {
     i32 wanted = atlas->push_capacity == 0 ? 16 : atlas->push_capacity * 2;
-    BK_AtlasEntry *grown = SDL_realloc(atlas->pushed, (usize)wanted * sizeof(BK_AtlasEntry));
-    if (grown == nullptr) {
-      SDL_Log("BK: bk_atlas: push buffer allocation failed (%d entries)", wanted);
-      atlas->push_dropped = true;
-      return;
-    }
-    atlas->pushed = grown;
+    atlas->pushed = BK__REALLOC(&atlas->desc.allocator, BK_MEM_TAG_ATLAS, atlas->pushed,
+                                (isize)atlas->push_capacity * (isize)sizeof(BK_AtlasEntry),
+                                (isize)wanted * (isize)sizeof(BK_AtlasEntry));
     atlas->push_capacity = wanted;
   }
   atlas->pushed[atlas->push_count] = entry;
@@ -467,9 +462,8 @@ bool bk__atlas_flush(BK_Atlas *atlas) {
   // leave entries buffered to replay against a frame that never happened (spec 4.1).
   BK_AtlasEntry *pushed = atlas->pushed;
   i32 count = atlas->push_count;
-  bool complete = !atlas->push_dropped;
+  bool complete = true;
   atlas->push_count = 0;
-  atlas->push_dropped = false;
   if (count == 0) {
     return complete;
   }
@@ -493,15 +487,10 @@ bool bk__atlas_flush(BK_Atlas *atlas) {
   // Step 2: group surviving entries by first-seen texture_id, in push order. At most
   // `count` distinct textures can appear in one flush, so that bounds this local list --
   // atlas counts are single digits in practice, but the bound has to hold regardless.
-  u64 *group_textures = SDL_malloc((usize)count * sizeof(u64));
-  BK_AtlasSortItem *sort_items = SDL_malloc((usize)count * sizeof(BK_AtlasSortItem));
-  if (group_textures == nullptr || sort_items == nullptr) {
-    SDL_Log("BK: bk_atlas: flush scratch allocation failed (%d entries)", count);
-    SDL_free(group_textures);
-    SDL_free(sort_items);
-    atlas->in_flush = false;
-    return false;
-  }
+  u64 *group_textures =
+      BK__ALLOC(&atlas->desc.allocator, BK_MEM_TAG_ATLAS, (isize)count * (isize)sizeof(u64));
+  BK_AtlasSortItem *sort_items = BK__ALLOC(&atlas->desc.allocator, BK_MEM_TAG_ATLAS,
+                                           (isize)count * (isize)sizeof(BK_AtlasSortItem));
 
   i32 group_count = 0;
   i32 sort_count = 0;
@@ -524,7 +513,8 @@ bool bk__atlas_flush(BK_Atlas *atlas) {
     sort_items[sort_count].index = i;
     sort_count++;
   }
-  SDL_free(group_textures);
+  BK__FREE(&atlas->desc.allocator, BK_MEM_TAG_ATLAS, group_textures,
+           (isize)count * (isize)sizeof(u64));
 
   // Step 3: sort by (group, push index).
   SDL_qsort(sort_items, (usize)sort_count, sizeof(BK_AtlasSortItem), s_compare_sort_items);
@@ -536,14 +526,10 @@ bool bk__atlas_flush(BK_Atlas *atlas) {
     while (wanted < sort_count) {
       wanted *= 2;
     }
-    BK_AtlasEntry *grown = SDL_realloc(atlas->flush_batch, (usize)wanted * sizeof(BK_AtlasEntry));
-    if (grown == nullptr) {
-      SDL_Log("BK: bk_atlas: flush batch buffer allocation failed (%d entries)", wanted);
-      SDL_free(sort_items);
-      atlas->in_flush = false;
-      return false;
-    }
-    atlas->flush_batch = grown;
+    atlas->flush_batch =
+        BK__REALLOC(&atlas->desc.allocator, BK_MEM_TAG_ATLAS, atlas->flush_batch,
+                    (isize)atlas->flush_batch_capacity * (isize)sizeof(BK_AtlasEntry),
+                    (isize)wanted * (isize)sizeof(BK_AtlasEntry));
     atlas->flush_batch_capacity = wanted;
   }
 
@@ -558,7 +544,8 @@ bool bk__atlas_flush(BK_Atlas *atlas) {
     atlas->desc.submit_batch(atlas->flush_batch, run_count, atlas->desc.udata);
   }
 
-  SDL_free(sort_items);
+  BK__FREE(&atlas->desc.allocator, BK_MEM_TAG_ATLAS, sort_items,
+           (isize)count * (isize)sizeof(BK_AtlasSortItem));
   atlas->in_flush = false;
   return complete;
 }
@@ -614,11 +601,9 @@ static i32 s_pack_one_atlas(BK_Atlas *atlas, bool *dropped) {
     return 0;
   }
 
-  BK_AtlasCandidate *candidates = SDL_malloc((usize)candidate_count * sizeof(BK_AtlasCandidate));
-  if (candidates == nullptr) {
-    SDL_Log("BK: bk_atlas: defrag candidate list allocation failed (%d entries)", candidate_count);
-    return -1;
-  }
+  BK_AtlasCandidate *candidates =
+      BK__ALLOC(&atlas->desc.allocator, BK_MEM_TAG_ATLAS,
+                (isize)candidate_count * (isize)sizeof(BK_AtlasCandidate));
   i32 filled = 0;
   for (i32 i = 0; i < atlas->record_count; i++) {
     const BK_AtlasRecord *record = &atlas->records[i];
@@ -636,12 +621,9 @@ static i32 s_pack_one_atlas(BK_Atlas *atlas, bool *dropped) {
   SDL_qsort(candidates, (usize)candidate_count, sizeof(BK_AtlasCandidate), s_compare_candidates);
 
   // Step 3: shelf-place.
-  BK_AtlasPlacement *placements = SDL_malloc((usize)candidate_count * sizeof(BK_AtlasPlacement));
-  if (placements == nullptr) {
-    SDL_Log("BK: bk_atlas: defrag placement list allocation failed (%d entries)", candidate_count);
-    SDL_free(candidates);
-    return -1;
-  }
+  BK_AtlasPlacement *placements =
+      BK__ALLOC(&atlas->desc.allocator, BK_MEM_TAG_ATLAS,
+                (isize)candidate_count * (isize)sizeof(BK_AtlasPlacement));
 
   i32 size = atlas->desc.atlas_size;
   i32 shelf_x = 0, shelf_y = 0, shelf_height = 0;
@@ -666,31 +648,22 @@ static i32 s_pack_one_atlas(BK_Atlas *atlas, bool *dropped) {
     max_width = width > max_width ? width : max_width;
     max_height = height > max_height ? height : max_height;
   }
-  SDL_free(candidates);
+  BK__FREE(&atlas->desc.allocator, BK_MEM_TAG_ATLAS, candidates,
+           (isize)candidate_count * (isize)sizeof(BK_AtlasCandidate));
   if (placed_count == 0) {
-    SDL_free(placements);
+    BK__FREE(&atlas->desc.allocator, BK_MEM_TAG_ATLAS, placements,
+             (isize)candidate_count * (isize)sizeof(BK_AtlasPlacement));
     return 0;
   }
 
   // Step 4: allocate the atlas image, zero-filled so unpacked regions are not uninitialized.
-  usize image_bytes = (usize)size * (usize)size * 4u;
-  u8 *image = SDL_calloc(1, image_bytes);
-  if (image == nullptr) {
-    SDL_Log("BK: bk_atlas: defrag atlas image allocation failed (%d x %d)", size, size);
-    SDL_free(placements);
-    return -1;
-  }
+  isize image_bytes = (isize)size * (isize)size * 4;
+  u8 *image = BK__ALLOC_ZERO(&atlas->desc.allocator, BK_MEM_TAG_ATLAS, image_bytes);
 
   // Step 5: read pixels into scratch, sized to the largest placed image and reused, then
   // blit each one into the atlas image at its shelf position.
-  usize scratch_bytes = (usize)max_width * (usize)max_height * 4u;
-  u8 *scratch = SDL_malloc(scratch_bytes);
-  if (scratch == nullptr) {
-    SDL_Log("BK: bk_atlas: defrag scratch buffer allocation failed (%zu bytes)", scratch_bytes);
-    SDL_free(image);
-    SDL_free(placements);
-    return -1;
-  }
+  isize scratch_bytes = (isize)max_width * (isize)max_height * 4;
+  u8 *scratch = BK__ALLOC(&atlas->desc.allocator, BK_MEM_TAG_ATLAS, scratch_bytes);
 
   i32 surviving_count = 0;
   for (i32 i = 0; i < placed_count; i++) {
@@ -727,20 +700,22 @@ static i32 s_pack_one_atlas(BK_Atlas *atlas, bool *dropped) {
     }
     surviving_count++;
   }
-  SDL_free(scratch);
+  BK__FREE(&atlas->desc.allocator, BK_MEM_TAG_ATLAS, scratch, scratch_bytes);
 
   // Step 6: a pack that placed nothing survives is a blank atlas no record points at.
   if (surviving_count == 0) {
-    SDL_free(image);
-    SDL_free(placements);
+    BK__FREE(&atlas->desc.allocator, BK_MEM_TAG_ATLAS, image, image_bytes);
+    BK__FREE(&atlas->desc.allocator, BK_MEM_TAG_ATLAS, placements,
+             (isize)candidate_count * (isize)sizeof(BK_AtlasPlacement));
     return 0;
   }
 
   u64 texture_id = atlas->desc.create_texture(image, size, size, atlas->desc.udata);
-  SDL_free(image);
+  BK__FREE(&atlas->desc.allocator, BK_MEM_TAG_ATLAS, image, image_bytes);
   if (texture_id == 0) {
     SDL_Log("BK: bk_atlas: defrag atlas texture creation failed (%d x %d)", size, size);
-    SDL_free(placements);
+    BK__FREE(&atlas->desc.allocator, BK_MEM_TAG_ATLAS, placements,
+             (isize)candidate_count * (isize)sizeof(BK_AtlasPlacement));
     // Do not destroy any lonely texture: every image is still drawable from where it was.
     return -1;
   }
@@ -753,16 +728,9 @@ static i32 s_pack_one_atlas(BK_Atlas *atlas, bool *dropped) {
   // to undo.
   if (atlas->atlas_count == atlas->atlas_capacity) {
     i32 wanted = atlas->atlas_capacity == 0 ? 8 : atlas->atlas_capacity * 2;
-    u64 *grown = SDL_realloc(atlas->atlas_textures, (usize)wanted * sizeof(u64));
-    if (grown == nullptr) {
-      SDL_Log("BK: bk_atlas: atlas handle list allocation failed (%d handles)", wanted);
-      atlas->desc.destroy_texture(texture_id, atlas->desc.udata);
-      SDL_free(placements);
-      // Every image is still on the lonely texture it came in on: nothing adopted the
-      // atlas, so residency is exactly as it was before this pack started.
-      return -1;
-    }
-    atlas->atlas_textures = grown;
+    atlas->atlas_textures = BK__REALLOC(
+        &atlas->desc.allocator, BK_MEM_TAG_ATLAS, atlas->atlas_textures,
+        (isize)atlas->atlas_capacity * (isize)sizeof(u64), (isize)wanted * (isize)sizeof(u64));
     atlas->atlas_capacity = wanted;
   }
 
@@ -783,7 +751,8 @@ static i32 s_pack_one_atlas(BK_Atlas *atlas, bool *dropped) {
     record->min_x = placements[i].min_x;
     record->min_y = placements[i].min_y;
   }
-  SDL_free(placements);
+  BK__FREE(&atlas->desc.allocator, BK_MEM_TAG_ATLAS, placements,
+           (isize)candidate_count * (isize)sizeof(BK_AtlasPlacement));
 
   // Step 9: append. Cannot fail -- step 7 reserved the slot.
   BK_ASSERT(atlas->atlas_count < atlas->atlas_capacity);

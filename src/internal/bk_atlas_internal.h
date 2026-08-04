@@ -1,4 +1,5 @@
 #pragma once
+#include <bielik/bk_alloc.h>
 #include <bielik/bk_types.h>
 
 /// A runtime atlas cache. Owns its residency state across frames; see bk__atlas_flush
@@ -48,6 +49,8 @@ typedef struct BK_AtlasDesc {
   BK_AtlasDestroyTextureFn destroy_texture; // required
   BK_AtlasSubmitBatchFn submit_batch;       // required
   void *udata;                              // passed verbatim to every callback
+
+  BK_Allocator allocator; // serves every allocation this cache makes; all-zero => the app base
 
   i32 atlas_size;              // 0 => 2048. Atlases are square, atlas_size x atlas_size.
   i32 ticks_until_decay;       // 0 => 1800. Entries unseen this many ticks are evictable.
