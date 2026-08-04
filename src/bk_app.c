@@ -377,6 +377,13 @@ void bk__shutdown(void *appstate, SDL_AppResult result) {
   if (s_app.window) {
     SDL_DestroyWindow(s_app.window);
   }
+  // Reset to the pristine state bk__boot expects on entry. s_app is a static, so a
+  // second bk_run in the same process (every multi-scenario test binary) would otherwise
+  // start its boot looking at this run's already-destroyed gpu/window -- s_boot_fail's
+  // dialog path and a would-be second bk__shutdown both dereference/destroy through them.
+  s_app.gpu = nullptr;
+  s_app.window = nullptr;
+  s_app.booted = false;
 }
 
 SDL_Window *bk_window(void) {
