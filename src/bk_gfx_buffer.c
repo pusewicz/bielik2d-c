@@ -1,3 +1,4 @@
+#include "internal/bk_alloc_internal.h"
 #include "internal/bk_app_internal.h"
 #include "internal/bk_gfx_buffer_internal.h"
 
@@ -40,11 +41,7 @@ BK_GfxBuffer *bk_gfx_buffer_create(SDL_GPUDevice *device, BK_GfxBufferUsage usag
     return nullptr;
   }
 
-  BK_GfxBuffer *buffer = bk__alloc(sizeof(BK_GfxBuffer));
-  if (buffer == nullptr) {
-    SDL_ReleaseGPUBuffer(device, handle);
-    return nullptr;
-  }
+  BK_GfxBuffer *buffer = BK__ALLOC(nullptr, BK_MEM_TAG_GFX, (isize)sizeof(BK_GfxBuffer));
   buffer->device = device;
   buffer->handle = handle;
   buffer->size = size;
@@ -103,7 +100,7 @@ void bk_gfx_buffer_destroy(BK_GfxBuffer *buffer) {
     return;
   }
   SDL_ReleaseGPUBuffer(buffer->device, buffer->handle);
-  bk__free(buffer);
+  BK__FREE(nullptr, BK_MEM_TAG_GFX, buffer, (isize)sizeof(BK_GfxBuffer));
 }
 
 SDL_GPUBuffer *bk__gfx_buffer_handle(const BK_GfxBuffer *buffer) {

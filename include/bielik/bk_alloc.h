@@ -61,6 +61,34 @@ void bk__free_site(const BK_Allocator *a, void *ptr, isize size);
 #define BK_NEW(a, T)          ((T *)bk_alloc_zero((a), (isize)sizeof(T)))
 #define BK_NEW_ARRAY(a, T, n) ((T *)bk_alloc_zero((a), (isize)sizeof(T) * (n)))
 
+/// Per-system accounting tags. Every framework-internal allocation is counted
+/// under exactly one tag, regardless of which allocator serves it. The public
+/// bk_alloc()/bk_free() layer is untagged and never touches these counters.
+typedef enum BK_MemTag {
+  BK_MEM_TAG_APP,   // app core: boot, task system, misc
+  BK_MEM_TAG_FRAME, // frame arena backing blocks
+  BK_MEM_TAG_GFX,   // gfx object wrappers (buffers, textures, pipelines, ...)
+  BK_MEM_TAG_DRAW,  // reserved: allocations made directly by the draw layer
+  BK_MEM_TAG_ATLAS, // atlas cache: records, hash, pixel staging, atlas images
+  BK_MEM_TAG_SDL,   // SDL-internal allocations, when routed (bk_alloc design spec section 5)
+  BK_MEM_TAG_COUNT,
+} BK_MemTag;
+
+/// Live/lifetime counters for one tag. Each field is read atomically, but the
+/// struct is not a mutually-consistent snapshot -- fine for HUDs and asserts.
+typedef struct BK_MemStats {
+  isize live_bytes;
+  isize live_allocs;
+  isize peak_bytes;
+  isize total_allocs;
+} BK_MemStats;
+
+/// Counters for one tag. Valid any time (all-zero before first use).
+BK_MemStats bk_mem_stats(BK_MemTag tag);
+
+/// Short lowercase name for a tag ("gfx", "atlas", ...), for HUDs and logs.
+const char *bk_mem_tag_name(BK_MemTag tag);
+
 /// An allocator that BK_ASSERTs (and returns nullptr / does nothing) on any
 /// call. Install it where allocation is a bug, turning "does this path
 /// allocate?" into a testable assertion.

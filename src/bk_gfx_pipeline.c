@@ -1,3 +1,4 @@
+#include "internal/bk_alloc_internal.h"
 #include "internal/bk_app_internal.h"
 #include "internal/bk_gfx_buffer_internal.h"
 #include "internal/bk_gfx_pipeline_internal.h"
@@ -253,11 +254,7 @@ BK_GfxPipeline *bk_gfx_pipeline_create(SDL_GPUDevice *device, const BK_GfxPipeli
     return nullptr;
   }
 
-  BK_GfxPipeline *pipeline = bk__alloc(sizeof(BK_GfxPipeline));
-  if (pipeline == nullptr) {
-    SDL_ReleaseGPUGraphicsPipeline(device, handle);
-    return nullptr;
-  }
+  BK_GfxPipeline *pipeline = BK__ALLOC(nullptr, BK_MEM_TAG_GFX, (isize)sizeof(BK_GfxPipeline));
   pipeline->device = device;
   pipeline->handle = handle;
   pipeline->depth_stencil_format = desc->depth_stencil_format;
@@ -270,7 +267,7 @@ void bk_gfx_pipeline_destroy(BK_GfxPipeline *pipeline) {
     return;
   }
   SDL_ReleaseGPUGraphicsPipeline(pipeline->device, pipeline->handle);
-  bk__free(pipeline);
+  BK__FREE(nullptr, BK_MEM_TAG_GFX, pipeline, (isize)sizeof(BK_GfxPipeline));
 }
 
 SDL_GPUGraphicsPipeline *bk__gfx_pipeline_handle(const BK_GfxPipeline *pipeline) {
@@ -324,11 +321,8 @@ BK_GfxComputePipeline *bk_gfx_compute_pipeline_create(SDL_GPUDevice *device,
     return nullptr;
   }
 
-  BK_GfxComputePipeline *pipeline = bk__alloc(sizeof(BK_GfxComputePipeline));
-  if (pipeline == nullptr) {
-    SDL_ReleaseGPUComputePipeline(device, handle);
-    return nullptr;
-  }
+  BK_GfxComputePipeline *pipeline =
+      BK__ALLOC(nullptr, BK_MEM_TAG_GFX, (isize)sizeof(BK_GfxComputePipeline));
   pipeline->device = device;
   pipeline->handle = handle;
   return pipeline;
@@ -339,7 +333,7 @@ void bk_gfx_compute_pipeline_destroy(BK_GfxComputePipeline *pipeline) {
     return;
   }
   SDL_ReleaseGPUComputePipeline(pipeline->device, pipeline->handle);
-  bk__free(pipeline);
+  BK__FREE(nullptr, BK_MEM_TAG_GFX, pipeline, (isize)sizeof(BK_GfxComputePipeline));
 }
 
 bool bk_gfx_compute_dispatch(const BK_GfxComputeDispatchDesc *desc) {

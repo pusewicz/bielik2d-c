@@ -1,3 +1,4 @@
+#include "internal/bk_alloc_internal.h"
 #include "internal/bk_app_internal.h"
 #include "internal/bk_gfx_buffer_internal.h"
 #include "internal/bk_gfx_canvas_internal.h"
@@ -508,7 +509,7 @@ void bk__gfx_flush(void) {
         } else {
           SDL_Log("BK: SDL_CreateSurfaceFrom failed: %s", SDL_GetError());
         }
-        bk__free(pixels);
+        BK__FREE(nullptr, BK_MEM_TAG_GFX, pixels, (isize)swap_w * (isize)swap_h * 4);
       }
     }
   } else {
@@ -565,12 +566,8 @@ void *bk__gfx_download_texture(SDL_GPUDevice *device, SDL_GPUCommandBuffer *cmd,
   }
 
   usize byte_size = (usize)width * (usize)height * 4;
-  void *pixels = bk__alloc(byte_size);
-  if (pixels != nullptr) {
-    SDL_memcpy(pixels, mapped, byte_size);
-  } else {
-    SDL_Log("BK: bk__gfx_download_texture: allocation of %zu bytes failed", byte_size);
-  }
+  void *pixels = BK__ALLOC(nullptr, BK_MEM_TAG_GFX, (isize)byte_size);
+  SDL_memcpy(pixels, mapped, byte_size);
 
   SDL_UnmapGPUTransferBuffer(device, transfer);
   SDL_ReleaseGPUTransferBuffer(device, transfer);

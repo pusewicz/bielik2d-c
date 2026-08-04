@@ -5,6 +5,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <stdatomic.h>
 #include <stdlib.h>
 
 static void *s_default_alloc(isize size, void *ctx) {
@@ -190,4 +191,66 @@ void bk__free_site(const BK_Allocator *a, void *ptr, isize size) {
   BK_ASSERT(size >= 0);
   const BK_Allocator *r = s_resolve(a);
   r->free_fn(ptr, size, r->ctx);
+}
+
+typedef struct BK_TagCounters {
+  _Atomic isize live_bytes;
+  _Atomic isize live_allocs;
+  _Atomic isize peak_bytes;
+  _Atomic isize total_allocs;
+} BK_TagCounters;
+
+static BK_TagCounters s_tags[BK_MEM_TAG_COUNT];
+
+static void s_stats_add(BK_MemTag tag, isize bytes_delta, isize allocs_delta, isize total_delta) {
+  BK_TagCounters *c = &s_tags[tag];
+  isize live =
+      atomic_fetch_add_explicit(&c->live_bytes, bytes_delta, memory_order_relaxed) + bytes_delta;
+  atomic_fetch_add_explicit(&c->live_allocs, allocs_delta, memory_order_relaxed);
+  atomic_fetch_add_explicit(&c->total_allocs, total_delta, memory_order_relaxed);
+  isize peak = atomic_load_explicit(&c->peak_bytes, memory_order_relaxed);
+  while (live > peak &&
+         !atomic_compare_exchange_weak_explicit(&c->peak_bytes, &peak, live, memory_order_relaxed,
+                                                memory_order_relaxed)) {
+  }
+}
+
+BK_MemStats bk_mem_stats(BK_MemTag tag) {
+  BK_ASSERT(tag >= 0 && tag < BK_MEM_TAG_COUNT);
+  BK_TagCounters *c = &s_tags[tag];
+  return (BK_MemStats){
+      .live_bytes = atomic_load_explicit(&c->live_bytes, memory_order_relaxed),
+      .live_allocs = atomic_load_explicit(&c->live_allocs, memory_order_relaxed),
+      .peak_bytes = atomic_load_explicit(&c->peak_bytes, memory_order_relaxed),
+      .total_allocs = atomic_load_explicit(&c->total_allocs, memory_order_relaxed),
+  };
+}
+
+const char *bk_mem_tag_name(BK_MemTag tag) {
+  static const char *const names[BK_MEM_TAG_COUNT] = {"app",  "frame", "gfx",
+                                                      "draw", "atlas", "sdl"};
+  BK_ASSERT(tag >= 0 && tag < BK_MEM_TAG_COUNT);
+  return names[tag];
+}
+
+void *bk__alloc(const BK_Allocator *a, BK_MemTag tag, isize size, bool zero, const char *file,
+                int line) {
+  void *ptr = bk__alloc_site(a, size, zero, file, line);
+  s_stats_add(tag, size, 1, 1);
+  return ptr;
+}
+
+void *bk__realloc(const BK_Allocator *a, BK_MemTag tag, void *ptr, isize old_size, isize new_size,
+                  const char *file, int line) {
+  void *grown = bk__realloc_site(a, ptr, old_size, new_size, file, line);
+  s_stats_add(tag, new_size - old_size, ptr == nullptr ? 1 : 0, ptr == nullptr ? 1 : 0);
+  return grown;
+}
+
+void bk__free(const BK_Allocator *a, BK_MemTag tag, void *ptr, isize size) {
+  if (ptr == nullptr) {
+    return;
+  }
+  bk__free_site(a, ptr, size);
+  s_stats_add(tag, -size, -1, 0);
 }

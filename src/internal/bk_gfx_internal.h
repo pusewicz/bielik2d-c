@@ -137,7 +137,8 @@ void bk__gfx_shutdown(void);
 /// SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM or SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM (the
 /// only 4-byte-per-pixel formats this helper supports; enforced by assertion, since
 /// which format a caller passes is a programmer decision, not external data).
-/// Returns a heap-allocated copy of the pixels (release with bk__free), or nullptr on
+/// Returns a heap-allocated copy of the pixels, tagged BK_MEM_TAG_GFX (release with
+/// BK__FREE(nullptr, BK_MEM_TAG_GFX, ptr, (isize)width * height * 4)), or nullptr on
 /// failure (logs via SDL_Log with a "BK: " prefix).
 void *bk__gfx_download_texture(SDL_GPUDevice *device, SDL_GPUCommandBuffer *cmd,
                                SDL_GPUTexture *texture, Uint32 width, Uint32 height,

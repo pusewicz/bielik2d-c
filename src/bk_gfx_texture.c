@@ -1,3 +1,4 @@
+#include "internal/bk_alloc_internal.h"
 #include "internal/bk_app_internal.h"
 #include "internal/bk_gfx_texture_internal.h"
 
@@ -61,11 +62,7 @@ BK_GfxTexture *bk_gfx_texture_create(SDL_GPUDevice *device, BK_GfxTextureUsage u
     return nullptr;
   }
 
-  BK_GfxTexture *texture = bk__alloc(sizeof(BK_GfxTexture));
-  if (texture == nullptr) {
-    SDL_ReleaseGPUTexture(device, handle);
-    return nullptr;
-  }
+  BK_GfxTexture *texture = BK__ALLOC(nullptr, BK_MEM_TAG_GFX, (isize)sizeof(BK_GfxTexture));
   texture->device = device;
   texture->handle = handle;
   texture->usage = usage;
@@ -127,7 +124,7 @@ void bk_gfx_texture_destroy(BK_GfxTexture *texture) {
     return;
   }
   SDL_ReleaseGPUTexture(texture->device, texture->handle);
-  bk__free(texture);
+  BK__FREE(nullptr, BK_MEM_TAG_GFX, texture, (isize)sizeof(BK_GfxTexture));
 }
 
 BK_GfxSampler *bk_gfx_sampler_create(SDL_GPUDevice *device, BK_GfxFilter filter,
@@ -157,11 +154,7 @@ BK_GfxSampler *bk_gfx_sampler_create(SDL_GPUDevice *device, BK_GfxFilter filter,
     return nullptr;
   }
 
-  BK_GfxSampler *sampler = bk__alloc(sizeof(BK_GfxSampler));
-  if (sampler == nullptr) {
-    SDL_ReleaseGPUSampler(device, handle);
-    return nullptr;
-  }
+  BK_GfxSampler *sampler = BK__ALLOC(nullptr, BK_MEM_TAG_GFX, (isize)sizeof(BK_GfxSampler));
   sampler->device = device;
   sampler->handle = handle;
   return sampler;
@@ -172,7 +165,7 @@ void bk_gfx_sampler_destroy(BK_GfxSampler *sampler) {
     return;
   }
   SDL_ReleaseGPUSampler(sampler->device, sampler->handle);
-  bk__free(sampler);
+  BK__FREE(nullptr, BK_MEM_TAG_GFX, sampler, (isize)sizeof(BK_GfxSampler));
 }
 
 SDL_GPUTexture *bk__gfx_texture_handle(const BK_GfxTexture *texture) {

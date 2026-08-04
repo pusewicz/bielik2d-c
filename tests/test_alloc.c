@@ -209,6 +209,42 @@ static void test_panic_allocator(void) {
   SDL_SetAssertionHandler(prev, prev_data);
 }
 
+static void test_mem_stats(void) {
+  BK_MemStats before = bk_mem_stats(BK_MEM_TAG_GFX);
+
+  void *p = BK__ALLOC(nullptr, BK_MEM_TAG_GFX, 1000);
+  BK_MemStats during = bk_mem_stats(BK_MEM_TAG_GFX);
+  REQUIRE_EQ_U64((u64)(during.live_bytes - before.live_bytes), 1000);
+  REQUIRE_EQ_U64((u64)(during.live_allocs - before.live_allocs), 1);
+  REQUIRE_EQ_U64((u64)(during.total_allocs - before.total_allocs), 1);
+  REQUIRE(during.peak_bytes >= before.live_bytes + 1000);
+
+  p = BK__REALLOC(nullptr, BK_MEM_TAG_GFX, p, 1000, 4000);
+  BK_MemStats grown = bk_mem_stats(BK_MEM_TAG_GFX);
+  REQUIRE_EQ_U64((u64)(grown.live_bytes - before.live_bytes), 4000);
+  REQUIRE_EQ_U64((u64)(grown.total_allocs - before.total_allocs), 1); // realloc: not a new alloc
+
+  BK__FREE(nullptr, BK_MEM_TAG_GFX, p, 4000);
+  BK_MemStats after = bk_mem_stats(BK_MEM_TAG_GFX);
+  REQUIRE_EQ_U64((u64)(after.live_bytes - before.live_bytes), 0);
+  REQUIRE_EQ_U64((u64)(after.live_allocs - before.live_allocs), 0);
+
+  // Public-layer calls do NOT touch tag counters.
+  void *q = bk_alloc(nullptr, 512);
+  BK_MemStats untouched = bk_mem_stats(BK_MEM_TAG_GFX);
+  REQUIRE_EQ_U64((u64)untouched.live_bytes, (u64)after.live_bytes);
+  bk_free(nullptr, q, 512);
+}
+
+static void test_mem_tag_names(void) {
+  REQUIRE(strcmp(bk_mem_tag_name(BK_MEM_TAG_APP), "app") == 0);
+  REQUIRE(strcmp(bk_mem_tag_name(BK_MEM_TAG_FRAME), "frame") == 0);
+  REQUIRE(strcmp(bk_mem_tag_name(BK_MEM_TAG_GFX), "gfx") == 0);
+  REQUIRE(strcmp(bk_mem_tag_name(BK_MEM_TAG_DRAW), "draw") == 0);
+  REQUIRE(strcmp(bk_mem_tag_name(BK_MEM_TAG_ATLAS), "atlas") == 0);
+  REQUIRE(strcmp(bk_mem_tag_name(BK_MEM_TAG_SDL), "sdl") == 0);
+}
+
 int main(void) {
   test_default_roundtrip();
   test_alloc_zero_zeroes();
@@ -218,6 +254,8 @@ int main(void) {
   test_install_validation();
   test_counting_allocator();
   test_panic_allocator();
+  test_mem_stats();
+  test_mem_tag_names();
   printf("test_alloc: OK\n");
   return 0;
 }
