@@ -234,7 +234,7 @@ void bk__gfx_shutdown(void) {
   s_swapchain_depth_w = 0;
   s_swapchain_depth_h = 0;
 
-  // Not redundant with bk__gfx_flush's own snapshot-and-clear (:268-277 above): bk__iterate
+  // Not redundant with bk__gfx_flush's own snapshot-and-clear block at its top: bk__iterate
   // returns early when update or post_update returns non-BK_CONTINUE, skipping
   // bk__draw_collate/bk__gfx_flush entirely. Without this, an app that binds a pipeline,
   // canvas, or capture path -- or records a draw -- from update and quits on the same tick
