@@ -582,10 +582,8 @@ bool bk__draw_pack(BK_DrawPacked *out, i32 target_w, i32 target_h) {
   if (sorted == nullptr || out->cmds == nullptr || out->payload == nullptr ||
       out->batches == nullptr) {
     // Defense-in-depth, not a reachable path today: bk_frame_alloc's growth allocation
-    // aborts on real OOM (DEVIATIONS.md), and BK_ASSERT is live in Release too -- it no
-    // longer "wraps SDL_assert and compiles to nothing" (see the assert-tiers entry).
-    // Logging unconditionally anyway costs nothing and covers a future non-aborting
-    // allocator.
+    // aborts on real OOM (DEVIATIONS.md). Logging unconditionally anyway costs nothing and
+    // covers a future non-aborting allocator.
     SDL_Log("BK: bk__draw_pack: frame arena allocation failed, dropping %d commands", cmd_count);
     *out = (BK_DrawPacked){0};
     return false;

@@ -131,6 +131,9 @@ void *bk_frame_alloc(usize size, usize align) {
   BK_ArenaChunk *chunk = s_chunk_create(capacity);
   BK_ASSERT(chunk != nullptr);
   if (chunk == nullptr) {
+    // Defense-in-depth, not reachable today: s_chunk_create's BK__ALLOC calls abort on OOM
+    // (DEVIATIONS.md), so this never actually returns nullptr -- kept for every caller of
+    // bk_frame_alloc that still checks for it.
     return nullptr;
   }
   if (tail != nullptr) {

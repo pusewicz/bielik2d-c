@@ -922,10 +922,11 @@ confirmed to fully net to zero in the same run.
 `isize`, not the `size_t` SDL and libc use for the same job. The point: a negative size
 becomes an assertable bug (`BK_ASSERT(size >= 0)` in `bk__alloc_site`, `old_size >= 0 &&
 new_size >= 0` in `bk__realloc_site`) instead of a silently-wrapped huge unsigned. The
-concrete case is an overflowed `BK_NEW_ARRAY(a, T, n)` product
-(`(isize)sizeof(T) * (n)`): with `size_t` arithmetic the overflow wraps positive and sails
-past every check into a too-small allocation; with `isize` the same overflow goes negative,
-which the assert catches before a single byte moves. Cost: a cast at every SDL/libc boundary
+concrete case is an overflowed `BK_NEW_ARRAY(a, T, n)` product computed in signed
+arithmetic (`(isize)sizeof(T) * (n)`, `n` a signed count such as `i32`): with `size_t`
+arithmetic the overflow wraps positive and sails past every check into a too-small
+allocation; with `isize` the same overflow goes negative, which the assert catches before a
+single byte moves. Cost: a cast at every SDL/libc boundary
 in both directions — `(usize)size` going into `malloc`/`realloc`/`calloc`
 (`s_default_alloc` and friends, `bk_alloc.c`), and `(isize)size` coming back out of the
 `SDL_SetMemoryFunctions` shim's `size_t` parameters (`s_sdl_shim_malloc` and friends, same
