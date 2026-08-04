@@ -121,8 +121,13 @@ void bk__gfx_configure_swapchain_depth(bool enabled);
 /// created lazily, on the first flush after boot).
 void bk__gfx_get_swapchain_depth_size(i32 *out_width, i32 *out_height);
 
-/// Releases the framework-owned swapchain depth texture, if one was created. Called
-/// once by bk__shutdown, before SDL_DestroyGPUDevice.
+/// Releases the framework-owned swapchain depth texture, if one was created, and clears
+/// the pending draw chain, bound state, canvas, and capture path -- the same fields
+/// bk__gfx_flush's snapshot-and-clear resets, for the frames where flush never ran (see
+/// bk__gfx_flush's comment on why bk__iterate can skip it). Without this, those fields
+/// dangle into memory the caller's quit callback or bk__arena_free just released, for a
+/// second bk_run in the same process to walk. Called once by bk__shutdown, before
+/// SDL_DestroyGPUDevice.
 void bk__gfx_shutdown(void);
 
 /// Downloads width*height pixels (4 bytes/pixel) from texture via a copy pass added

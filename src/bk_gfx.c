@@ -226,14 +226,30 @@ void bk__gfx_get_swapchain_depth_size(i32 *out_width, i32 *out_height) {
   }
 }
 
+static char s_pending_capture_path[512];
+
 void bk__gfx_shutdown(void) {
   bk_gfx_texture_destroy(s_swapchain_depth_texture);
   s_swapchain_depth_texture = nullptr;
   s_swapchain_depth_w = 0;
   s_swapchain_depth_h = 0;
-}
 
-static char s_pending_capture_path[512];
+  // Not redundant with bk__gfx_flush's own snapshot-and-clear block at its top: bk__iterate
+  // returns early when update or post_update returns non-BK_CONTINUE, skipping
+  // bk__draw_collate/bk__gfx_flush entirely. Without this, an app that binds a pipeline,
+  // canvas, or capture path -- or records a draw -- from update and quits on the same tick
+  // leaves these pointing into memory the app's own quit callback (or bk__arena_free, for
+  // the draw chain) is about to release, for a second bk_run in the same process to walk.
+  // s_pending_canvas is the most directly reachable of these: bk__draw_collate reads it
+  // unconditionally on every bk__iterate call, including the first, via
+  // bk__gfx_get_pending_canvas.
+  s_state = (BK_GfxDrawCmd){0};
+  s_draw_head = nullptr;
+  s_draw_tail = nullptr;
+  s_draw_count = 0;
+  s_pending_canvas = nullptr;
+  s_pending_capture_path[0] = '\0';
+}
 
 void bk_gfx_request_capture(const char *path) {
   BK_ASSERT(path != nullptr);
