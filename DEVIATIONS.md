@@ -994,3 +994,28 @@ of SDL's narrower types costs nothing portability-wise. `bk_alloc.c`'s per-tag
 `atomic_load_explicit`/`atomic_compare_exchange_weak_explicit`, all at
 `memory_order_relaxed` — the counters are independent tallies, not a synchronization
 mechanism, so nothing stronger is needed.
+
+## The OOM diagnostic goes to stderr with `fprintf`, not `SDL_Log` (docs/superpowers/specs/2026-08-03-bk-alloc-design.md §6)
+
+The spec's §6 spells the OOM report as `SDL_Log("BK: out of memory ...")`. Shipped:
+`fprintf(stderr, ...)` plus an explicit `fflush`. Once Task 7's SDL routing is active,
+`SDL_Log` is not a safe thing to call from inside an allocation failure: on Windows it
+allocates (UTF-16 conversion of the message), that allocation goes to `SDL_malloc`, and
+`SDL_malloc` is the shim that forwards to the base allocator which has just failed — so
+the diagnostic itself OOMs, re-enters `s_oom`, and recurses until the stack dies. The
+promised deterministic abort would become a stack overflow, and only under real memory
+pressure. `s_oom` therefore latches a `static _Atomic bool` before doing anything else
+(a re-entry from any path, including SDL's assertion machinery behind `BK_ASSERT`, or
+from a second thread, goes straight to `abort()`) and reports with `fprintf`, which
+allocates nothing.
+
+Two smaller consequences of the switch: `abort()` is not required to flush stdio, so the
+`fflush(stderr)` is load-bearing for `tests/run_oom_test.cmake` (which greps stdout and
+stderr together — see "test_alloc_oom uses a CMake wrapper script" above); and the format
+uses `%lld` with a `(long long)` cast rather than `%td`, since clang-cl builds against a
+UCRT `printf` that predates `%td`.
+
+Not fixed here, same shape, deliberately out of scope: `bk_allocator_panic`'s three
+functions also call `SDL_Log`, and with routing active a panic-allocator call recurses
+the same way. Unlike `s_oom` that path is a programming-error tripwire, not a
+memory-pressure path, and it is reached only where allocation was already a bug.

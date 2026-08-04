@@ -6,6 +6,7 @@
 #include <SDL3/SDL.h>
 
 #include <stdatomic.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 // Deliberately libc malloc/realloc/free, not SDL_malloc/SDL_realloc/SDL_free: this is
@@ -156,7 +157,20 @@ bool bk__alloc_install(const BK_Allocator *base) {
 }
 
 [[noreturn]] static void s_oom(isize size, const char *file, int line) {
-  SDL_Log("BK: out of memory (%td bytes) at %s:%d", size, file, line);
+  // Nothing here may allocate. With SDL routing active (bk__alloc_route_sdl) every
+  // SDL_malloc lands back in the base allocator that just failed, so a diagnostic that
+  // allocates -- SDL_Log does on Windows, converting to UTF-16 -- would fail, re-enter
+  // s_oom, and recurse until the stack dies instead of aborting. Same for the assert
+  // below, which goes through SDL's assertion machinery. So: latch first, and report
+  // with fprintf, which never allocates. A second entry (including from another thread,
+  // where the first is already on its way to abort) skips straight to abort.
+  static _Atomic bool s_reporting;
+  if (atomic_exchange_explicit(&s_reporting, true, memory_order_relaxed)) {
+    abort();
+  }
+  // %lld, not %td: clang-cl builds against the UCRT, whose printf predates %td.
+  fprintf(stderr, "BK: out of memory (%lld bytes) at %s:%d\n", (long long)size, file, line);
+  fflush(stderr); // abort() is not required to flush stdio
   BK_ASSERT(!"out of memory");
   abort(); // deterministic even when the assert is disabled or ignored
 }
