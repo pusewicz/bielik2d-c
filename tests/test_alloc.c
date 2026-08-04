@@ -251,12 +251,15 @@ static void test_mem_tag_names(void) {
 // has no such header, so routing a process where SDL has already allocated corrupts the
 // heap the first time SDL frees one of those pointers. bk__alloc_route_sdl refuses.
 //
-// This runs last: by now the binary has logged hundreds of assertions through SDLTest,
-// which is SDL_Log, which allocates -- exactly the situation an embedder creates by
-// calling any SDL function before bk_run. The premise is asserted rather than assumed,
-// so a build without SDL_TRACK_ALLOCATION_COUNT (where the count reads -1 and routing
-// proceeds) fails here instead of passing vacuously.
+// The dirty allocation is made here rather than relied on: by this point SDLTest's logging
+// has certainly allocated through SDL, but "certainly" is a per-platform guess and this test
+// runs in CI's required job everywhere. One SDL_strdup makes the premise true by
+// construction -- it is exactly what an embedder's SDL_SetHint does before bk_run. The
+// premise is still asserted, so a build that loses SDL_TRACK_ALLOCATION_COUNT (count reads
+// -1, routing proceeds) fails here instead of passing vacuously.
 static void test_sdl_routing_refuses_after_sdl_has_allocated(void) {
+  char *dirty = SDL_strdup("x"); // an SDL allocation the shim did not make
+  REQUIRE(dirty != nullptr);
   REQUIRE(SDL_GetNumAllocations() > 0);
 
   BK_CountingAllocator counter = {0};
@@ -266,6 +269,7 @@ static void test_sdl_routing_refuses_after_sdl_has_allocated(void) {
   REQUIRE(bk__alloc_install(nullptr));
 
   REQUIRE_EQ_U64((u64)bk_mem_stats(BK_MEM_TAG_SDL).total_allocs, 0);
+  SDL_free(dirty); // safe precisely because routing was refused
 }
 
 int main(void) {

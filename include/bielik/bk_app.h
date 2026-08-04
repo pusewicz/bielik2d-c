@@ -106,6 +106,14 @@ typedef struct BK_TimeDesc {
 
 /// Full app configuration: window/time/task setup and the callback set
 /// bk_run (or the BK_APP macro) drives the app lifecycle through.
+///
+/// Setting .allocator also routes SDL's own internal allocations through it, but only if
+/// nothing has called into SDL yet when bk_run starts: SDL allocations made earlier carry
+/// none of the bookkeeping the framework's shim needs, so boot logs and leaves SDL on its
+/// own allocator rather than risk them. Any SDL call before bk_run costs the routing --
+/// SDL_SetHint (including BK_HINT_NO_ERROR_DIALOG below) allocates. Set such hints from the
+/// environment instead to keep it, and expect a second bk_run in one process never to route,
+/// since SDL retains allocations past SDL_Quit.
 typedef struct BK_AppDesc {
   BK_WindowDesc window;
   BK_TimeDesc time;

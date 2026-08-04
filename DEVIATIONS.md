@@ -941,8 +941,8 @@ the framework's own default heap calls libc `malloc`/`realloc`/`free` directly â
 SDL's (see "Default heap backs onto libc malloc, not SDL_malloc" above). SDL is wired into
 `BK_Allocator`, not the other way around: `bk__alloc_route_sdl` (`bk_alloc.c`) installs a
 size-header shim via `SDL_SetMemoryFunctions` that forwards SDL's own internal allocations
-back through the installed base allocator, tagged `BK_MEM_TAG_SDL`. Two runtime gates
-gate it: whether a custom base allocator is installed at all (`s_base.alloc_fn ==
+back through the installed base allocator, tagged `BK_MEM_TAG_SDL`. Two runtime gates apply:
+whether a custom base allocator is installed at all (`s_base.alloc_fn ==
 s_default_alloc` skips routing as a no-op), and whether SDL has already allocated
 (`SDL_GetNumAllocations() > 0` skips routing and logs â€” see "SDL's allocation counter is
 compiled in" below). Wiring up routing is what
