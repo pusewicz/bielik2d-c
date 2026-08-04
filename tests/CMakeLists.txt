@@ -126,6 +126,15 @@ add_test(NAME test_gfx_drawlist_gpu COMMAND test_gfx_drawlist_gpu)
 set_tests_properties(test_gfx_drawlist_gpu PROPERTIES TIMEOUT 60)
 bk_stage_shaders(test_gfx_drawlist_gpu)
 
+# GPU replay tests: needs a real window/device to exercise bk__gfx_flush across two
+# bk_run calls in one process (see bk__gfx_shutdown's regression, issue #39), so this
+# joins CI's allow-failure GPU group like the other windowed tests.
+add_executable(test_gfx_shutdown_gpu test_gfx_shutdown_gpu.c)
+target_link_libraries(test_gfx_shutdown_gpu PRIVATE bielik bk_warnings)
+target_include_directories(test_gfx_shutdown_gpu PRIVATE ${PROJECT_SOURCE_DIR}/src)
+add_test(NAME test_gfx_shutdown_gpu COMMAND test_gfx_shutdown_gpu)
+set_tests_properties(test_gfx_shutdown_gpu PROPERTIES TIMEOUT 30)
+
 # Record-structure tests: no GPU, so this one is a required CI check everywhere.
 add_executable(test_draw test_draw.c)
 target_link_libraries(test_draw PRIVATE bielik bk_warnings)
@@ -199,5 +208,5 @@ set_tests_properties(${bk_test_names} PROPERTIES
 # six tests -- silently, since they'd still run, just with a modal assert dialog waiting
 # to hang one of them.
 set_property(TEST test_app_lifecycle test_app_init_failure test_gfx_capture test_gfx_resize
-                  test_gfx_drawlist_gpu test_draw_gpu
+                  test_gfx_drawlist_gpu test_draw_gpu test_gfx_shutdown_gpu
              APPEND PROPERTY ENVIRONMENT "SDL_MAC_BACKGROUND_APP=1")
