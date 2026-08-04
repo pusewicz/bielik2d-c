@@ -6,6 +6,7 @@
 #include <SDL3/SDL.h>
 
 #include <stdatomic.h>
+#include <stdint.h> // PTRDIFF_MAX
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -298,7 +299,17 @@ typedef union BK_SdlShimHeader {
   max_align_t align;
 } BK_SdlShimHeader; // max_align_t: <stddef.h>, already reachable via bk_types.h
 
+// A payload this large can't be represented as isize once the header is added -- SDL_malloc's
+// contract is to return null on a request it can't satisfy, not to hand bk__alloc a wrapped
+// negative size and let BK_ASSERT abort the process.
+static bool s_sdl_shim_fits(size_t payload) {
+  return payload <= (size_t)PTRDIFF_MAX - sizeof(BK_SdlShimHeader);
+}
+
 static void *s_sdl_shim_malloc(size_t size) {
+  if (!s_sdl_shim_fits(size)) {
+    return nullptr; // overflow is a caller error, not OOM -- let SDL handle null
+  }
   isize total = (isize)size + (isize)sizeof(BK_SdlShimHeader);
   BK_SdlShimHeader *header = bk__alloc(nullptr, BK_MEM_TAG_SDL, total, false, __FILE__, __LINE__);
   header->size = total;
@@ -309,6 +320,9 @@ static void *s_sdl_shim_calloc(size_t nmemb, size_t size) {
   if (nmemb != 0 && size > SDL_SIZE_MAX / nmemb) {
     return nullptr; // overflow is a caller error, not OOM -- let SDL handle null
   }
+  if (!s_sdl_shim_fits(nmemb * size)) {
+    return nullptr;
+  }
   isize total = (isize)(nmemb * size) + (isize)sizeof(BK_SdlShimHeader);
   BK_SdlShimHeader *header = bk__alloc(nullptr, BK_MEM_TAG_SDL, total, true, __FILE__, __LINE__);
   header->size = total;
@@ -318,6 +332,9 @@ static void *s_sdl_shim_calloc(size_t nmemb, size_t size) {
 static void *s_sdl_shim_realloc(void *mem, size_t size) {
   if (mem == nullptr) {
     return s_sdl_shim_malloc(size);
+  }
+  if (!s_sdl_shim_fits(size)) {
+    return nullptr;
   }
   BK_SdlShimHeader *header = (BK_SdlShimHeader *)mem - 1;
   isize old_total = header->size;
