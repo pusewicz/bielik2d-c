@@ -941,14 +941,11 @@ the framework's own default heap calls libc `malloc`/`realloc`/`free` directly �
 SDL's (see "Default heap backs onto libc malloc, not SDL_malloc" above). SDL is wired into
 `BK_Allocator`, not the other way around: `bk__alloc_route_sdl` (`bk_alloc.c`) installs a
 size-header shim via `SDL_SetMemoryFunctions` that forwards SDL's own internal allocations
-back through the installed base allocator, tagged `BK_MEM_TAG_SDL`. The only runtime gate
-on this is whether a custom base allocator is installed at all (`s_base.alloc_fn ==
-s_default_alloc` skips routing as a no-op) — there is no probe or fallback branch in
-shipped code. That gate's shape traces back to a one-time measurement made during
-implementation: a temporary `SDL_GetNumAllocations()` probe at the top of `bk__boot` read 0
-pre-boot SDL allocations on this platform, which per the design spec selected building the
-routed variant rather than the no-op-fallback alternative the spec also considered; the
-probe line itself was reverted before commit and never shipped. Wiring up routing is what
+back through the installed base allocator, tagged `BK_MEM_TAG_SDL`. Two runtime gates
+gate it: whether a custom base allocator is installed at all (`s_base.alloc_fn ==
+s_default_alloc` skips routing as a no-op), and whether SDL has already allocated
+(`SDL_GetNumAllocations() > 0` skips routing and logs — see "SDL's allocation counter is
+compiled in" below). Wiring up routing is what
 triggered the recursion bug the entry above documents, and why `s_default_alloc` had to move
 off `SDL_malloc`. See also "`BK_Allocator` does not build on `SDL_SetMemoryFunctions`" above
 for why the interface itself doesn't just delegate to SDL's narrower facility in the first
@@ -1030,3 +1027,36 @@ Not fixed here, same shape, deliberately out of scope: `bk_allocator_panic`'s th
 functions also call `SDL_Log`, and with routing active a panic-allocator call recurses
 the same way. Unlike `s_oom` that path is a programming-error tripwire, not a
 memory-pressure path, and it is reached only where allocation was already a bug.
+
+## SDL's allocation counter is compiled in, and routing refuses a dirty process (CMakeLists.txt, src/bk_alloc.c)
+
+The design spec named "SDL allocated before the shim went in" as the one case where routing
+must back off, and described the fallback as skip + log + an honest undercount on
+`BK_MEM_TAG_SDL`. No such branch shipped with Task 7: the only gate was whether a custom
+base allocator existed. That is a heap-corruption hazard, not a bookkeeping one — the shim
+writes a size header in front of every allocation and reads it back on free, so the first
+`SDL_free` of a pointer SDL allocated *before* the shim reads eight bytes that were never
+written. An embedder calling `SDL_SetHint` before `bk_run` is enough to trigger it, and it
+reproduces under ASan on demand (a temporary `SDL_Log` placed before `SDL_SetMemoryFunctions`
+during this fix produced exactly that heap-buffer-overflow, freed from `SDL_InitEvents`).
+
+Shipping the check needed a build change: `SDL_GetNumAllocations()` returns -1 unless SDL is
+compiled with `SDL_TRACK_ALLOCATION_COUNT`, which stock SDL is not, so a naive `!= 0` test
+would have disabled routing permanently. The top-level `CMakeLists.txt` now defines it on the
+`SDL3-static` target (guarded by `if(TARGET ...)`, since a consumer may bring their own SDL).
+Cost is one atomic increment per SDL allocation; the counter is also a ready-made leak check
+for later. Where the count is negative — someone else's SDL build — `bk__alloc_route_sdl`
+assumes clean and routes, which is exactly the behavior that shipped before this guard.
+
+Consequence, verified rather than assumed: SDL retains allocations past `SDL_Quit` (94 on
+this platform, measured with a temporary probe in `test_app_lifecycle`), so a **second
+`bk_run` in one process never routes**. That is the correct answer, not a limitation to work
+around: those retained pointers came from the first run's allocator, and routing over them is
+precisely the corruption case. No test or sample boots twice with a custom allocator —
+`test_app_lifecycle` is the only routing test and calls `bk_run` once; `test_atlas` uses a
+counting allocator without ever booting; no sample sets `.allocator`.
+
+`tests/test_alloc.c`'s `test_sdl_routing_refuses_after_sdl_has_allocated` covers the refusal
+without a window: it runs last, by which point the binary's own SDLTest logging has allocated
+through SDL, and asserts the premise (`SDL_GetNumAllocations() > 0`) so a build that loses the
+compile definition fails loudly instead of passing vacuously.

@@ -339,6 +339,26 @@ bool bk__alloc_route_sdl(void) {
   if (s_base.alloc_fn == s_default_alloc) {
     return false; // default heap: routing would be a no-op with overhead
   }
+  // Every pointer SDL frees through the shim must have been allocated through it: the
+  // shim reads a size header written in front of the allocation, and an allocation that
+  // predates the shim has no such header. So refuse to route if SDL has allocated
+  // already -- an embedder calling SDL_SetHint or SDL_Log before bk_run is enough. The
+  // cost of refusing is an undercount on BK_MEM_TAG_SDL; the cost of routing anyway is
+  // heap corruption on the first free of a pre-shim pointer.
+  //
+  // A negative count means this SDL was built without SDL_TRACK_ALLOCATION_COUNT, so
+  // there is nothing to check and the pre-guard behavior stands: route and assume clean.
+  // The top-level CMakeLists defines it for the SDL we build; a consumer linking their
+  // own SDL may not.
+  int live = SDL_GetNumAllocations();
+  if (live > 0) {
+    SDL_Log("BK: %d SDL allocation(s) predate boot; SDL not routed through the app allocator",
+            live);
+    return false;
+  }
+  // Nothing above this line may call into SDL on the routing path -- SDL_Log itself
+  // allocates (hint properties, log state), which would trip the very check above on the
+  // next boot and, worse, hand the shim a pointer it did not allocate.
   if (!SDL_SetMemoryFunctions(s_sdl_shim_malloc, s_sdl_shim_calloc, s_sdl_shim_realloc,
                               s_sdl_shim_free)) {
     SDL_Log("BK: SDL_SetMemoryFunctions failed: %s", SDL_GetError());

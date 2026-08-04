@@ -246,6 +246,28 @@ static void test_mem_tag_names(void) {
   REQUIRE(strcmp(bk_mem_tag_name(BK_MEM_TAG_SDL), "sdl") == 0);
 }
 
+// SDL routing hands SDL a shim that reads a size header written in front of every
+// allocation the shim itself made. An SDL allocation made before the shim was installed
+// has no such header, so routing a process where SDL has already allocated corrupts the
+// heap the first time SDL frees one of those pointers. bk__alloc_route_sdl refuses.
+//
+// This runs last: by now the binary has logged hundreds of assertions through SDLTest,
+// which is SDL_Log, which allocates -- exactly the situation an embedder creates by
+// calling any SDL function before bk_run. The premise is asserted rather than assumed,
+// so a build without SDL_TRACK_ALLOCATION_COUNT (where the count reads -1 and routing
+// proceeds) fails here instead of passing vacuously.
+static void test_sdl_routing_refuses_after_sdl_has_allocated(void) {
+  REQUIRE(SDL_GetNumAllocations() > 0);
+
+  BK_CountingAllocator counter = {0};
+  BK_Allocator base = bk_allocator_counting(&counter);
+  REQUIRE(bk__alloc_install(&base));
+  REQUIRE(!bk__alloc_route_sdl()); // routed anyway => SDL frees a header that isn't there
+  REQUIRE(bk__alloc_install(nullptr));
+
+  REQUIRE_EQ_U64((u64)bk_mem_stats(BK_MEM_TAG_SDL).total_allocs, 0);
+}
+
 int main(void) {
   test_default_roundtrip();
   test_alloc_zero_zeroes();
@@ -257,6 +279,7 @@ int main(void) {
   test_panic_allocator();
   test_mem_stats();
   test_mem_tag_names();
+  test_sdl_routing_refuses_after_sdl_has_allocated();
   printf("test_alloc: OK\n");
   return 0;
 }

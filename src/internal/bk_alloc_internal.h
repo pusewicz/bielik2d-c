@@ -15,11 +15,20 @@ bool bk__alloc_install(const BK_Allocator *base);
 /// SDL_SetMemoryFunctions. Call after bk__alloc_install and before SDL_Init,
 /// only. Returns false (already logged where warranted) when routing is
 /// skipped: default-heap base, pre-boot SDL allocations, or SDL refusal.
-/// Narrow gap: get_desc() runs before this call, so any SDL allocation an
-/// embedder's get_desc triggers happens before the shim installs and is never
-/// routed. Once installed, the base allocator (and its ctx) must outlive the
-/// process: SDL keeps some allocations alive past SDL_Quit, and nothing ever
-/// un-routes SDL's memory functions back off the shim.
+///
+/// "Pre-boot SDL allocations" is a live SDL_GetNumAllocations() check, not an
+/// assumption: any SDL call an embedder makes before bk_run (SDL_SetHint is the
+/// idiomatic one, and get_desc() runs before this call too) produces pointers
+/// with no size header, which the shim would later misread as it frees them.
+/// Where SDL was built without SDL_TRACK_ALLOCATION_COUNT the count is -1 and
+/// routing proceeds on the assumption that nothing has allocated.
+///
+/// Consequence worth knowing: a second bk_run in the same process never routes.
+/// SDL retains allocations past SDL_Quit, so the count is nonzero by then --
+/// and that is the correct answer, since those retained pointers came from the
+/// first run's allocator. Once installed, the base allocator (and its ctx) must
+/// outlive the process for the same reason: nothing ever un-routes SDL's memory
+/// functions back off the shim.
 bool bk__alloc_route_sdl(void);
 
 // Framework-internal allocation: the public call layer plus a tag and an
