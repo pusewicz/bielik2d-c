@@ -1,4 +1,5 @@
 #include "bk_test.h"
+#include "internal/bk_alloc_internal.h"
 #include "internal/bk_app_internal.h"
 #include "internal/bk_gfx_buffer_internal.h"
 #include "internal/bk_gfx_canvas_internal.h"
@@ -215,7 +216,7 @@ static void s_run_depth_order(SDL_GPUDevice *device, BK_GfxPipeline *pipeline, B
   SDL_DestroySurface(actual);
   SDL_DestroySurface(reference);
 
-  bk__free(pixels_buf);
+  BK__FREE(nullptr, BK_MEM_TAG_GFX, pixels_buf, (isize)size * size * 4);
   bk_gfx_buffer_destroy(vertex_buffer);
 }
 

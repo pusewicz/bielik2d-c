@@ -1,5 +1,6 @@
 #include "bk_test.h"
 
+#include <bielik/bk_alloc.h>
 #include <bielik/bk_app.h>
 #include <bielik/bk_draw.h>
 #include <bielik/bk_gfx.h>
@@ -663,6 +664,81 @@ static void test_filled_box_draws_with_depth_stencil_enabled(void) {
 }
 
 // ---------------------------------------------------------------------------
+// Frame allocation contract: bk__draw_collate destroys last frame's two GPU
+// storage-buffer wrappers (cmds/payload) and creates two new ones every frame,
+// and nothing else persistent should move -- see bk_draw.c's bk__draw_collate.
+// Pinned via BK_MEM_TAG_GFX's always-on counters (bk_mem_stats) rather than by
+// re-deriving it from source.
+// ---------------------------------------------------------------------------
+
+static int s_alloc_probe_calls = 0;
+static BK_MemStats s_alloc_probe_warm;
+static BK_MemStats s_alloc_probe_next;
+
+static void app_render_alloc_probe(void *state, const BK_FrameInfo *frame) {
+  (void)state;
+  (void)frame;
+  s_alloc_probe_calls++;
+  // render runs once per bk_run iteration, and collate/flush/arena_reset for
+  // call N's frame complete before call N+1 begins -- so call 1 is the cold
+  // frame (destroy of the still-null buffers is a no-op, create is the FIRST
+  // allocation, not a repeat), "warm" is call 1's frame fully settled, and
+  // "next" is call 2's frame fully settled: exactly one repeat frame apart.
+  if (s_alloc_probe_calls == 2) {
+    s_alloc_probe_warm = bk_mem_stats(BK_MEM_TAG_GFX);
+  } else if (s_alloc_probe_calls == 3) {
+    s_alloc_probe_next = bk_mem_stats(BK_MEM_TAG_GFX);
+  }
+  // Same shape every call: an empty frame would skip bk__draw_pack's buffer
+  // create entirely, and a new pipeline/texture/canvas appearing between
+  // calls would stop this being a pure repeat frame.
+  bk_draw_push_color((BK_Color){1.0f, 0.0f, 0.0f, 1.0f});
+  bk_draw_box_fill(bk_aabb(bk_v2(-64.0f, -64.0f), bk_v2(64.0f, 64.0f)), 0.0f);
+  bk_draw_pop_color();
+}
+
+// Quits on render calls, not ticks: the probes above key off render-call
+// ordering, and update runs before render within the same bk_run iteration --
+// a tick-based gate (as s_test_update uses) can end the run right after two
+// render calls on a backend that paces one tick per iteration, before "next"
+// is ever captured.
+static BK_Result s_alloc_probe_update(void *state, const BK_FrameInfo *frame) {
+  (void)state;
+  (void)frame;
+  return s_alloc_probe_calls >= 3 ? BK_DONE : BK_CONTINUE;
+}
+
+static void test_frame_allocation_contract(void) {
+  s_alloc_probe_calls = 0;
+
+  // Deliberately not s_render_one_frame: that harness's s_test_render calls
+  // bk_gfx_request_capture on every frame, and bk__gfx_flush's capture path
+  // does its own alloc+free of a GFX-tagged pixel-download buffer each time
+  // (bk_gfx.c's bk__gfx_download_texture) -- one more allocation than the
+  // draw layer's own contract. Driving bk_run directly with no capture
+  // request keeps this a genuinely pure repeat frame.
+  BK_AppDesc desc = {
+      .window = {.title = "test_draw_gpu_alloc", .width = 64, .height = 64},
+      .time = {.tick_hz = 60},
+      .update = s_alloc_probe_update,
+      .render = app_render_alloc_probe,
+  };
+  int result = bk_run(&desc, 0, nullptr);
+  if (result != 0) {
+    printf("test_draw_gpu: bk_run failed, skipping allocation contract\n");
+    return;
+  }
+
+  // Cheap invariant, not the quit condition itself: confirms the run actually
+  // reached call 3 before quitting.
+  REQUIRE(s_alloc_probe_calls >= 3);
+
+  REQUIRE_EQ_U64((u64)(s_alloc_probe_next.total_allocs - s_alloc_probe_warm.total_allocs), 2);
+  REQUIRE_EQ_U64((u64)s_alloc_probe_next.live_allocs, (u64)s_alloc_probe_warm.live_allocs);
+  REQUIRE_EQ_U64((u64)s_alloc_probe_next.live_bytes, (u64)s_alloc_probe_warm.live_bytes);
+}
+
+// ---------------------------------------------------------------------------
 // Canvas + bk_draw: bk_draw's pipelines are now looked up in a (colour, depth)-keyed
 // table (issue #27) instead of baking a single cached swapchain colour format, so a
 // canvas's colour texture (always R8G8B8A8_UNORM, which need not match the
@@ -771,6 +847,7 @@ int main(void) {
   test_layers_reorder_paint_order();
   test_scissor_clips();
   test_filled_box_draws_with_depth_stencil_enabled();
+  test_frame_allocation_contract();
   test_canvas_bound_draws_through_to_the_swapchain();
   test_canvas_with_depth_bound_draws_through_to_the_swapchain();
   printf("test_draw_gpu: OK\n");

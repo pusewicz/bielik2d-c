@@ -33,7 +33,16 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(SDL3)
 
-add_library(bielik STATIC src/bk_app.c src/bk_atlas.c src/bk_draw.c src/bk_gfx.c src/bk_gfx_buffer.c src/bk_gfx_canvas.c src/bk_gfx_pipeline.c src/bk_gfx_texture.c src/bk_task.c src/bk_time.c)
+# SDL only counts its live allocations when this is defined (SDL_malloc.c); without it
+# SDL_GetNumAllocations() returns -1. bk__alloc_route_sdl needs a real count to refuse
+# routing when SDL allocated before the shim was installed -- freeing such a pointer
+# through the shim reads a size header that was never written. One atomic increment per
+# SDL allocation; it also makes SDL_GetNumAllocations() usable for leak checks.
+if(TARGET SDL3-static)
+    target_compile_definitions(SDL3-static PRIVATE SDL_TRACK_ALLOCATION_COUNT=1)
+endif()
+
+add_library(bielik STATIC src/bk_alloc.c src/bk_app.c src/bk_atlas.c src/bk_draw.c src/bk_gfx.c src/bk_gfx_buffer.c src/bk_gfx_canvas.c src/bk_gfx_pipeline.c src/bk_gfx_texture.c src/bk_task.c src/bk_time.c)
 add_library(Bielik2D::bielik ALIAS bielik)
 
 target_include_directories(bielik PUBLIC include)

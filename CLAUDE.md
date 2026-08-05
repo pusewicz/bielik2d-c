@@ -220,6 +220,15 @@ Style:
   CMake's `BK_ASSERT_LEVEL` (2 in Debug, 1 otherwise) — never let SDL infer it, since it
   keys off `__OPTIMIZE__` and never reads `NDEBUG`. A disabled assert does not evaluate
   its condition, so never put required work inside one.
+- Allocation: all persistent framework allocation goes through the tagged seam
+  (`BK__ALLOC`/`BK__FREE` in `src/internal/bk_alloc_internal.h`) with sized frees --
+  `bk_alloc.c` is the only file that calls the malloc-family primitives directly, and its
+  default allocator calls libc `malloc`/`realloc`/`free`, not `SDL_malloc` (`DEVIATIONS.md`).
+  A `BK_Allocator` implementation must never call the `SDL_malloc` family either: once SDL
+  routing is active those calls resolve back through the installed base allocator and
+  recurse with no diagnostic. Public `BK_Allocator` (`bk_alloc.h`) is the embedder
+  interface: all-zero means default, partial structs are rejected, OOM aborts. Per-frame
+  scratch stays `bk_frame_alloc`. Per-system live/peak bytes: `bk_mem_stats(tag)`.
 - Includes ordered: quoted/internal headers, then `<bielik/...>`, then `<SDL3/...>`, then
   system headers — enforced by `.clang-format`'s `IncludeBlocks: Regroup`, not just convention.
 

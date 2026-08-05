@@ -1,4 +1,5 @@
 #pragma once
+#include <bielik/bk_alloc.h>
 #include <bielik/bk_types.h>
 
 /// A runtime atlas cache. Owns its residency state across frames; see bk__atlas_flush
@@ -49,6 +50,8 @@ typedef struct BK_AtlasDesc {
   BK_AtlasSubmitBatchFn submit_batch;       // required
   void *udata;                              // passed verbatim to every callback
 
+  BK_Allocator allocator; // serves every allocation this cache makes; all-zero => the app base
+
   i32 atlas_size;              // 0 => 2048. Atlases are square, atlas_size x atlas_size.
   i32 ticks_until_decay;       // 0 => 1800. Entries unseen this many ticks are evictable.
   i32 defrag_lonely_threshold; // 0 => 16. bk__atlas_defrag packs pending lonely images
@@ -57,7 +60,8 @@ typedef struct BK_AtlasDesc {
 } BK_AtlasDesc;
 
 /// Creates a cache. Every callback in desc must be non-null (BK_ASSERT). Returns nullptr
-/// and logs via SDL_Log on allocation failure.
+/// and logs via SDL_Log if desc->allocator is partially set (some but not all three
+/// functions).
 [[nodiscard]] BK_Atlas *bk__atlas_create(const BK_AtlasDesc *desc);
 
 /// Destroys the cache, calling destroy_texture for every texture it still owns. No-op if

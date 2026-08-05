@@ -1,17 +1,6 @@
 #pragma once
 #include <bielik/bk_types.h>
 
-/// Allocates size bytes via SDL_malloc. Framework-internal; all framework
-/// heap allocation must go through this (and bk__free) so
-/// SDL_SetMemoryFunctions covers everything.
-void *bk__alloc(usize size);
-
-/// Reallocates via SDL_realloc. See bk__alloc.
-void *bk__realloc(void *ptr, usize size);
-
-/// Frees memory allocated via bk__alloc/bk__realloc.
-void bk__free(void *ptr);
-
 /// Resets the frame arena (rewinds every backing block's cursor; the blocks
 /// themselves are retained and recycled, not freed). Called once per frame
 /// after gfx flush by the frame pipeline — exposed here so tests can

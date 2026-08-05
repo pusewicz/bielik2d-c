@@ -1,5 +1,6 @@
 #define SDL_MAIN_HANDLED 1
 
+#include "internal/bk_alloc_internal.h"
 #include "internal/bk_app_internal.h"
 #include "internal/bk_draw_internal.h"
 #include "internal/bk_gfx_internal.h"
@@ -20,18 +21,6 @@ static_assert(BK_FAIL == (BK_Result)SDL_APP_FAILURE, "BK_Result must mirror SDL_
 
 const char *bk_version_string(void) {
   return BK_STR(BK_VERSION_MAJOR) "." BK_STR(BK_VERSION_MINOR) "." BK_STR(BK_VERSION_PATCH);
-}
-
-void *bk__alloc(usize size) {
-  return SDL_malloc(size);
-}
-
-void *bk__realloc(void *ptr, usize size) {
-  return SDL_realloc(ptr, size);
-}
-
-void bk__free(void *ptr) {
-  SDL_free(ptr);
 }
 
 static constexpr usize s_arena_default_capacity = 4 * 1024 * 1024;
@@ -67,19 +56,13 @@ static void *s_chunk_alloc(BK_ArenaChunk *chunk, usize size, usize align) {
   return chunk->base + offset;
 }
 
-/// Allocates a chunk with the given capacity, or nullptr on failure. The header is a
-/// separate allocation from the payload so the payload keeps the allocator's own
-/// max_align_t guarantee rather than whatever offset a trailing header would land on.
+/// Allocates a chunk with the given capacity; allocation failure aborts (BK__ALLOC's
+/// OOM contract). The header is a separate allocation from the payload so the payload
+/// keeps the allocator's own max_align_t guarantee rather than whatever offset a
+/// trailing header would land on.
 static BK_ArenaChunk *s_chunk_create(usize capacity) {
-  BK_ArenaChunk *chunk = bk__alloc(sizeof *chunk);
-  if (chunk == nullptr) {
-    return nullptr;
-  }
-  unsigned char *base = bk__alloc(capacity);
-  if (base == nullptr) {
-    bk__free(chunk);
-    return nullptr;
-  }
+  BK_ArenaChunk *chunk = BK__ALLOC(nullptr, BK_MEM_TAG_FRAME, (isize)sizeof *chunk);
+  unsigned char *base = BK__ALLOC(nullptr, BK_MEM_TAG_FRAME, (isize)capacity);
   *chunk = (BK_ArenaChunk){.base = base, .capacity = capacity};
   return chunk;
 }
@@ -98,8 +81,8 @@ void bk__arena_free(void) {
   BK_ArenaChunk *chunk = s_frame_arena.first;
   while (chunk != nullptr) {
     BK_ArenaChunk *next = chunk->next;
-    bk__free(chunk->base);
-    bk__free(chunk);
+    BK__FREE(nullptr, BK_MEM_TAG_FRAME, chunk->base, (isize)chunk->capacity);
+    BK__FREE(nullptr, BK_MEM_TAG_FRAME, chunk, (isize)sizeof *chunk);
     chunk = next;
   }
   s_frame_arena.first = nullptr;
@@ -148,6 +131,9 @@ void *bk_frame_alloc(usize size, usize align) {
   BK_ArenaChunk *chunk = s_chunk_create(capacity);
   BK_ASSERT(chunk != nullptr);
   if (chunk == nullptr) {
+    // Defense-in-depth, not reachable today: s_chunk_create's BK__ALLOC calls abort on OOM
+    // (DEVIATIONS.md), so this never actually returns nullptr -- kept for every caller of
+    // bk_frame_alloc that still checks for it.
     return nullptr;
   }
   if (tail != nullptr) {
@@ -228,6 +214,11 @@ SDL_AppResult bk__boot(BK_AppDesc (*get_desc)(void), void **appstate, int argc, 
   if (s_app.desc.time.max_frame_dt == 0.0) {
     s_app.desc.time.max_frame_dt = 0.25;
   }
+
+  if (!bk__alloc_install(&s_app.desc.allocator)) {
+    return s_boot_fail("BK_AppDesc.allocator is partially set (all three functions or none)");
+  }
+  bk__alloc_route_sdl(); // best-effort: silent no-op with the default heap; SDL refusal logs
 
   if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_GAMEPAD)) {
     char msg[256];
@@ -394,6 +385,13 @@ void bk__shutdown(void *appstate, SDL_AppResult result) {
   if (s_app.window) {
     SDL_DestroyWindow(s_app.window);
   }
+  // Reset to the pristine state bk__boot expects on entry. s_app is a static, so a
+  // second bk_run in the same process (every multi-scenario test binary) would otherwise
+  // start its boot looking at this run's already-destroyed gpu/window -- s_boot_fail's
+  // dialog path and a would-be second bk__shutdown both dereference/destroy through them.
+  s_app.gpu = nullptr;
+  s_app.window = nullptr;
+  s_app.booted = false;
 }
 
 SDL_Window *bk_window(void) {

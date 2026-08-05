@@ -16,6 +16,23 @@ target_link_libraries(test_arena PRIVATE bielik bk_warnings)
 target_include_directories(test_arena PRIVATE ${PROJECT_SOURCE_DIR}/src)
 add_test(NAME test_arena COMMAND test_arena)
 
+add_executable(test_alloc test_alloc.c)
+target_link_libraries(test_alloc PRIVATE bielik bk_warnings)
+target_include_directories(test_alloc PRIVATE ${PROJECT_SOURCE_DIR}/src)
+add_test(NAME test_alloc COMMAND test_alloc)
+
+# Deliberately aborts (OOM policy); passes on the log line, so the crash exit
+# is expected. A CMake wrapper script captures output and exits normally so
+# CTest judges by exit code instead of signal status.
+add_executable(test_alloc_oom test_alloc_oom.c)
+target_link_libraries(test_alloc_oom PRIVATE bielik bk_warnings)
+add_test(NAME test_alloc_oom COMMAND ${CMAKE_COMMAND}
+  -DEXE=$<TARGET_FILE:test_alloc_oom>
+  -P ${CMAKE_CURRENT_SOURCE_DIR}/run_oom_test.cmake)
+
+add_library(test_header_bk_alloc OBJECT test_header_bk_alloc.c)
+target_link_libraries(test_header_bk_alloc PRIVATE bielik bk_warnings)
+
 add_executable(test_math test_math.c)
 target_link_libraries(test_math PRIVATE bielik bk_warnings)
 add_test(NAME test_math COMMAND test_math)

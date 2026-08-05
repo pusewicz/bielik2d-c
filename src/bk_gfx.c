@@ -1,3 +1,4 @@
+#include "internal/bk_alloc_internal.h"
 #include "internal/bk_app_internal.h"
 #include "internal/bk_gfx_buffer_internal.h"
 #include "internal/bk_gfx_canvas_internal.h"
@@ -33,8 +34,10 @@ static i32 s_draw_count = 0;
 static void s_record_draw(i32 vertex_count, i32 index_count, i32 instance_count) {
   BK_GfxDrawCmd *cmd = bk_frame_alloc(sizeof *cmd, alignof(BK_GfxDrawCmd));
   if (cmd == nullptr) {
-    // Arena exhaustion is already logged and asserted by bk_frame_alloc. Dropping the
-    // draw beats dereferencing null, and the frame still clears and presents.
+    // bk_frame_alloc's growth allocation aborts on real OOM now (DEVIATIONS.md), so this
+    // is defense-in-depth, not a reachable path today -- kept because dropping the draw
+    // beats dereferencing null if that policy ever changes, and the frame still clears
+    // and presents.
     return;
   }
   *cmd = s_state;
@@ -143,7 +146,8 @@ static const void *s_copy_uniform(const void *data, u32 size) {
   BK_ASSERT(size > 0);
   void *copy = bk_frame_alloc(size, 0); // 0 => platform max alignment, per its contract
   if (copy == nullptr) {
-    return nullptr; // already logged and asserted by bk_frame_alloc
+    return nullptr; // defense-in-depth -- bk_frame_alloc's growth now aborts on real OOM
+                    // (DEVIATIONS.md), so this path isn't reachable today
   }
   SDL_memcpy(copy, data, size);
   return copy;
@@ -508,7 +512,7 @@ void bk__gfx_flush(void) {
         } else {
           SDL_Log("BK: SDL_CreateSurfaceFrom failed: %s", SDL_GetError());
         }
-        bk__free(pixels);
+        BK__FREE(nullptr, BK_MEM_TAG_GFX, pixels, (isize)swap_w * (isize)swap_h * 4);
       }
     }
   } else {
@@ -565,12 +569,8 @@ void *bk__gfx_download_texture(SDL_GPUDevice *device, SDL_GPUCommandBuffer *cmd,
   }
 
   usize byte_size = (usize)width * (usize)height * 4;
-  void *pixels = bk__alloc(byte_size);
-  if (pixels != nullptr) {
-    SDL_memcpy(pixels, mapped, byte_size);
-  } else {
-    SDL_Log("BK: bk__gfx_download_texture: allocation of %zu bytes failed", byte_size);
-  }
+  void *pixels = BK__ALLOC(nullptr, BK_MEM_TAG_GFX, (isize)byte_size);
+  SDL_memcpy(pixels, mapped, byte_size);
 
   SDL_UnmapGPUTransferBuffer(device, transfer);
   SDL_ReleaseGPUTransferBuffer(device, transfer);

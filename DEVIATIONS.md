@@ -839,3 +839,224 @@ other six tests' `max_failing_pixels` budgets exist to absorb — except SDF ant
 has no equivalent hard edge to bound a budget around. §8's probe-pixel argument for
 `bk_draw` therefore still holds; only the rest of the GPU test suite's convention changed
 around it.
+
+## `BK_Allocator` does not build on `SDL_SetMemoryFunctions` (CLAUDE.md Process, task-1-brief.md)
+
+SDL already ships a pluggable-allocator facility, `SDL_SetMemoryFunctions`/
+`SDL_GetMemoryFunctions`, but its function types
+(`void *(*)(size_t)`, `void (*)(void *)`, etc.) carry no `ctx` pointer and pass no size to
+`free`/`realloc`. That is enough for a single process-wide malloc swap but not for
+`BK_Allocator`'s job: an arena or pool per subsystem needs `ctx` to reach its own state, and
+a size-aware `free_fn`/`realloc_fn` is what lets such an allocator avoid per-allocation
+headers. `BK_Allocator` keeps both instead and does not route through SDL's functions.
+
+## test_alloc_oom uses a CMake wrapper script instead of PASS_REGULAR_EXPRESSION (task-3-brief.md)
+
+The task brief specifies `set_tests_properties(test_alloc_oom PROPERTIES PASS_REGULAR_EXPRESSION "BK: out of memory")`,
+which is intended to make CTest pass if the regex is found in the process output, treating the intentional abort as an
+expected termination. On macOS, CTest's `PASS_REGULAR_EXPRESSION` does not override an abnormal termination by signal —
+when a process is killed by SIGABRT, CTest marks the test as failed with status "Subprocess aborted***Exception" before
+the regex check is evaluated. Verified by running the brief's exact registration on this platform:
+
+```
+Test #6: test_alloc_oom ...................Subprocess aborted***Exception:   0.04 sec
+2026-08-04 00:57:10.494 test_alloc_oom[84833:21685638] BK: out of memory (64 bytes) at ...
+...
+0% tests passed, 1 tests failed out of 1
+The following tests FAILED:
+	  6 - test_alloc_oom (Subprocess aborted)
+```
+
+The log line is present in the output, but the test fails because CTest's signal-death verdict takes precedence over
+the regex match. The test binary exits via SIGABRT from `s_oom`'s `abort()` call (after `BK_ASSERT` fires), and this
+platform's CTest treats signal death as a hard failure regardless of output content.
+
+The fix: the test is registered as a CMake-driven wrapper (`tests/run_oom_test.cmake`) that runs the binary via
+`execute_process`, captures combined output, greps for the log line manually using CMake's `string(FIND)`, and exits
+normally via `return()` on success or `message(FATAL_ERROR)` on failure — so CTest judges the test by the wrapper's
+exit code (which reflects the grep result) rather than the child's signal termination. This approach verifies the
+actual log line and is portable across platforms where signal-death handling varies. The test passes on the intended
+OOM path and fails if the allocation unexpectedly succeeds (mutation verification confirmed both behaviors).
+
+## Default heap backs onto libc malloc, not SDL_malloc (task-7-brief.md)
+
+Task 7's SDL routing (`bk__alloc_route_sdl`, `SDL_SetMemoryFunctions`) turns `SDL_malloc`/
+`SDL_calloc`/`SDL_realloc`/`SDL_free` into a shim that resolves back through the installed
+base allocator. `s_default_alloc`/`s_default_realloc`/`s_default_free` previously called
+`SDL_malloc`/`SDL_realloc`/`SDL_free` directly, on the assumption that "the default heap"
+just means "whatever SDL_malloc does." Once routing is active that assumption breaks: any
+base allocator whose implementation transitively bottoms out in `s_default_alloc` (which
+includes `bk_allocator_counting` with an unset `inner` — `bk__alloc_install`'s existing
+self-reference guard pins exactly that case to the default allocator, and every current
+test uses this shape) now recurses forever — `SDL_malloc` calls the shim, the shim resolves
+to the base, the base's default-heap path calls `SDL_malloc` again. Confirmed empirically:
+routing `tests/test_app_lifecycle`'s counting allocator through the literal shim from the
+task brief produced a reproducible AddressSanitizer stack-overflow, the same four-frame
+cycle every time (`s_sdl_shim_malloc` → `bk__alloc` → `s_counting_alloc` → `s_default_alloc`
+→ `SDL_malloc` → `s_sdl_shim_malloc`).
+
+The fix: `s_default_alloc`/`s_default_realloc`/`s_default_free`, and the zero-fastpath in
+`bk__alloc_site` that special-cases the default allocator, now call libc `malloc`/`realloc`/
+`free`/`calloc` (`<stdlib.h>`, already included) directly instead of going through SDL's
+dispatch table. "The default heap" is a fixed primitive that `SDL_SetMemoryFunctions`
+cannot redirect, so the cycle cannot form regardless of how many wrapper allocators sit
+between the base and the default. This is a narrower version of the same reasoning behind
+`bk_math`'s libc `assert` deviation above: where routing SDL-ward would create a dependency
+cycle, go around SDL instead of through it. Verified by re-running the full suite (22/22
+green) and rerunning `test_app_lifecycle` five times consecutively with no recursion.
+
+A related, expected (not a bug) behavior: `test_app_lifecycle`'s counting allocator no
+longer nets to zero live allocations after `bk_run` returns, because SDL retains
+process-global state past `SDL_Quit` (measured on this platform: allocation counts varied
+run-to-run in the 90s, a handful of KB — SDL_GetEnvironment's hash table and similar
+one-time global caches). The `BK_MEM_TAG_SDL` counter grows with that retained set, so the
+lifecycle test's leak assertions now compare `s_counter.live_allocs`/`live_bytes` against
+`bk_mem_stats(BK_MEM_TAG_SDL)`'s corresponding fields and assert the *difference* is zero,
+instead of asserting the raw counters are zero — every non-SDL tag was independently
+confirmed to fully net to zero in the same run.
+
+## `BK_Allocator` uses signed `isize`, not `size_t` (include/bielik/bk_alloc.h)
+
+`BK_Allocator`'s three function pointers and the whole call layer (`bk_alloc`/`bk_realloc`/
+`bk_free`/`BK_NEW`/`BK_NEW_ARRAY`, `bk__alloc_site`/`bk__realloc_site`/`bk__free_site`) take
+`isize`, not the `size_t` SDL and libc use for the same job. The point: a negative size
+becomes an assertable bug (`BK_ASSERT(size >= 0)` in `bk__alloc_site`, `old_size >= 0 &&
+new_size >= 0` in `bk__realloc_site`) instead of a silently-wrapped huge unsigned. The
+concrete case is an overflowed `BK_NEW_ARRAY(a, T, n)` product computed in signed
+arithmetic (`(isize)sizeof(T) * (n)`, `n` a signed count such as `i32`): with `size_t`
+arithmetic the overflow wraps positive and sails past every check into a too-small
+allocation; with `isize` the same overflow goes negative, which the assert catches before a
+single byte moves. Cost: a cast at every SDL/libc boundary
+in both directions — `(usize)size` going into `malloc`/`realloc`/`calloc`
+(`s_default_alloc` and friends, `bk_alloc.c`), and `(isize)size` coming back out of the
+`SDL_SetMemoryFunctions` shim's `size_t` parameters (`s_sdl_shim_malloc` and friends, same
+file).
+
+## PLAN.md §2's memory strategy is inverted (PLAN.md:52-54)
+
+`PLAN.md` §2 said: wrap `SDL_malloc`/`SDL_free` (`bk__alloc`/`bk__free`, internal) so
+`SDL_SetMemoryFunctions` covers everything the framework allocates. Shipped: the reverse.
+`BK_Allocator` (`bk_alloc.h`) is the source of truth for every persistent allocation, and
+the framework's own default heap calls libc `malloc`/`realloc`/`free` directly — never
+SDL's (see "Default heap backs onto libc malloc, not SDL_malloc" above). SDL is wired into
+`BK_Allocator`, not the other way around: `bk__alloc_route_sdl` (`bk_alloc.c`) installs a
+size-header shim via `SDL_SetMemoryFunctions` that forwards SDL's own internal allocations
+back through the installed base allocator, tagged `BK_MEM_TAG_SDL`. Two runtime gates apply:
+whether a custom base allocator is installed at all (`s_base.alloc_fn ==
+s_default_alloc` skips routing as a no-op), and whether SDL has already allocated
+(`SDL_GetNumAllocations() > 0` skips routing and logs — see "SDL's allocation counter is
+compiled in" below). Wiring up routing is what
+triggered the recursion bug the entry above documents, and why `s_default_alloc` had to move
+off `SDL_malloc`. See also "`BK_Allocator` does not build on `SDL_SetMemoryFunctions`" above
+for why the interface itself doesn't just delegate to SDL's narrower facility in the first
+place.
+
+## Two OOM policies were planned; only one is reachable today (docs/superpowers/specs/2026-08-03-bk-alloc-design.md §6, task-4-brief.md)
+
+The design spec's §6 states this as a deliberate, "pre-existing, unchanged" exception:
+`bk_alloc`/`bk_realloc` abort on OOM (`BK_ASSERT` + `abort()` — `s_oom` in `bk_alloc.c` is
+`[[noreturn]]`, "deterministic even when the assert is disabled or ignored" per its own
+comment), but `bk_frame_alloc` keeps its shipped contract of assert-then-return-nullptr,
+and every call site (`bk_gfx.c`'s `s_record_draw`/`s_copy_uniform`, `bk_draw.c`'s
+`s_record`/`bk__draw_pack`) drops its own unit of work and lets the frame continue. The
+reasoning: a dropped draw call is a glitch, a mid-frame abort is a crash.
+
+That contract predates Task 4. Task 4 rerouted the frame arena's own chunk-growth
+allocations (`s_chunk_create` in `bk_app.c`) onto the same `BK__ALLOC` seam every other
+allocation now uses, and that seam's OOM policy is unconditional abort. `s_chunk_create`
+dereferences the chunk it just allocated (`*chunk = (BK_ArenaChunk){...}`) on the very next
+line with no null check — proof in the code itself that the call can no longer return null.
+So the one allocation that used to be able to fail on genuine memory exhaustion now aborts
+before `bk_frame_alloc` ever gets a nullptr to check. `task-4-brief.md`'s Step 4
+self-corrects on exactly this point mid-sentence ("growth allocation now aborts rather than
+returning null") and explicitly chooses to leave `bk_frame_alloc`'s null-checks and every
+caller's drop-work branch in place anyway, as free defense-in-depth against a future
+non-aborting base allocator — not because the path is live today.
+
+The comments at those call sites (`bk_gfx.c:37-38`, `bk_gfx.c:147`, `bk_draw.c:221-223`,
+`bk_draw.c:584-587`) still read as if arena exhaustion were reachable and logged; corrected
+in this same pass to say what is actually true — genuine memory exhaustion aborts inside
+`BK__ALLOC` before `bk_frame_alloc` ever sees a nullptr to check. See "Frame arena is a
+chunk chain, not a single doubling block" above for the arena's growth mechanics.
+
+## `<stdatomic.h>` for the per-tag counters, not SDL's atomics (include/bielik/bk_alloc.h, src/bk_alloc.c)
+
+House rule: check SDL first. SDL3's `SDL_atomic.h` has `SDL_AtomicInt` and `SDL_AtomicU32`
+— both effectively 32-bit — and no 64-bit atomic add. `BK_MemStats`'s four counters
+(`live_bytes`, `live_allocs`, `peak_bytes`, `total_allocs`) are `isize`, which is
+`ptrdiff_t` and therefore 64-bit on every target in the toolchain baseline. C23
+`<stdatomic.h>` is already in that baseline (clang-everywhere), so reaching for it instead
+of SDL's narrower types costs nothing portability-wise. `bk_alloc.c`'s per-tag
+`BK_TagCounters` uses `_Atomic isize` fields with `atomic_fetch_add_explicit`/
+`atomic_load_explicit`/`atomic_compare_exchange_weak_explicit`, all at
+`memory_order_relaxed` — the counters are independent tallies, not a synchronization
+mechanism, so nothing stronger is needed.
+
+`BK_CountingAllocator`'s four counters (`bk_alloc.h`, public) are the same `_Atomic isize`
+for the same reason, which the module's own design spec did not anticipate: it described
+them as plain fields to be used from one thread at a time. That restriction is not
+satisfiable in the one configuration the spec itself recommends — a counting allocator as
+`BK_AppDesc.allocator` — because Task 7's SDL routing sends SDL's own allocations through
+the base, and SDL allocates off the main thread (the Windows joystick thread, live in every
+`SDL_INIT_GAMEPAD` app, which is all of them here). Plain `isize` counters would be racy
+read-modify-writes, i.e. UB, in `test_app_lifecycle` on Windows CI. Note the knock-on for
+the public header: `_Atomic` is C-only, so `bk_alloc.h` can no longer be included from the
+future ImGui C++ translation unit without a shim. Nothing includes it from C++ today.
+
+## The OOM diagnostic goes to stderr with `fprintf`, not `SDL_Log` (docs/superpowers/specs/2026-08-03-bk-alloc-design.md §6)
+
+The spec's §6 spells the OOM report as `SDL_Log("BK: out of memory ...")`. Shipped:
+`fprintf(stderr, ...)` plus an explicit `fflush`. Once Task 7's SDL routing is active,
+`SDL_Log` is not a safe thing to call from inside an allocation failure: on Windows it
+allocates (UTF-16 conversion of the message), that allocation goes to `SDL_malloc`, and
+`SDL_malloc` is the shim that forwards to the base allocator which has just failed — so
+the diagnostic itself OOMs, re-enters `s_oom`, and recurses until the stack dies. The
+promised deterministic abort would become a stack overflow, and only under real memory
+pressure. `s_oom` therefore latches a `static _Atomic bool` before doing anything else
+(a re-entry from any path, including SDL's assertion machinery behind `BK_ASSERT`, or
+from a second thread, goes straight to `abort()`) and reports with `fprintf`, which
+allocates nothing.
+
+Two smaller consequences of the switch: `abort()` is not required to flush stdio, so the
+`fflush(stderr)` is load-bearing for `tests/run_oom_test.cmake` (which greps stdout and
+stderr together — see "test_alloc_oom uses a CMake wrapper script" above); and the format
+uses `%lld` with a `(long long)` cast rather than `%td`, since clang-cl builds against a
+UCRT `printf` that predates `%td`.
+
+Not fixed here, same shape, deliberately out of scope: `bk_allocator_panic`'s three
+functions also call `SDL_Log`, and with routing active a panic-allocator call recurses
+the same way. Unlike `s_oom` that path is a programming-error tripwire, not a
+memory-pressure path, and it is reached only where allocation was already a bug.
+
+## SDL's allocation counter is compiled in, and routing refuses a dirty process (CMakeLists.txt, src/bk_alloc.c)
+
+The design spec named "SDL allocated before the shim went in" as the one case where routing
+must back off, and described the fallback as skip + log + an honest undercount on
+`BK_MEM_TAG_SDL`. No such branch shipped with Task 7: the only gate was whether a custom
+base allocator existed. That is a heap-corruption hazard, not a bookkeeping one — the shim
+writes a size header in front of every allocation and reads it back on free, so the first
+`SDL_free` of a pointer SDL allocated *before* the shim reads eight bytes that were never
+written. An embedder calling `SDL_SetHint` before `bk_run` is enough to trigger it, and it
+reproduces under ASan on demand (a temporary `SDL_Log` placed before `SDL_SetMemoryFunctions`
+during this fix produced exactly that heap-buffer-overflow, freed from `SDL_InitEvents`).
+
+Shipping the check needed a build change: `SDL_GetNumAllocations()` returns -1 unless SDL is
+compiled with `SDL_TRACK_ALLOCATION_COUNT`, which stock SDL is not, so a naive `!= 0` test
+would have disabled routing permanently. The top-level `CMakeLists.txt` now defines it on the
+`SDL3-static` target (guarded by `if(TARGET ...)`, since a consumer may bring their own SDL).
+Cost is one atomic increment per SDL allocation; the counter is also a ready-made leak check
+for later. Where the count is negative — someone else's SDL build — `bk__alloc_route_sdl`
+assumes clean and routes, which is exactly the behavior that shipped before this guard.
+
+Consequence, verified rather than assumed: SDL retains allocations past `SDL_Quit` (94 on
+this platform, measured with a temporary probe in `test_app_lifecycle`), so a **second
+`bk_run` in one process never routes**. That is the correct answer, not a limitation to work
+around: those retained pointers came from the first run's allocator, and routing over them is
+precisely the corruption case. No test or sample boots twice with a custom allocator —
+`test_app_lifecycle` is the only routing test and calls `bk_run` once; `test_atlas` uses a
+counting allocator without ever booting; no sample sets `.allocator`.
+
+`tests/test_alloc.c`'s `test_sdl_routing_refuses_after_sdl_has_allocated` covers the refusal
+without a window: it runs last, by which point the binary's own SDLTest logging has allocated
+through SDL, and asserts the premise (`SDL_GetNumAllocations() > 0`) so a build that loses the
+compile definition fails loudly instead of passing vacuously.

@@ -1,4 +1,5 @@
 #include "bk_test.h"
+#include "internal/bk_alloc_internal.h"
 #include "internal/bk_app_internal.h"
 #include "internal/bk_gfx_internal.h"
 #include "internal/bk_gfx_pipeline_internal.h"
@@ -271,7 +272,7 @@ static void test_draw_produces_expected_pixels(void) {
   SDL_DestroySurface(actual);
   SDL_DestroySurface(reference);
 
-  bk__free(pixels_buf);
+  BK__FREE(nullptr, BK_MEM_TAG_GFX, pixels_buf, (isize)size * size * 4);
 
   bk_gfx_pipeline_destroy(pipeline);
   s_free_shader(&vertex);

@@ -1,6 +1,8 @@
 #include "bk_test.h"
 #include "internal/bk_atlas_internal.h"
 
+#include <bielik/bk_alloc.h>
+
 #include <SDL3/SDL.h>
 
 #include <stdio.h>
@@ -14,6 +16,11 @@
 
 constexpr i32 FAKE_MAX_TEXTURES = 64;
 constexpr i32 FAKE_MAX_LOG = 512;
+
+// Every test below builds its BK_AtlasDesc through s_make_desc, which routes the atlas's
+// allocator through this counter. The end-of-main assertions turn every test's
+// create/use/destroy cycle into a leak check for bk_atlas.c.
+static BK_CountingAllocator s_atlas_counter;
 
 typedef struct FakeTexture {
   u64 id;
@@ -139,6 +146,7 @@ static BK_AtlasDesc s_make_desc(FakeGpu *gpu) {
       .destroy_texture = fake_destroy_texture,
       .submit_batch = fake_submit_batch,
       .udata = gpu,
+      .allocator = bk_allocator_counting(&s_atlas_counter),
   };
 }
 
@@ -1415,6 +1423,25 @@ static void test_dissolved_survivors_repack_within_the_same_defrag(void) {
   s_free_gpu(&gpu);
 }
 
+// The harness itself must be able to see a leak (mutation discipline applied to the test):
+// leak one block on purpose, observe, then free it.
+static void test_leak_harness_detects(void) {
+  BK_Allocator a = bk_allocator_counting(&s_atlas_counter);
+  isize live_before = s_atlas_counter.live_allocs;
+  void *leak = bk_alloc(&a, 64);
+  REQUIRE(s_atlas_counter.live_allocs == live_before + 1);
+  bk_free(&a, leak, 64);
+  REQUIRE(s_atlas_counter.live_allocs == live_before);
+}
+
+static void test_atlas_rejects_partial_allocator(void) {
+  FakeGpu gpu = {0};
+  BK_AtlasDesc desc = s_make_desc(&gpu);
+  desc.allocator.realloc_fn = nullptr; // now partial: alloc_fn/free_fn set, realloc_fn not
+  BK_Atlas *atlas = bk__atlas_create(&desc);
+  REQUIRE(atlas == nullptr);
+}
+
 int main(void) {
   test_flush_makes_pushed_images_resident();
   test_lonely_image_reports_its_whole_texture();
@@ -1451,6 +1478,15 @@ int main(void) {
   test_defrag_dissolves_every_fully_decayed_atlas();
   test_invalidating_an_atlassed_image_dissolves_its_atlas();
   test_dissolved_survivors_repack_within_the_same_defrag();
+  test_leak_harness_detects();
+  test_atlas_rejects_partial_allocator();
+
+  // Every test above created and destroyed its atlas through the counting allocator;
+  // anything still live is a leak in bk_atlas.c.
+  REQUIRE_EQ_U64((u64)s_atlas_counter.live_bytes, 0);
+  REQUIRE_EQ_U64((u64)s_atlas_counter.live_allocs, 0);
+  REQUIRE(s_atlas_counter.total_allocs > 0);
+
   printf("test_atlas: OK\n");
   return 0;
 }

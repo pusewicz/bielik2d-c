@@ -1,3 +1,4 @@
+#include "internal/bk_alloc_internal.h"
 #include "internal/bk_app_internal.h"
 #include "internal/bk_gfx_canvas_internal.h"
 #include "internal/bk_gfx_texture_internal.h"
@@ -58,12 +59,7 @@ BK_GfxCanvas *bk_gfx_canvas_create(SDL_GPUDevice *device, const BK_GfxCanvasDesc
     }
   }
 
-  BK_GfxCanvas *canvas = bk__alloc(sizeof(BK_GfxCanvas));
-  if (canvas == nullptr) {
-    bk_gfx_texture_destroy(color);
-    bk_gfx_texture_destroy(depth);
-    return nullptr;
-  }
+  BK_GfxCanvas *canvas = BK__ALLOC(nullptr, BK_MEM_TAG_GFX, (isize)sizeof(BK_GfxCanvas));
   canvas->color = color;
   canvas->depth = depth;
   canvas->blit_filter =
@@ -79,7 +75,7 @@ void bk_gfx_canvas_destroy(BK_GfxCanvas *canvas) {
   }
   bk_gfx_texture_destroy(canvas->color);
   bk_gfx_texture_destroy(canvas->depth);
-  bk__free(canvas);
+  BK__FREE(nullptr, BK_MEM_TAG_GFX, canvas, (isize)sizeof(BK_GfxCanvas));
 }
 
 BK_GfxTexture *bk_gfx_canvas_texture(BK_GfxCanvas *canvas) {
